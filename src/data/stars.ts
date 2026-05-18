@@ -178,6 +178,11 @@ export interface Body {
   readonly surfaceTempMaxK: number | null;
   readonly waterFraction: number | null;
   readonly iceFraction: number | null;
+  // 0..1 fraction of the surface that is geologically young. 1.0 = perpetually
+  // refreshed (Io lava, Enceladus plumes); 0.0 = ancient unmodified (Mercury,
+  // Luna, Callisto). null for bodies with no solid surface (gas/ice giants,
+  // gas dwarfs, belts, rings).
+  readonly surfaceAge: number | null;
   readonly magneticFieldGauss: number | null;
   readonly tectonicActivity: number | null;
   // Atmosphere — top three gases by fraction. atm1 is the dominant species.

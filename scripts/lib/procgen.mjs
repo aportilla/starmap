@@ -22,6 +22,8 @@
 //   avgSurfaceTempK ← worldClass + insolation + iceFraction + surfacePressureBar
 //                     (Bond albedo derived locally — see effectiveBondAlbedo)
 //   eccentricity, inclinationDeg, axialTiltDeg, orbitalPhaseDeg ← seeded draws
+//   surfaceAge ← worldClass + eccentricity + host worldClass (moons of giants
+//                                                             get tidal lift)
 //   surfaceTempMinK, surfaceTempMaxK ← avg + worldClass + axial tilt + eccentricity
 //   biosphereArchetype, biosphereTier ← worldClass + insolation gate   (must precede atmosphere)
 //   atm1..atm3 + fractions ← worldClass + surfacePressureBar + biosphere
@@ -41,6 +43,8 @@ import {
   WATER_FRACTION_BY_CLASS,
   ICE_FRACTION_BY_CLASS,
   ALBEDO_BY_CLASS,
+  SURFACE_AGE_BY_CLASS,
+  SURFACE_AGE_TIDAL_LIFT,
   TECTONIC_ACTIVITY_BY_CLASS,
   ROTATION_PERIOD_HOURS_BY_CLASS,
   TIDAL_LOCK_RANGE,
@@ -303,6 +307,33 @@ function iceFractionFor(body) {
   if (spec == null) return null;
   if (spec.max === 0) return 0;
   return Number(sampleTruncated(fieldPrng(body, 'iceFraction'), spec).toFixed(3));
+}
+
+// =============================================================================
+// Surface age
+// =============================================================================
+
+// 0..1 scalar — fraction of the surface that is geologically young. 1.0 is
+// perpetually refreshed (Io lava, Enceladus plumes, Earth plate tectonics);
+// 0.0 is ancient unmodified (Mercury, Luna, Callisto). Class prior leans
+// toward the "old" default; moons of giants with non-trivial eccentricity
+// get a tidal-heating lift toward 1.0. Returns null for classes without
+// a solid surface (gas/ice giants, gas dwarfs).
+function surfaceAgeFor(body, hostBody) {
+  const spec = SURFACE_AGE_BY_CLASS[body.worldClass];
+  if (spec == null) return null;
+  let age = sampleTruncated(fieldPrng(body, 'surfaceAge'), spec);
+  const hostClass = hostBody?.worldClass;
+  const hostIsGiant = hostClass === 'gas_giant' || hostClass === 'ice_giant' || hostClass === 'gas_dwarf';
+  if (body.kind === 'moon' && hostIsGiant && body.eccentricity != null) {
+    const e = body.eccentricity;
+    const { eThreshold, eMaxNormalize, liftAmount } = SURFACE_AGE_TIDAL_LIFT;
+    if (e > eThreshold) {
+      const normalized = Math.min(1, (e - eThreshold) / (eMaxNormalize - eThreshold));
+      age = age + (1 - age) * liftAmount * normalized;
+    }
+  }
+  return Number(Math.max(0, Math.min(1, age)).toFixed(3));
 }
 
 // =============================================================================
@@ -591,6 +622,7 @@ function fillBody(b, allBodies, stars) {
   let hostStar = null;
   let aFromStar = null;
   let hostMassSolar = null;
+  let hostBody = null;
   if (b.kind === 'planet') {
     if (b.hostStarIdx != null) {
       hostStar = stars[b.hostStarIdx];
@@ -599,14 +631,14 @@ function fillBody(b, allBodies, stars) {
     }
   } else if (b.kind === 'moon') {
     if (b.hostBodyIdx != null) {
-      const hostPlanet = allBodies[b.hostBodyIdx];
-      if (hostPlanet) {
-        if (hostPlanet.hostStarIdx != null) {
-          hostStar = stars[hostPlanet.hostStarIdx];
-          aFromStar = hostPlanet.semiMajorAu;
+      hostBody = allBodies[b.hostBodyIdx] ?? null;
+      if (hostBody) {
+        if (hostBody.hostStarIdx != null) {
+          hostStar = stars[hostBody.hostStarIdx];
+          aFromStar = hostBody.semiMajorAu;
         }
-        if (hostPlanet.massEarth != null) {
-          hostMassSolar = hostPlanet.massEarth / EARTH_PER_SOLAR_MASS;
+        if (hostBody.massEarth != null) {
+          hostMassSolar = hostBody.massEarth / EARTH_PER_SOLAR_MASS;
         }
       }
     }
@@ -624,7 +656,7 @@ function fillBody(b, allBodies, stars) {
   // results within the same pass.
   let {
     radiusEarth, worldClass,
-    waterFraction, iceFraction,
+    waterFraction, iceFraction, surfaceAge,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,
@@ -717,6 +749,14 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, eccentricity, axialTiltDeg };
 
+  // Surface age reads eccentricity (for the moon-of-giant tidal lift) and
+  // the host body's worldClass (giant vs. non-giant decides whether the lift
+  // fires), so it has to run after the eccentricity draw.
+  if (unknowns.has('surfaceAge')) {
+    surfaceAge = surfaceAgeFor(working, hostBody);
+  }
+  working = { ...working, surfaceAge };
+
   if (unknowns.has('surfaceTempMinK') || unknowns.has('surfaceTempMaxK')) {
     const { min, max } = surfaceTempRangeFor(working);
     if (unknowns.has('surfaceTempMinK') && min != null) surfaceTempMinK = min;
@@ -773,7 +813,7 @@ function fillBody(b, allBodies, stars) {
   return {
     ...rest,
     radiusEarth, worldClass,
-    waterFraction, iceFraction,
+    waterFraction, iceFraction, surfaceAge,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,

@@ -507,7 +507,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v8';
+export const PROCGEN_VERSION = 'v9';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands
@@ -905,6 +905,42 @@ export const ALBEDO_BY_CLASS = {
   gas_dwarf: { mean: 0.30, sd: 0.10, min: 0.15, max: 0.55 },
   ice_giant: { mean: 0.30, sd: 0.05, min: 0.20, max: 0.45 },
   gas_giant: { mean: 0.35, sd: 0.10, min: 0.15, max: 0.60 },
+};
+
+// ---------------------------------------------------------------------------
+// Surface age — 0..1 fraction of the surface that is geologically young
+// ---------------------------------------------------------------------------
+//
+// 1.0 = perpetually refreshed (Io's lava, Enceladus's plumes, Earth's
+// plate-tectonics-refreshed crust). 0.5 = mixed (Mars's young volcanic
+// plains over old highlands). 0.0 = ancient unmodified (lunar highlands,
+// Mercury, Callisto). Captures the "fresh young surface" signal that
+// distinguishes Ganymede from Enceladus — both iceFraction=1, both
+// render fully white from coverage alone.
+//
+// Gas/ice giants and gas dwarfs have no solid surface — null for them.
+// Class means lean toward "old surface is the default" because resurfacing
+// is the special case across the catalog; high-surface-age bodies emerge
+// from class (lava, ocean) or tidal lift (eccentric moons of giants).
+export const SURFACE_AGE_BY_CLASS = {
+  rocky:  { mean: 0.20, sd: 0.20, min: 0.00, max: 1.00 },  // Earth's plate tectonics lives in the upper tail
+  ocean:  { mean: 0.70, sd: 0.15, min: 0.30, max: 1.00 },  // active oceans + tectonics likely
+  desert: { mean: 0.15, sd: 0.10, min: 0.00, max: 0.50 },  // little resurfacing once dry
+  ice:    { mean: 0.20, sd: 0.15, min: 0.00, max: 0.70 },  // dead base; tidal lift pushes Europa/Enceladus higher
+  lava:   { mean: 0.90, sd: 0.08, min: 0.50, max: 1.00 },  // continuously molten by definition
+};
+
+// Tidal-heating lift for moons of giants. Real tidal heating scales as
+// M_host² · e² / a⁵; for our catalog the host-mass term doesn't change
+// ordering (gas giants all dominate), so eccentricity-only is the simplest
+// defensible proxy. Above the threshold, eccentricity normalizes linearly
+// to the maxNormalize cap and pulls surfaceAge toward 1.0 by liftAmount ×
+// normalized fraction. Below the threshold, no lift fires (Ganymede e≈0.001
+// stays in the base prior's "old" tail).
+export const SURFACE_AGE_TIDAL_LIFT = {
+  eThreshold:   0.005,
+  eMaxNormalize: 0.05,
+  liftAmount:   0.70,
 };
 
 // ---------------------------------------------------------------------------

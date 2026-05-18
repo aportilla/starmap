@@ -54,7 +54,7 @@ const HEADER = [
   'orbital_phase_deg', 'rotation_period_hours', 'axial_tilt_deg',
   'mass_earth', 'radius_earth',
   'world_class', 'avg_surface_temp_k', 'surface_temp_min_k', 'surface_temp_max_k',
-  'water_fraction', 'ice_fraction',
+  'water_fraction', 'ice_fraction', 'surface_age',
   'magnetic_field_gauss', 'tectonic_activity',
   'surface_pressure_bar', 'atm1', 'atm1_frac', 'atm2', 'atm2_frac', 'atm3', 'atm3_frac',
   'res_metals', 'res_silicates', 'res_volatiles', 'res_rare_earths', 'res_radioactives', 'res_exotics',

@@ -38,6 +38,7 @@ import {
   COMPANION_PLANET_SUPPRESSION,
   WATER_FRACTION_BY_CLASS,
   ICE_FRACTION_BY_CLASS,
+  SURFACE_AGE_BY_CLASS,
   TECTONIC_ACTIVITY_BY_CLASS,
   MAGNETIC_FIELD_GAUSS_BY_CLASS,
   TEMP_SWING_FRAC_BY_CLASS,
@@ -437,6 +438,7 @@ function auditScalar(field, priorTable, label) {
 }
 auditScalar('waterFraction',    WATER_FRACTION_BY_CLASS,    'waterFraction');
 auditScalar('iceFraction',      ICE_FRACTION_BY_CLASS,      'iceFraction');
+auditScalar('surfaceAge',       SURFACE_AGE_BY_CLASS,       'surfaceAge (post-tidal-lift; expect bias above prior on giant-moon eccentric branches)');
 auditScalar('tectonicActivity', TECTONIC_ACTIVITY_BY_CLASS, 'tectonicActivity (post-mass-scale; expect bias on non-Earth-mass)');
 auditScalar('magneticFieldGauss', MAGNETIC_FIELD_GAUSS_BY_CLASS, 'magneticFieldGauss (post-tect/rot scaling for terrestrials)');
 console.log();
