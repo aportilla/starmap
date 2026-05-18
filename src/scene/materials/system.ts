@@ -67,6 +67,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       attribute float aMode;
       attribute float aSeed;
       attribute float aTilt;
+      attribute float aAlbedo;
       varying float vRadius;
       varying vec2  vCenter;
       varying float vHovered;
@@ -77,6 +78,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vMode;
       varying float vSeed;
       varying float vTilt;
+      varying float vAlbedo;
       uniform float uDiscScale;
       uniform vec2  uViewport;
       void main() {
@@ -88,6 +90,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vMode     = aMode;
         vSeed     = aSeed;
         vTilt     = aTilt;
+        vAlbedo   = aAlbedo;
 
         // Integer-pixel disc diameter. Floor + 0.5 → round-to-nearest.
         float sz = floor(aSize * uDiscScale + 0.5);
@@ -121,6 +124,24 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vMode;
       varying float vSeed;
       varying float vTilt;
+      varying float vAlbedo;
+
+      // Surface-mode albedo floor — how dark the lowest-albedo body
+      // (Moon ~0.12, Callisto ~0.22, Mercury ~0.14) gets relative to the
+      // palette's chosen color. brightness = mix(SURFACE_ALBEDO_FLOOR,
+      // 1.0, albedo), so albedo=0 → SURFACE_ALBEDO_FLOOR (still readable),
+      // albedo=1 → full palette color. The remap exists because palette
+      // entries are already designed as "what the body looks like to the
+      // eye," not surface-true reflectance — a literal col *= albedo
+      // would dim Mercury into unreadable black. 0.6 keeps the rocky
+      // inner planets vivid enough to read distinct from each other
+      // (Mercury ~0.66×, Earth ~0.72×, Mars ~0.70×) while still putting
+      // Callisto (~0.69×) noticeably below Ganymede (~0.77×) and the
+      // bright icy moons like Enceladus (~1.0×) at the top of the
+      // range. Banded mode is exempt: the gas-giant palettes are hand-
+      // tuned for visibility and we don't want to dim Jupiter/Saturn
+      // by their physical albedo.
+      const float SURFACE_ALBEDO_FLOOR = 0.6;
 
       // Banded-mode density: bands per radius pixel. Tuned so a
       // Uranus-class disc (~43 px radius) gets ~30 bands; Jupiter
@@ -229,6 +250,11 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           }
           float h = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
           col = pickFromPalette(h);
+          // Surface-mode albedo darkening — see SURFACE_ALBEDO_FLOOR.
+          // Applied after the cell pick so every palette entry on the
+          // disc darkens uniformly, preserving relative hue contrast
+          // between resource patches.
+          col *= mix(SURFACE_ALBEDO_FLOOR, 1.0, clamp(vAlbedo, 0.0, 1.0));
         } else {
           // Banded atmosphere — Jupiter-style zonal flow.
           //

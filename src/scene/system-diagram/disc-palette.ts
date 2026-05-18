@@ -65,6 +65,15 @@ export interface DiscPalette {
   // by surface mode but plumbed uniformly so per-vertex attributes
   // stay schema-stable.
   readonly tilt: number;
+  // Geometric albedo in [0..1] — surface-mode shader remaps this via a
+  // floor so a Callisto-class 0.22 disc reads visibly dimmer than a
+  // Ganymede-class 0.43 without dropping to unreadable black. Body
+  // records with null albedo fall back to 1.0 (no darkening) so a
+  // procgen body without a measured/derived value still paints at full
+  // palette brightness. Ignored by banded mode (the gas-giant palettes
+  // are hand-tuned for visibility — applying physical albedo there
+  // would dim Jupiter/Saturn against their carefully picked gas hues).
+  readonly albedo: number;
 }
 
 // Pull the world-class color or unknown-grey fallback. Same precedence
@@ -238,6 +247,7 @@ export function buildDiscPalette(
     mode: banded ? 1 : 0,
     seed,
     tilt: bodyVisualTiltRad(body),
+    albedo: body.albedo ?? 1.0,
   };
 }
 
