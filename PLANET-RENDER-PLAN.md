@@ -13,7 +13,11 @@ Make planets and moons feel like *places* — distinct, beautiful, enticing — 
 Surface mode reads `worldClass`, `axialTiltDeg`, the six-scalar resource grid, atmosphere (top three gases + chromophore), `waterFraction`, `iceFraction`, `surfaceAge`, plus `biosphereArchetype × biosphereTier × hostStar.cls`. Banded mode reads the same gases + chromophore + `axialTiltDeg`. Both share parity-aware pixel snap and the same sphere-projection foreshortening (`RING_MINOR_OVER_MAJOR` pole tilt) so a ringed body's bands and ring share one vantage.
 
 Most-recent landings:
-- **Phase 1.4 — cratering from `surfaceAge`** (done). Per-worley-cell uniform-RGB lightness perturbation in the surface branch, amplitude tapered by `(1 − surfaceAge)`. Restores the Ganymede/Enceladus distinction sacrificed when albedo left the render path — properly this time, via the primary attribute that *causes* the brightness difference rather than the derived measurement of it. Mercury / Luna / Callisto read as mottled, pitted; Io / Enceladus / Earth stay smooth. Same perturbation on cap, ocean, and land cells — one visual language for "old surface."
+- **Phase 1.5c — discrete crater features with layered resource model** (done). The surface-age visual signal is now *features* rather than *noise*. Each land-branch fragment scans a 3×3 neighborhood of crater seed cells in the same sphere-projected `(lon, lat)` frame as 1.5a/b; existence per cell scales with `(1 − surfaceAge)²` so Mercury / Luna / Callisto saturate while Earth-class bodies show only rare craters. A winning crater paints solid-color from the **subsurface mask** — the complement of the 1.5b bucket the crater's center lies in — so a metals-surface region with rare-earth subsurface shows pink-grey craters, a silicate-surface region with metals subsurface shows iron-grey. Surface features carry the body's own resource palette. `CRATER_PATCH_FACTOR = 2.0`, `CRATER_DENSITY_MAX = 0.8`, radius range `[0.2, 0.9]` with `hash²` bias toward small. Salts 547/569/587.
+- **Per-cell mottling pass removed.** The earlier surface-age mechanism (uniform-RGB lightness perturbation per worley cell, amplitude tapered by `1 − surfaceAge`) was a stopgap that read as noise rather than as planetary features. Removed cleanly; the "old surface" visual signal moves to Phase 1.5c (discrete crater features) where surface age drives crater *density* instead of cell *noise*.
+- **Phase 1.5a inset (`SPHERE_VISIBLE_FRAC`)**. The surface-mode `(nxs, nys)` are scaled by 0.85 before computing `nzs`, so the disc edge maps to `asin(0.85) = 58°` from the band-aligned pole rather than to the true limb at `nzs = 0`. Cells at the disc rim are bounded to ~53% of disc-center size instead of pinching to sub-pixel widths under the unscaled full-hemisphere projection. The disc still reads as a globe; the pixel-art aesthetic stays coherent at every rim pixel.
+- **Phase 1.5b — per-region resource-subset selection** (done). A coarser super-cell pass aggregates `REGION_PATCH_FACTOR² = 36` fine worley cells per region; each super-cell hash discretizes into one of `REGION_BUCKET_COUNT = 7` non-empty subsets of `{palette0, palette1, palette2}`. That subset masks the body's natural weights and the fine cell pick within the super-cell paints from the masked palette — so each region carries a distinct combination of the body's top-3 resource colors. Land-only: oceans and ice caps stay flat because their color isn't from the resource palette. Mercury's iron-grey, rare-earth rose, and silicate rust now separate into spatial regions rather than mixing uniformly across the disc.
+- **Phase 1.5a — sphere-projected surface worley** (done). The surface-mode cell pass now lives in `(lon, lat)` on the band-aligned sphere rather than in screen-space `d`. Every fragment derives `lat = asin(latSinS)` and `lon = atan2(nxs, nzs·POLE_COS − nys·POLE_SIN)` once (one asin + one atan2 added to the surface branch); cell coords are `(lon, lat) × vRadius / SURFACE_PATCH_PX` so disc-center cells stay at `SURFACE_PATCH_PX` while limb cells compress under foreshortening. Terrestrials read as globes — features near the limb shrink and elongate parallel to the horizon — without any per-feature projection cost. Foundation for the multi-scale and crater passes below; both inherit the same sphere-space metric.
 - **`surfaceAge` primary attribute landed.** 0..1 fraction of the surface that is geologically young; per-class procgen prior plus a tidal-lift branch for moons of giants (linear in eccentricity past `TIDAL_E_THRESHOLD`). Eleven hand-curated Sol anchors in `bodies.csv`.
 - **Albedo fully out of the data model.** The Stefan-Boltzmann temp pass derives its Bond albedo locally via `effectiveBondAlbedo` rather than consuming a stored field; procgen-derived `avgSurfaceTempK` stays byte-identical against the prior catalog.
 - **Phase 1.3a/b/c — atmospheric rim + tint + clouds** (all done). Every banded body and every surface body with non-trivial pressure now carries an atmospheric column visible at the limb: a stroke-stacked outward halo extending up to 3 px into space, an inward fade following the sphere-projection foreshortening curve (band widths 1, 2, 3, ... px from the limb inward), and a per-fragment uniform tint on surface bodies with a haze-class chromophore. Earth gets the Rayleigh cyan limb plus H2O cloud patches; Venus, Titan, Io get their SO2/CH4 chromophore haze; Jupiter and Saturn get the bright H2 cream limb (the NH3 chromophore color is *deep* cloud chemistry, not at the limb); Uranus and Neptune get CH4 cyan-blue (absorption-dominant ice giants). Curated chromophores expanded from `{Jupiter NH3, Earth H2O, Saturn NH3, Titan CH4}` to also include `{Venus SO2, Mars DUST, Io SO2}`.
@@ -163,13 +167,111 @@ A 1-px sky-cyan rim (`THEME_RAYLEIGH_COLOR`) for surface-mode bodies with `surfa
 
 Discrete cloud cells painted over land + ocean (suppressed in the polar cap region). Active only when `chromophoreGas === H2O`. Implemented as **anisotropic worley cells** in the equator-aligned frame (`CLOUD_LON_PX / CLOUD_LAT_PX` ≈ 2.4:1 stretch), so cloud silhouettes elongate east-west — wind-swept zonal-flow streaks rather than axis-aligned grid squares. Cells have jittered centers via the standard worley pattern; density = `clamp(chromophoreFrac × CHROMOPHORE_VISUAL_BOOST, 0, CLOUD_MAX_COVERAGE)`. Cloud color is the hardcoded `CLOUD_COLOR` (~`GAS_COLOR[H2O]` near-white).
 
-### 1.4 Cratering (DONE)
+### 1.4 Cratering — removed
 
-Per-worley-cell uniform-RGB lightness perturbation in the surface branch, amplitude `(1 − vSurfaceAge) × CRATER_MAX_AMPLITUDE`. Uniform RGB delta preserves hue — only lightness varies cell-to-cell — so an old icy moon (Callisto) gets dimmed-ice mottling and an old rocky body (Mercury) gets dimmed-rock cratering, both reading as the same "old surface" visual language.
+The original implementation of cratering was a per-cell uniform-RGB lightness perturbation in the surface branch, amplitude `(1 − vSurfaceAge) × CRATER_MAX_AMPLITUDE`. It restored the Ganymede/Enceladus brightness distinction when albedo left the render path, but it read as cell-level *noise* rather than as planetary *features* — an ancient moon and a young moon differed by mottling amplitude on the same texture instead of by visible geological signatures. Surface age moved to Phase 1.5c (discrete crater features), where age drives crater density and craters paint with the body's own resource palette via the layered resource model. The 547/569 hash salts are reserved for the new crater pass.
 
-Sits in the paint pipeline AFTER the cap/ocean/land branches set `col`, and BEFORE the cloud and haze passes — so atmospheric layers cover the perturbed surface intact. Active on all three surface branches (cap, ocean, land), since the unifying read is "old = pitted everywhere," not "old rock looks different from old ice."
+---
 
-Hash salts (547, 569) are distinct primes from worley jitter (13/19, 23/29), continent (113/127), resource (1009/2017), biome (197/311), cloud (991/...), and inward-fade dither (829/853), so a "lucky" cell can't accidentally line up old + biome-y or old + ocean-y from a shared noise stream.
+## Phase 1.5 — Terrestrial surfaces feel like *places*, not noise
+
+Goal: real moons read by their *signature features* (Callisto's bright impact dots, Ganymede's dark/light terrain split, Europa's near-uniform pale base), not by per-cell color noise. Today every body uses the same 4-px worley pass tinted by its resource palette and age-perturbed by `(1 − surfaceAge)`, so an ancient ice moon and an ancient rocky moon are *the same texture in different colors*. The three sub-phases below decompose "surface" into three distinct rendering mechanisms at three spatial scales — sphere-projected cells (existing pass, now globe-aware), terrain regions (large-scale composition variation), and discrete crater features (point features replacing the lightness-perturbation noise). Gas giants already read as spheres via banded latitude arcs; this phase brings terrestrials into the same sphere-aware regime.
+
+### 1.5a Sphere-projected surface worley (DONE)
+
+The surface-mode worley cell pass moves from screen-space (`d / SURFACE_PATCH_PX`) to sphere-space (`(lon, lat) × vRadius / SURFACE_PATCH_PX`). Foundation for 1.5b and 1.5c — both inherit the same metric.
+
+Sphere-space derivation reuses the band-aligned frame already used by the cap test:
+- Pole `P = (0, POLE_COS, POLE_SIN)`, prime meridian `F = (0, −POLE_SIN, POLE_COS)`, east `E = (1, 0, 0)`.
+- `sin(lat) = dot(n, P) = latSinS` (unchanged).
+- `cos(lat) cos(lon) = dot(n, F) = nzs·POLE_COS − nys·POLE_SIN` → `lonF`.
+- `lat = asin(latSinS)`, `lon = atan2(nxs, lonF)`. One `asin` + one `atan2` added to the surface branch per fragment.
+
+Cell coords scale by `vRadius / SURFACE_PATCH_PX` so disc-center cells stay at `SURFACE_PATCH_PX` (same density as the prior screen-space pass); cells toward the limb compress along the natural foreshortening curve. The worley loop body is unchanged — same 3×3 neighborhood, same jitter salts (13/19, 23/29), same hash → winnerCell pick. Cap, continent, resource pick, biome stipple, cratering, cloud, and haze passes downstream are all unchanged; they consume `winnerCell` and `latSinS` exactly as before.
+
+**Sphere-projection inset (`SPHERE_VISIBLE_FRAC`).** Before computing `nzs`, the disc-normalized `(nxs, nys)` are scaled by `SPHERE_VISIBLE_FRAC` (= 0.85), so the disc edge maps to the point on the sphere where `nxs² + nys² = FRAC²` rather than to the true limb at `nzs = 0`. Without this, cells at the disc rim pinch to sub-pixel widths under full foreshortening and read as noise rather than wrapped texture — wrong both physically (we're rendering pixel-art, not retina-resolution Galileo plates) and aesthetically (the chunky aesthetic wants coherent cells, not aliased rim noise). At 0.85, the disc edge sits at `asin(0.85) = 58°` from the band-aligned pole; edge cells are `sqrt(1 − 0.85²) ≈ 53%` of disc-center size; the disc still reads as a globe but stays pixel-coherent at every rim pixel. Side effect: disc-center cells are ~17% larger than the unscaled mapping (one cell ≈ `SURFACE_PATCH_PX / FRAC` screen-pixels) and the cap region also insets slightly from the disc rim — both acceptable. Banded mode keeps the full `FRAC = 1.0` projection because its arched latitude bands need the strong foreshortening to look spherical.
+
+Pole singularity: `lon` is ill-defined at `latSin = ±1` (the visible pole). The inset bounds the max `latSinS` to `FRAC × POLE_COS + sqrt(1 − FRAC²) × POLE_SIN`, so the singularity is never reached on the visible disc; the cap test (`|latSinS| > 1 − vIceFrac`) covers the pole region for any body with `iceFrac > 0.03`, and airless capless bodies have no visible singularity by construction.
+
+**Tuning anchors.** All 11 Sol bodies should read identifiably the same as before at disc center, with bounded foreshortening at the limb: cells near the rim should appear thinner perpendicular to the horizon and elongated parallel to it, but no thinner than ~half their disc-center width. Most visible on the largest discs (Earth, Mars). Mercury/Luna stay clearly textured. Banded bodies (Jupiter, Saturn, Uranus, Neptune, Venus, Titan) are unaffected.
+
+### 1.5b Per-region resource-subset selection (DONE)
+
+A second hash pass in the same `(lon, lat)` frame as 1.5a, derived by floor-dividing `winnerCell` into `REGION_PATCH_FACTOR = 6` super-cells — so super-cell boundaries inherit the fine worley pass's jittered shapes (region edges are organic curves, not grid-aligned). Per-super-cell hash discretizes into one of `REGION_BUCKET_COUNT = 7` non-empty subsets of `{palette0, palette1, palette2}`. That subset is the *mask* — `regionWeights = vWeights × mask`, and the fine cell pick uses those region weights. Each super-cell therefore paints from a different combination of the body's top-3 resource colors.
+
+**Why subset masking over lightness shifts.** An earlier version of 1.5b applied a uniform-RGB lightness modifier (±18%) on top of whatever cap/ocean/land/biome paint produced. The mechanism worked but the result was *muddy* — a multi-resource body got dim/bright regions that all shared the same blended underlying texture, so the regional variation read as shading rather than as composition. Resource-subset selection swaps shading for *palette switching*: a Mercury region paints only metals, the next region paints only silicates, the next paints a mix of metals + rare-earths. Each region keeps the pixel-crisp resource colors intact; surface variance comes from spatial redistribution of the body's existing composition, not from darkening or brightening it.
+
+**Land-only.** Ocean and ice-cap cells are flat colors (`OCEAN_COLOR`, `ICE_COLOR`), not from the resource palette, so the region pass is gated to the land branch. Biome stipple paints over land cells unaffected — the biome layer reads as biology against whatever resource the region picked. The pipeline order inside the land branch is: continent test → **region mask → resource pick** → biome stipple → (close land branch) → cratering.
+
+Hash salts (401, 419) are distinct primes from worley jitter (13/19, 23/29), continent (113/127), resource (1009/2017), biome (197/311), cratering (547/569), cloud (991/...), and inward-fade dither (829/853).
+
+**Bucket layout.** With three palette slots, the 7 non-empty subsets are:
+
+| Bucket | Mask | Region content |
+|---|---|---|
+| 0 | (1, 0, 0) | pure palette0 |
+| 1 | (0, 1, 0) | pure palette1 |
+| 2 | (0, 0, 1) | pure palette2 |
+| 3 | (1, 1, 0) | palette0 + palette1, weighted by body weights |
+| 4 | (1, 0, 1) | palette0 + palette2 |
+| 5 | (0, 1, 1) | palette1 + palette2 |
+| 6 | (1, 1, 1) | natural body composition (all three) |
+
+Pure-palette buckets boost minor resources past their natural weights — a body weighted (0.7, 0.2, 0.1) still shows palette2-dominant regions even though palette2 is the trace resource. That's intentional: it gives multi-resource bodies more visible regional character than their bulk composition alone would suggest. If a body has any palette slot weighted zero (only top 2 resources contribute), pure-slot buckets for the empty slot fall through to the `pickFromPalette` palette0 fallback — that region just blends in with palette0-dominated neighbors.
+
+**Tuning anchors.**
+- Mercury / Luna — visibly distinct regions of iron-grey, rare-earth rose, silicate rust, with the body's full composition reading as the *aggregate* of the regions rather than a uniform blend.
+- Ganymede / Callisto — large-scale composition regions in ice-grey vs. tinted-volatile color, layered with cratering on top for the multi-scale "old surface" read.
+- Earth — continents show regional resource variation (oceans and ice caps stay uniform; biome stipple still paints over land regions in temperate latitudes).
+- Io / Europa — smooth bodies show coherent regional composition variance, no cratering on top to fragment it.
+
+**Risk.**
+- Region cells at the limb compress under sphere-projection (same as the fine cells, scaled by `REGION_PATCH_FACTOR`). At small disc sizes (~20px moons) region cells may project to 1-2 px wide at the limb. Acceptable for now; if it reads as noise we'll revisit with a min-screen-px clamp.
+- Bodies with only one significant resource (single-palette-slot weighted past ~0.95) show minimal regional variation — most buckets degenerate to that single palette. Accepted tradeoff: surface variance is genuinely tied to composition, so a near-pure-iron body reads as nearly uniform iron-grey, which is correct.
+
+### 1.5c Discrete crater features + layered resource model (DONE)
+
+**Why.** A real ancient surface (Callisto, Mercury, Luna) is saturated with discrete bright impact dots at a power-law size distribution — the dots ARE the visual signature. Surface age should manifest as *more craters*, not as cell-level noise on the same texture.
+
+**Layered resource model — the load-bearing design.** Craters and their ejecta paint from a *different* subset of the body's three resource palette slots than the surface region they punch through. Geologically: each surface region (1.5b) is the top layer of regional stratigraphy; the layer underneath is the rest of the body's composition. An impact excavates through the top layer and exposes the subsurface — so crater color is the body's own palette, just a different combination than what shows on the surface. Net visual: a metals-surface region with rare-earth subsurface shows pink-grey craters on a dark grey region; a silicate-surface region with metals subsurface shows iron-grey craters on a rust-orange region. Crater features carry the body's identity without needing a new color attribute.
+
+**Subsurface mask derivation.** Each region already picks a `mask` (1.5b bucket → one of 7 non-empty subsets of `{palette0, palette1, palette2}`). The subsurface mask is the *complement*: subset bits that are zero in the surface mask. Examples:
+
+| Surface mask (bucket) | Subsurface mask |
+|---|---|
+| (1, 0, 0) bucket 0 — pure palette0 | (0, 1, 1) palette1 + palette2 |
+| (0, 1, 0) bucket 1 | (1, 0, 1) palette0 + palette2 |
+| (0, 0, 1) bucket 2 | (1, 1, 0) palette0 + palette1 |
+| (1, 1, 0) bucket 3 | (0, 0, 1) palette2 |
+| (1, 0, 1) bucket 4 | (0, 1, 0) palette1 |
+| (0, 1, 1) bucket 5 | (1, 0, 0) palette0 |
+| (1, 1, 1) bucket 6 — natural | (1, 1, 1) — fall back to natural (no contrast) |
+
+The bucket-6 fallback case (region uses all three resources, no complement available) paints craters in the natural body palette — same as the surface — losing crater visibility in those regions. Acceptable: bucket 6 is the "least region-y" case; bodies whose regions dominate it weren't going to read as regionally varied anyway.
+
+**Pipeline.** Per crater-seed cell (coarser `(lon, lat)` grid in the same sphere-projected frame as 1.5a/b — `CRATER_PATCH_FACTOR = 2.0` × the fine cell pitch), hash decides:
+- (a) is there a crater? `existH < (1 − surfaceAge)² × CRATER_DENSITY_MAX`. Squared scaling makes the age signal steep — Mercury (age=0.05) hits ~0.72 existence; Mars (age=0.4) hits ~0.29; Earth (age=0.7) hits ~0.07; Io (age=1.0) hits 0. Matches the real impact-rate decline over geologic time without modeling it explicitly.
+- (b) where in the cell? Two independent jitter hashes for the crater center inside its cell.
+- (c) what angular radius? `CRATER_RADIUS_MIN + (CRATER_RADIUS_MAX − CRATER_RADIUS_MIN) × hash²` — `hash²` bias produces a power-law-ish distribution toward small radii (most craters small, occasional large).
+
+Each fragment scans the 3×3 neighborhood of crater seed cells, accepts the *closest* crater containing it (smallest `dist`), and paints that crater's color. Closest-wins handles overlap correctly: when two craters share a fragment, the one whose center is nearer takes the pixel — geologically plausible for the chunky aesthetic. Solid-color paint per crater — no internal rim/floor brightness variation, intentionally avoided to preserve the pixel-crisp palette character and not regress to the muddy-shading failure mode that derailed 1.5b's first attempt.
+
+**Hash salts.** Crater hashes use primes 547, 569, 587 (added 587 vs. the original 547/569 reservation to give enough distinct salt pairs for 5 independent draws). Salt pairs in shader: existence `(547, 569)`, jitter X `(587, 547)`, jitter Y `(569, 587)`, radius `(569, 547)` (reversed pair distinct from existence), palette `(587, 569)`.
+
+**Tuning anchors.**
+- Mercury / Luna — heavy saturation of small craters; surface regions read as the "skin," ejecta dots reveal the body's other resources.
+- Callisto — densest possible cratering; ice-grey surface with darker-volatile crater floors and ejecta.
+- Earth / Io — near-zero crater density (surface age ~ 0.7-1.0).
+- A region in bucket 6 (natural mix) — craters read as same-color spots, low contrast. Side effect of the complement scheme; visually acceptable because such regions are already "neutral."
+
+**Risk.**
+- Crater rendering cost — 9 distance tests per fragment in the surface branch. Early-rejection on cells with no crater keeps the average cost low; large crater radii relative to seed-cell pitch are the worst case.
+- Subsurface complement of a body with one zero-weight resource (e.g. weights (0.7, 0.3, 0.0)) can produce an effective subsurface of pure-zero-weight, which falls through to the `pickFromPalette` palette0 fallback. Craters in those regions paint as palette0 — visible against a non-palette0 surface, invisible against a palette0 surface. Edge case; tolerable.
+- Crater overlap pattern (later impacts overlay earlier ones) is not modeled; first-pass is "if any crater contains me, paint it." Real Callisto shows overlapping crater rings; we render the union.
+
+### 1.5d Linea (deferred)
+
+Surface linea — Europa's red cracks, Enceladus's tiger stripes — would emerge from the same layered-resource model. A linea is a thin stair-stepped path painted from the region's subsurface mask, drawn across the surface where `worldClass = ice` and `surfaceAge` is high (the cracks are *young* features on icy crust, the opposite signal from craters). One mechanism — point features for craters, line features for linea — both colored by the body's own subsurface palette. Defer until 1.5c is shipped and the layered model is proven.
 
 ---
 
@@ -268,24 +370,28 @@ Goal: make Jupiter, Saturn, Uranus, Neptune and procgen siblings read as distinc
 
 - **Paint order (current).** Surface fragments traverse this fixed pipeline before the rim/halo passes paint over the disc edge:
   ```
-  resource cell pick
-    → biome stipple
-    → ocean override
-    → ice cap override
+  ice cap override (latitude past 1 − iceFrac)
+    → ocean override (continent-cell hash < waterFrac)
+    → land branch:
+        region mask (1.5b — pick subset of body weights)
+        → resource pick (worley winner cell → palette via masked weights)
+        → biome stipple
+        → crater features (1.5c — closest-wins, paints subsurface mask)
     → cloud patches (1.3c, H2O only)
     → haze surface tint (1.3a, non-H2O haze chromophores)
     → INWARD fade (1.3a/b rim color × bandIdx alpha)
   ```
   Banded fragments skip everything before the inward fade — their disc-interior pass is the banded-strip paint, and the inward fade lerps that toward the rim color near the limb. The outward halo (1.3a/b) paints at fragments where `r > vRadius` regardless of mode, as alpha-blended `vec4(vHazeColor, rimA)` with the planet material `transparent: true`. Hover rim (1-px white stamp at `r > vRadius - 1`) is the final per-fragment override on the disc-interior pass.
 
-  Cratering (1.4) sits **after** cap and **before** clouds/haze — the per-cell lightness perturbation applies to the surface beneath any atmospheric layer.
+  The region pass *and* the crater pass are both gated to the land branch (oceans and caps don't carry resource composition). Craters overwrite the underlying surface color (region pick + optional biome stipple) entirely — they don't blend, since the layered resource model is "the impact reveals the layer underneath," not "the impact tints the surface."
 
 - **Hash-salt budget.** Each feature adds one or two hash21 calls. Salts must be distinct so the same cell doesn't accidentally light up multiple features in correlation. Allocated so far (per-body multipliers on `vSeed`):
   - Worley jitter: 13/19, 23/29
   - Continent group: 113/127
   - Resource pick: 1009/2017
   - Biome stipple: 197/311
-  - Cratering: 547/569
+  - Region modifier: 401/419
+  - Crater features (1.5c): 547/569/587 (5 distinct salt pairs needed for existence + jitter X/Y + radius + palette)
   - Inward-fade boundary dither: 829/853
   - Cloud cells (jitter + pick): 991/997, 1013/1019, 1031/1033
 

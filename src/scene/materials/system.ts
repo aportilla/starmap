@@ -11,13 +11,16 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
 // is one of two procedural textures:
 //
-//   - **Surface mode (aMode = 0)** — worley/voronoi cell texture: the
-//     disc is divided into SURFACE_PATCH_PX-wide cells, each with a
-//     jittered center seeded per-body; every fragment picks a palette
-//     entry by hashing its nearest cell. Gives organic lumpy ground
-//     cover rather than per-pixel speckle. Driven CPU-side by the
-//     world-class color + 2 dominant resources from the body's resource
-//     grid.
+//   - **Surface mode (aMode = 0)** — sphere-projected worley/voronoi
+//     cell texture: every fragment reconstructs its surface normal,
+//     derives latitude + longitude in the band-aligned frame, and
+//     hashes into a cell whose coords are (lon, lat) scaled so disc-
+//     center cells stay at SURFACE_PATCH_PX while limb cells compress
+//     under foreshortening. Jittered cell centers are seeded per-body;
+//     each fragment picks a palette entry by hashing its nearest cell.
+//     Gives organic lumpy ground cover that visibly wraps a sphere.
+//     Driven CPU-side by the world-class color + 2 dominant resources
+//     from the body's resource grid.
 //   - **Banded mode (aMode = 1)** — Jupiter-style atmospheric zones.
 //     The disc is rotated into a band-aligned frame using the planet's
 //     axial tilt (so bands run parallel to any rings — see
@@ -210,11 +213,32 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // strips on a near-monochrome one.
       const float BAND_LIGHTNESS_JITTER = 0.06;
 
-      // Surface-mode worley cell pitch in buffer pixels. A 60-px planet
-      // disc gets ~15 cells across; jittered cell centers make the
-      // patch silhouettes non-grid-aligned, so the ground reads as
-      // organic lumps rather than rectangular tiles.
+      // Surface-mode worley cell pitch — equivalent screen-pixels at
+      // disc center. Cells live in sphere-space (lon, lat) scaled by
+      // vRadius / SURFACE_PATCH_PX, so a 60-px planet disc still gets
+      // ~15 cells across the equator but the cells foreshorten as they
+      // approach the limb (the natural sphere-projection compression).
+      // Jittered cell centers in the angular frame make the patch
+      // silhouettes non-grid-aligned; the ground reads as organic lumps
+      // wrapping a globe rather than rectangular tiles stamped on a
+      // disc.
       const float SURFACE_PATCH_PX = 4.0;
+
+      // Sphere-projection inset for surface mode. The disc edge maps
+      // to the point on the sphere where (nxs, nys) reach
+      // SPHERE_VISIBLE_FRAC of the unit normal, not to the true limb
+      // (FRAC = 1.0). At FRAC = 1 cells pinch to sub-pixel widths near
+      // the rim and read as noise; below 1.0 the projection covers
+      // only the central cone of the hemisphere, so foreshortening is
+      // bounded — cells at the disc edge are scaled by
+      // sqrt(1 - FRAC²) of disc-center size, never zero. 0.85 →
+      // disc edge sits at asin(0.85) = 58° from the pole; edge cells
+      // are ~53% of disc-center size; the disc still reads as a globe
+      // but stays pixel-coherent under the chunky aesthetic.
+      // Surface-mode only — banded mode keeps the full FRAC = 1.0
+      // projection because its latitude arcs need the strong
+      // foreshortening to look spherical.
+      const float SPHERE_VISIBLE_FRAC = 0.85;
 
       // Continent grouping: every CONTINENT_GROUP worley cells along
       // each axis share one ocean/land decision. Inherits the worley
@@ -298,20 +322,68 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // rim reads as organic haze rather than clean stripes.
       const float INWARD_BAND_DITHER = 4.0;
 
-      // Phase 1.4 cratering — per-worley-cell uniform-RGB lightness
-      // perturbation. Amplitude scales with (1 - surfaceAge): an ancient
-      // body (Mercury / Luna / Callisto, surfaceAge ~ 0.05) gets the
-      // full swing and reads as mottled / pitted; a young body
-      // (Io / Enceladus / Earth, surfaceAge ~ 0.7-1.0) collapses toward
-      // zero and the disc stays smooth. Uniform RGB delta preserves hue
-      // — only lightness varies cell-to-cell — so an old icy moon
-      // (Callisto) gets dimmed-ice mottling and an old rocky body
-      // (Mercury) gets dimmed-rock mottling, both reading as the same
-      // "cratered surface" visual language. 0.12 = ±12% value swing on
-      // the ancient extreme; tuned so Mercury and Luna read clearly
-      // pitted at 40-60 px discs without breaking the pixel-crisp
-      // palette by clipping channels.
-      const float CRATER_MAX_AMPLITUDE = 0.12;
+      // Phase 1.5b — per-region resource-subset selection. Aggregate
+      // REGION_PATCH_FACTOR fine worley cells per axis into one
+      // super-cell. The super-cell hash picks one of
+      // REGION_BUCKET_COUNT (= 2^3 - 1 = 7) non-empty subsets of the
+      // body's three palette slots; that subset masks the body's
+      // natural weights, and the fine cell pick within the super-cell
+      // paints from the masked palette. Net visual: each region
+      // carries a distinct combination of the body's top-3 resource
+      // colors — Mercury's iron-grey, rare-earth rose, and silicate
+      // rust separate into spatial regions rather than mixing
+      // uniformly across the disc. This replaces the prior uniform-
+      // RGB lightness modifier (which collapsed multi-resource bodies
+      // to muddy shading on top of a uniform underlying texture);
+      // resource-based regions stay pixel-crisp and palette-coherent.
+      //
+      // 6 → ~2-3 super-cells across the visible hemisphere of a 60-px
+      // disc, the scale at which real planetary regional composition
+      // dichotomies live (Ganymede's dark/light terrain, Mars's polar
+      // plains vs. southern highlands, Mercury's regional albedo
+      // patches). Inherits the fine worley pass's boundary
+      // irregularity for free (super-cell edges are jittery, not
+      // grid-aligned).
+      const float REGION_PATCH_FACTOR = 6.0;
+      const float REGION_BUCKET_COUNT = 7.0;
+
+      // Phase 1.5c — discrete crater features with layered resource
+      // model. Crater seed cells are CRATER_PATCH_FACTOR × the fine
+      // worley cell pitch in the same sphere-projected (lon, lat)
+      // frame as 1.5a/b. Each cell may contain one impact crater
+      // whose existence probability scales with (1 - surfaceAge)²
+      // (squared so age drives crater density steeply — Mercury /
+      // Luna / Callisto saturate while Earth-class bodies show only
+      // rare impacts, matching the impact-rate decline over geologic
+      // time without modeling it explicitly). Craters paint solid
+      // from the SUBSURFACE mask — the complement of the surface
+      // region's 1.5b bucket — so a metals-surface region with rare-
+      // earth subsurface shows pink-grey craters on a dark grey
+      // region, a silicate-surface region with metals subsurface
+      // shows iron-grey craters on rust-orange. Surface features
+      // carry the body's own resource palette without any new color
+      // attribute. Solid-color crater paint deliberately preserved
+      // under the chunky aesthetic — no rim/floor brightness
+      // variation to avoid the muddy-shading regression that
+      // derailed 1.5b's first attempt.
+      //
+      // Tuning targets:
+      //   2.0 = each crater seed cell spans 2x2 fine cells (~10 px
+      //         equivalent at disc center). Visible hemisphere of a
+      //         60-px disc holds ~50 crater seed cells.
+      //   0.8 = max existence probability at surfaceAge=0. With the
+      //         (1-age)² scaling, Mercury at age=0.05 → 0.72 cells
+      //         have craters; Earth at age=0.7 → 0.072 (rare); Io
+      //         at age=1.0 → 0.
+      //   [0.2, 0.9] = crater radius range in crater-cell-fraction
+      //         units (0.5 ≈ half a crater cell wide). Combined with
+      //         hash² bias toward small (average ~0.43), most
+      //         craters render at 3-5 px while occasional big ones
+      //         hit 15+ px.
+      const float CRATER_PATCH_FACTOR = 2.0;
+      const float CRATER_DENSITY_MAX  = 0.8;
+      const float CRATER_RADIUS_MIN   = 0.2;
+      const float CRATER_RADIUS_MAX   = 0.9;
 
       float hash11(float x) {
         return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
@@ -321,15 +393,19 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       }
 
       // Pick one of three palette entries by a 0..1 hash, weighted by
-      // vWeights. Skips zero-weight slots automatically. Defensive
-      // fallback: weights summing to zero → palette0 (the world-class
-      // base color is always plumbed there).
-      vec3 pickFromPalette(float h) {
-        float w = vWeights.x + vWeights.y + vWeights.z;
+      // the supplied weights. Skips zero-weight slots automatically.
+      // Defensive fallback: weights summing to zero → palette0 (the
+      // world-class base color is always plumbed there). Banded mode
+      // passes vWeights directly; surface-mode land cells pass the
+      // body's weights AND'd with a per-region subset mask so each
+      // region paints from a different combination of resources
+      // (Phase 1.5b).
+      vec3 pickFromPalette(float h, vec3 weights) {
+        float w = weights.x + weights.y + weights.z;
         if (w <= 0.0) return vPalette0;
         float t = h * w;
-        if (t < vWeights.x) return vPalette0;
-        if (t < vWeights.x + vWeights.y) return vPalette1;
+        if (t < weights.x) return vPalette0;
+        if (t < weights.x + weights.y) return vPalette1;
         return vPalette2;
       }
 
@@ -358,14 +434,55 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
 
         vec3 col;
         if (vMode < 0.5) {
-          // Surface — worley/voronoi cells. Divide the disc into
-          // SURFACE_PATCH_PX-wide cells, jitter each cell's center
-          // per-body, and pick the palette entry for the nearest cell.
-          // Salted by vSeed so two same-palette planets get distinct
-          // patch layouts. 9 candidate cells (3x3 neighborhood) is the
-          // minimum needed for correct nearest-cell when centers are
-          // jittered within the full unit cell.
-          vec2 cellPos = d / SURFACE_PATCH_PX;
+          // Sphere projection — reconstruct the forward-hemisphere
+          // surface normal at this fragment and dot it with the
+          // band-aligned pole (tipped forward by arcsin(POLE_SIN), same
+          // foreshortening the rings and banded mode use). latSinS is
+          // the sine of latitude on the visible sphere; polar caps
+          // hug |latSinS| ≈ 1. Tilt rotation matches banded mode so
+          // a ringed terrestrial's caps and ring share one vantage.
+          //
+          // Frame derivation: in the band-aligned tilted frame the pole
+          // points along P = (0, POLE_COS, POLE_SIN) and the prime
+          // meridian (lon = 0 at the equator, facing the viewer) along
+          // F = (0, -POLE_SIN, POLE_COS); east is +x. For a surface
+          // normal n = (nxs, nys, nzs):
+          //   sin(lat) = dot(n, P) = nys*POLE_COS + nzs*POLE_SIN
+          //   cos(lat) cos(lon) = dot(n, F) = nzs*POLE_COS - nys*POLE_SIN
+          //   cos(lat) sin(lon) = dot(n, E) = nxs
+          // so lat = asin(latSinS) and lon = atan2(nxs, lonF). atan2 is
+          // well-defined across the visible hemisphere; the only
+          // singularity (visible pole) is a sub-pixel region masked by
+          // the ice cap for any body with iceFrac > 0.
+          float cT = cos(vTilt);
+          float sT = sin(vTilt);
+          float lxs =  d.x * cT + d.y * sT;
+          float lys = -d.x * sT + d.y * cT;
+          // Inset the projection by SPHERE_VISIBLE_FRAC so the disc
+          // edge maps inside the hemisphere rather than to the true
+          // limb — bounds cell foreshortening so they stop pinching
+          // to sub-pixel widths near the rim. See the constant block.
+          float nxs = (lxs / vRadius) * SPHERE_VISIBLE_FRAC;
+          float nys = (lys / vRadius) * SPHERE_VISIBLE_FRAC;
+          float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
+          float latSinS = nys * POLE_COS + nzs * POLE_SIN;
+          float lat     = asin(latSinS);
+          float lonF    = nzs * POLE_COS - nys * POLE_SIN;
+          float lon     = atan(nxs, lonF);
+
+          // Surface — sphere-projected worley/voronoi cells (1.5a).
+          // Cell space is (lon, lat), scaled by vRadius / SURFACE_PATCH_PX
+          // so disc-center cells stay at SURFACE_PATCH_PX while cells
+          // toward the limb compress along the foreshortening curve.
+          // The disc reads as a globe — features near the limb shrink
+          // and elongate parallel to the horizon exactly as on a real
+          // sphere — without paying any per-feature projection cost
+          // beyond the asin+atan above. Salted by vSeed so two same-
+          // palette planets get distinct patch layouts. 9 candidate
+          // cells (3x3 neighborhood) is the minimum needed for correct
+          // nearest-cell when centers are jittered within the full
+          // unit cell.
+          vec2 cellPos = vec2(lon, lat) * vRadius / SURFACE_PATCH_PX;
           vec2 cellId  = floor(cellPos);
           vec2 cellFrac = cellPos - cellId;
           float minDist2 = 1e9;
@@ -388,22 +505,6 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             }
           }
 
-          // Sphere projection — reconstruct the forward-hemisphere
-          // surface normal at this fragment and dot it with the
-          // band-aligned pole (tipped forward by arcsin(POLE_SIN), same
-          // foreshortening the rings and banded mode use). latSinS is
-          // the sine of latitude on the visible sphere; polar caps
-          // hug |latSinS| ≈ 1. Tilt rotation matches banded mode so
-          // a ringed terrestrial's caps and ring share one vantage.
-          float cT = cos(vTilt);
-          float sT = sin(vTilt);
-          float lxs =  d.x * cT + d.y * sT;
-          float lys = -d.x * sT + d.y * cT;
-          float nxs = lxs / vRadius;
-          float nys = lys / vRadius;
-          float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
-          float latSinS = nys * POLE_COS + nzs * POLE_SIN;
-
           // Layered fill, evaluated in priority order:
           //   1. Polar cap — |latSin| past (1 - iceFrac). iceFrac=1 fills
           //      the whole disc (Europa); iceFrac=0.1 leaves just the
@@ -424,8 +525,42 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             if (contH < vWaterFrac) {
               col = OCEAN_COLOR;
             } else {
+              // Phase 1.5b — per-region resource-subset selection.
+              // Aggregate REGION_PATCH_FACTOR fine worley cells per
+              // axis into a super-cell; the super-cell hash discretizes
+              // into one of REGION_BUCKET_COUNT non-empty subsets of
+              // {palette0, palette1, palette2}. AND the subset mask
+              // against the body's natural weights so the fine cell
+              // pick within the region paints from a different
+              // combination of the body's top-3 resources. Net visual:
+              // each region carries a distinct resource signature
+              // (Mercury's iron-grey, rare-earth rose, and silicate
+              // rust separate into spatial regions instead of mixing
+              // uniformly across the disc). Land-only — oceans and
+              // ice caps stay flat because their color isn't from the
+              // resource palette. Region edges inherit the fine
+              // worley pass's jittered shapes for free.
+              //
+              // Salts (401, 419) are distinct primes from worley
+              // jitter (13/19, 23/29), continent (113/127), resource
+              // (1009/2017), biome (197/311), cratering (547/569),
+              // cloud (991/...), and inward-fade dither (829/853).
+              vec2 regionCell = floor(winnerCell / REGION_PATCH_FACTOR);
+              float regionH = hash21(regionCell + vec2(vSeed * 401.0, vSeed * 419.0));
+              float bucketF = clamp(floor(regionH * REGION_BUCKET_COUNT), 0.0, REGION_BUCKET_COUNT - 1.0);
+              int bucket = int(bucketF);
+              vec3 mask;
+              if      (bucket == 0) mask = vec3(1.0, 0.0, 0.0);
+              else if (bucket == 1) mask = vec3(0.0, 1.0, 0.0);
+              else if (bucket == 2) mask = vec3(0.0, 0.0, 1.0);
+              else if (bucket == 3) mask = vec3(1.0, 1.0, 0.0);
+              else if (bucket == 4) mask = vec3(1.0, 0.0, 1.0);
+              else if (bucket == 5) mask = vec3(0.0, 1.0, 1.0);
+              else                  mask = vec3(1.0, 1.0, 1.0);
+              vec3 regionWeights = vWeights * mask;
+
               float h = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
-              col = pickFromPalette(h);
+              col = pickFromPalette(h, regionWeights);
               // Biome stipple — per-pixel hash on disc-local integer
               // pixel coords flips individual land pixels to the body's
               // biome color (archetype × stellar shift; see
@@ -449,25 +584,102 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
                   if (bH < effective) col = vBiomeColor;
                 }
               }
-            }
-          }
 
-          // Phase 1.4 cratering — sits after the cap/ocean/land paint and
-          // BEFORE clouds/haze so atmospheric layers cover the perturbed
-          // surface. Applies to every surface branch (land, ocean, cap)
-          // so an old icy moon reads as mottled ice and an old rocky
-          // body reads as cratered rock — the lightness perturbation is
-          // the unifying "old surface" visual, not a class-specific
-          // texture. Salts (547, 569) are distinct primes from worley
-          // jitter (13/19, 23/29), continent (113/127), resource
-          // (1009/2017), biome (197/311), cloud (991/...), and inward-
-          // fade dither (829/853), so a "lucky" cell can't accidentally
-          // line up old + biome-y or old + ocean-y from a shared hash.
-          if (vSurfaceAge < 1.0) {
-            float craterAmount = (1.0 - vSurfaceAge) * CRATER_MAX_AMPLITUDE;
-            float cH = hash21(winnerCell + vec2(vSeed * 547.0, vSeed * 569.0));
-            float perturb = (cH - 0.5) * 2.0 * craterAmount;
-            col = clamp(col + vec3(perturb), 0.0, 1.0);
+              // Phase 1.5c — discrete crater features with layered
+              // resource model. Crater seed cells aggregate
+              // CRATER_PATCH_FACTOR² fine cells in the same sphere-
+              // projected frame as 1.5a/b. For each fragment, scan
+              // the 3×3 neighborhood of crater seed cells:
+              //   - hash existence against (1 - surfaceAge)² × max
+              //   - if present, hash jittered center + power-law
+              //     radius
+              //   - test fragment-to-center distance; closest crater
+              //     containing the fragment wins (handles overlap)
+              // The winning crater's color comes from its region's
+              // SUBSURFACE mask (complement of the 1.5b region
+              // bucket the crater's center lies in). Solid-color
+              // crater paint — one pickFromPalette draw per crater.
+              //
+              // Salt allocation (vSeed × prime, vSeed × prime):
+              //   existence:  (547, 569)
+              //   jitter X:   (587, 547)
+              //   jitter Y:   (569, 587)
+              //   radius:     (569, 547) — reversed pair distinct
+              //                            from existence
+              //   palette:    (587, 569)
+              vec2 craterCellPos  = cellPos / CRATER_PATCH_FACTOR;
+              vec2 craterCellId   = floor(craterCellPos);
+              vec2 craterCellFrac = craterCellPos - craterCellId;
+              float ageMissing    = 1.0 - vSurfaceAge;
+              float craterDensity = ageMissing * ageMissing * CRATER_DENSITY_MAX;
+
+              float bestDist  = 1e9;
+              vec2  bestCraterId = vec2(0.0);
+              bool  inCrater  = false;
+
+              for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                  vec2 off = vec2(float(dx), float(dy));
+                  vec2 nCell = craterCellId + off;
+
+                  float existH = hash21(nCell + vec2(vSeed * 547.0, vSeed * 569.0));
+                  if (existH > craterDensity) continue;
+
+                  float jx = hash21(nCell + vec2(vSeed * 587.0, vSeed * 547.0));
+                  float jy = hash21(nCell + vec2(vSeed * 569.0, vSeed * 587.0));
+                  vec2  cCenter = off + vec2(jx, jy);
+
+                  float rH = hash21(nCell + vec2(vSeed * 569.0, vSeed * 547.0));
+                  float radius = CRATER_RADIUS_MIN +
+                                 (CRATER_RADIUS_MAX - CRATER_RADIUS_MIN) * rH * rH;
+
+                  float dist = length(cCenter - craterCellFrac);
+                  if (dist < radius && dist < bestDist) {
+                    bestDist = dist;
+                    bestCraterId = nCell;
+                    inCrater = true;
+                  }
+                }
+              }
+
+              if (inCrater) {
+                // Recompute the winning crater's center in fine-cell
+                // (cellPos) units to find which 1.5b region contains
+                // it. Same hash salts as in the loop so jitter math
+                // matches exactly.
+                float bjx = hash21(bestCraterId + vec2(vSeed * 587.0, vSeed * 547.0));
+                float bjy = hash21(bestCraterId + vec2(vSeed * 569.0, vSeed * 587.0));
+                vec2  bestCenter = (bestCraterId + vec2(bjx, bjy)) * CRATER_PATCH_FACTOR;
+
+                // The region the CRATER landed in (not the
+                // fragment's region — they can differ when craters
+                // straddle region boundaries). Use the same region
+                // hash math as 1.5b so the surface and crater
+                // pipelines agree on bucket assignment.
+                vec2 cRegionCell = floor(bestCenter / REGION_PATCH_FACTOR);
+                float cRegionH = hash21(cRegionCell + vec2(vSeed * 401.0, vSeed * 419.0));
+                int cBucket = int(clamp(floor(cRegionH * REGION_BUCKET_COUNT), 0.0, REGION_BUCKET_COUNT - 1.0));
+
+                // Subsurface mask = complement of the surface bucket.
+                // Bucket 6 (natural mix) has no complement available,
+                // so it falls back to natural weights — craters in
+                // those regions lose contrast (acceptable; those
+                // regions weren't reading as regionally varied
+                // anyway).
+                vec3 subMask;
+                if      (cBucket == 0) subMask = vec3(0.0, 1.0, 1.0);
+                else if (cBucket == 1) subMask = vec3(1.0, 0.0, 1.0);
+                else if (cBucket == 2) subMask = vec3(1.0, 1.0, 0.0);
+                else if (cBucket == 3) subMask = vec3(0.0, 0.0, 1.0);
+                else if (cBucket == 4) subMask = vec3(0.0, 1.0, 0.0);
+                else if (cBucket == 5) subMask = vec3(1.0, 0.0, 0.0);
+                else                   subMask = vec3(1.0, 1.0, 1.0);
+
+                vec3 subWeights = vWeights * subMask;
+                float cPalH = hash21(bestCraterId + vec2(vSeed * 587.0, vSeed * 569.0));
+                col = pickFromPalette(cPalH, subWeights);
+              }
+            }
           }
 
           // Clouds sit outside the cap branch — they paint over land +
@@ -594,9 +806,11 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
 
           // 6. Per-band palette pick. The * 41.0 salt keeps the
           //    band→palette hash uncorrelated from the * 7.0 salt
-          //    used for band widths above.
+          //    used for band widths above. Banded mode uses the body's
+          //    weights directly — no per-region subset masking (1.5b
+          //    is surface-mode only).
           float h = hash11(bandIdx + vSeed * 41.0);
-          col = pickFromPalette(h);
+          col = pickFromPalette(h, vWeights);
 
           // 7. Per-band lightness perturbation — see BAND_LIGHTNESS_JITTER
           //    block above. Uniform RGB delta preserves hue; the * 67.0
