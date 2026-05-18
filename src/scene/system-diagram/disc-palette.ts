@@ -4,8 +4,14 @@
 // consumed by makePlanetMaterial.
 //
 // Two render modes emerge from the body's world class + atmosphere:
-//   - **surface**  — speckle world-class color with the body's 2
-//                    dominant resource colors (per-pixel hash pick).
+//   - **surface**  — worley/voronoi cell texture painted with the body's
+//                    top 3 resource colors (or top 2 + chromophore when
+//                    the body carries a chromophore signal). The
+//                    world-class base color is intentionally absent —
+//                    the disc reads as gameplay-resource composition
+//                    rather than rocky/ice/desert taxonomy. World-class
+//                    color only surfaces as a flat-fill fallback when
+//                    a body has no resource signal at all.
 //   - **banded**   — quantize latitude into strips, each picking from
 //                    the body's top 3 atmospheric gas colors. Used for
 //                    gas/ice giants and Venus-class rocky worlds.
@@ -25,23 +31,13 @@ import { hash32 } from './geom/prng';
 import { bodyVisualTiltRad } from './geom/ring';
 import { PROCEDURAL_TEXTURE_MIN_PX } from './layout/constants';
 
-// Fraction of total surface weight reserved for the world-class base
-// color. Remaining (1 - SURFACE_BASE_WEIGHT) is split across the two
-// dominant resources by their relative magnitudes. 0.6 keeps the body
-// "reading as its class" while letting resources accent with ~40% of
-// the pixels — a Mars-class with metals heavy enough to dominate will
-// still have ~60% rust-tan but ~25-30% iron-grey speckle.
-const SURFACE_BASE_WEIGHT = 0.6;
-
-// Weights when a chromophore is present on a surface-mode body. The
-// chromophore takes the second resource slot — Earth's H2O cloud cover
-// or Mars's DUST haze is a single distinctive accent rather than a
-// fifth color. 0.25 cloud-pixel weight reads as "partly cloudy" rather
-// than "fully banded" — surface texture (continents, oceans) still
-// dominates.
-const SURFACE_WITH_CHROMOPHORE_BASE   = 0.5;
-const SURFACE_WITH_CHROMOPHORE_RES1   = 0.25;
-const SURFACE_WITH_CHROMOPHORE_CHROMO = 0.25;
+// Fraction of total surface weight reserved for the chromophore
+// (cloud deck / dust haze) when present. Remaining (1 - this) is split
+// across the body's top 2 resources by their relative magnitudes. 0.25
+// reads as "partly cloudy" rather than "fully banded" — resource
+// patches still dominate the disc while the chromophore registers as
+// a distinctive accent (Earth's H2O white, Mars's DUST rust).
+const SURFACE_CHROMOPHORE_WEIGHT = 0.25;
 
 // How strongly banded-mode palette entries collapse toward their
 // weighted mean. 0 = full-contrast alternation (e.g. 3 blue bands +
@@ -141,10 +137,10 @@ export function buildDiscPalette(
   const seed = hash32(`disc:${body.id}`) / 0x100000000;
   const banded = isBandedAtmosphere(body);
 
-  // Slot 0 is always the world-class base color in surface mode, or
-  // (in banded mode) the dominant gas — the shader's defensive fallback
-  // (weights summing to 0) renders palette[0] solid, so it has to be
-  // a reasonable single-color representation of the body.
+  // Slot 0 carries the body's dominant signal — top resource in surface
+  // mode, top gas in banded mode — so the shader's defensive fallback
+  // (weights summing to 0) renders palette[0] solid as a reasonable
+  // single-color representation of the body.
   let c0: Color;
   let c1: Color;
   let c2: Color;
@@ -175,31 +171,46 @@ export function buildDiscPalette(
       [c0, c1, c2] = blendTowardMean(g0, g1, g2, w0, w1, w2, BAND_BLEND_TOWARD_MEAN);
     }
   } else {
-    const base = worldClassColor(body);
-    const res = dominantResources(body, 2);
-    // Chromophore overlay for surface-mode bodies — Earth's H2O cloud
-    // decks, Mars's DUST haze. Replaces the second resource accent with
-    // the chromophore signature so the cloud/dust character paints
-    // visibly without overwhelming the resource speckle pattern.
+    // Surface mode is resource-driven: the disc paints from the body's
+    // resource grid so colors correlate directly to mining value. World-
+    // class color only re-enters as a flat-fill fallback when a body
+    // carries no resource signal at all.
     const chromoColor = chromophoreSurfaceColor(body);
-    if (res.length === 0) {
-      c0 = base; c1 = base; c2 = base;
-      w0 = 1; w1 = 0; w2 = 0;
-    } else if (chromoColor !== null) {
-      c0 = base;
-      c1 = res[0].color;
-      c2 = chromoColor;
-      w0 = SURFACE_WITH_CHROMOPHORE_BASE;
-      w1 = SURFACE_WITH_CHROMOPHORE_RES1;
-      w2 = SURFACE_WITH_CHROMOPHORE_CHROMO;
+    if (chromoColor !== null) {
+      // Chromophore overlay (Earth's H2O cloud deck, Mars's DUST haze)
+      // takes a fixed share; the body's top 2 resources split the
+      // remainder by relative magnitude.
+      const res = dominantResources(body, 2);
+      if (res.length === 0) {
+        const base = worldClassColor(body);
+        c0 = base; c1 = base; c2 = base;
+        w0 = 1; w1 = 0; w2 = 0;
+      } else {
+        const resTotal = 1 - SURFACE_CHROMOPHORE_WEIGHT;
+        c0 = res[0].color;
+        c1 = res[1]?.color ?? res[0].color;
+        c2 = chromoColor;
+        w0 = resTotal * res[0].weight;
+        w1 = resTotal * (res[1]?.weight ?? 0);
+        w2 = SURFACE_CHROMOPHORE_WEIGHT;
+      }
     } else {
-      const accentTotal = 1 - SURFACE_BASE_WEIGHT;
-      c0 = base;
-      c1 = res[0].color;
-      c2 = res[1]?.color ?? res[0].color;
-      w0 = SURFACE_BASE_WEIGHT;
-      w1 = accentTotal * res[0].weight;
-      w2 = accentTotal * (res[1]?.weight ?? 0);
+      // Top 3 resources fill all three palette slots. weights from
+      // dominantResources are already normalized to sum to 1 across
+      // however many nonzero resources the body carries.
+      const res = dominantResources(body, 3);
+      if (res.length === 0) {
+        const base = worldClassColor(body);
+        c0 = base; c1 = base; c2 = base;
+        w0 = 1; w1 = 0; w2 = 0;
+      } else {
+        c0 = res[0].color;
+        c1 = res[1]?.color ?? res[0].color;
+        c2 = res[2]?.color ?? res[0].color;
+        w0 = res[0].weight;
+        w1 = res[1]?.weight ?? 0;
+        w2 = res[2]?.weight ?? 0;
+      }
     }
   }
 
