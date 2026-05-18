@@ -8,7 +8,7 @@
 // ephemeral; dismissal is the cursor leaving the disc.
 
 import { drawPixelText, getFont, measurePixelText } from '../../data/pixel-font';
-import { BODIES, STARS, type BiosphereArchetype, type BiosphereTier, type Body, type WorldClass } from '../../data/stars';
+import { BODIES, STARS, type BiosphereArchetype, type BiosphereTier, type Body, type ResourceKey, type WorldClass } from '../../data/stars';
 import type { DiagramPick } from '../../scene/system-diagram';
 import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
@@ -43,23 +43,74 @@ const BIOSPHERE_TIER_LABEL: Record<Exclude<BiosphereTier, 'none'>, string> = {
   gaian:     'Gaian',
 };
 
-// Resource label table for the per-row mineral readouts on belts.
-// Listed in display order; entries with value 0 are still shown so the
-// reader can compare profiles across belts (a 0 is signal, not noise).
-const RES_ROWS: Array<{ key: string; field: 'resMetals' | 'resSilicates' | 'resVolatiles' | 'resRareEarths' | 'resRadioactives' | 'resExotics' }> = [
-  { key: 'metals',    field: 'resMetals' },
-  { key: 'silicates', field: 'resSilicates' },
-  { key: 'volatiles', field: 'resVolatiles' },
-  { key: 'rare',      field: 'resRareEarths' },
-  { key: 'radio',     field: 'resRadioactives' },
-  { key: 'exotics',   field: 'resExotics' },
+// Display label per resource. Used by dominantResourceLabels to render
+// the body's top-N resources as a single comma-separated value, so the
+// info card reads as "what's mineable here" instead of a flat six-row
+// numeric grid.
+const RESOURCE_LABEL: Record<ResourceKey, string> = {
+  resMetals:       'metals',
+  resSilicates:    'silicates',
+  resVolatiles:    'volatiles',
+  resRareEarths:   'rare earths',
+  resRadioactives: 'radio',
+  resExotics:      'exotics',
+};
+const RESOURCE_FIELDS: readonly ResourceKey[] = [
+  'resMetals', 'resSilicates', 'resVolatiles',
+  'resRareEarths', 'resRadioactives', 'resExotics',
 ];
 
-// Periods are stored in days. Sub-year reads in days; multi-year reads
-// in years so a 12-year orbit doesn't surface as "4383.0 d".
-function formatPeriod(days: number): string {
-  if (days < 365) return `${days.toFixed(1)} d`;
-  return `${(days / 365.25).toFixed(1)} y`;
+// Top `count` resource labels by raw value, descending. Empty array when
+// the body carries no resource signal at all. Mirrors the ordering used
+// by dominantResources() in data/stars.ts but skips the color step —
+// the panel only needs names.
+function dominantResourceLabels(b: Body, count = 3): string[] {
+  return RESOURCE_FIELDS
+    .map(f => ({ label: RESOURCE_LABEL[f], value: b[f] ?? 0 }))
+    .filter(e => e.value > 0)
+    .sort((a, c) => c.value - a.value)
+    .slice(0, count)
+    .map(e => e.label);
+}
+
+// Round fraction (0..1) to a percent string at a precision that keeps
+// trace-level differences readable. ≥10% → integer (98%), 0.1–10% →
+// one decimal (3.3%, 0.5%), <0.1% → two decimals (0.03%) — so a
+// Jupiter NH3 chromophore at 0.026% renders distinctly from Saturn's
+// 0.01% rather than both collapsing to "0%".
+function formatGasFrac(frac: number): string {
+  const pct = frac * 100;
+  if (pct >= 10) return `${Math.round(pct)}%`;
+  if (pct >= 0.1) return `${pct.toFixed(1)}%`;
+  return `${pct.toFixed(2)}%`;
+}
+
+// Top `count` atmospheric gases by molar fraction, formatted as
+// "name pct" so a player extractor can compare bulk reservoirs across
+// worlds — Uranus's 2.3% CH4 vs Jupiter's 0.3% CH4 reads at a glance.
+// Reads atm1/atm2/atm3 directly (CSV-authored, already ordered by
+// fraction descending). Empty when the body has no atmosphere data.
+function dominantGasLabels(b: Body, count = 3): string[] {
+  const pairs: Array<[string, number | null]> = [
+    [b.atm1 ?? '', b.atm1Frac],
+    [b.atm2 ?? '', b.atm2Frac],
+    [b.atm3 ?? '', b.atm3Frac],
+  ];
+  return pairs
+    .filter(([name]) => name !== '')
+    .slice(0, count)
+    .map(([name, frac]) => frac !== null ? `${name} ${formatGasFrac(frac)}` : name);
+}
+
+// Chromophore (condensed-phase aerosol / cloud-deck species) as a
+// "name pct" string, or null when the body has no chromophore. Kept
+// distinct from the gas row because the chromophore drives the visible
+// cloud/haze chemistry — Jupiter's brown NH3 belts, Titan's tholin
+// haze — independent of bulk-gas mining yields.
+function chromophoreLabel(b: Body): string | null {
+  if (b.chromophoreGas === null) return null;
+  if (b.chromophoreFrac === null) return b.chromophoreGas;
+  return `${b.chromophoreGas} ${formatGasFrac(b.chromophoreFrac)}`;
 }
 
 interface BodyRow { key: string; val: string }
@@ -92,10 +143,6 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
   if (b.kind === 'ring') return rowsForRing(b);
   const rows: BodyRow[] = [];
   if (b.worldClass !== null) rows.push({ key: k('class'),    val: WORLD_CLASS_LABEL[b.worldClass] });
-  if (b.massEarth !== null)  rows.push({ key: k('mass'),     val: `${b.massEarth.toFixed(2)} Mearth` });
-  if (b.radiusEarth !== null) rows.push({ key: k('radius'),  val: `${b.radiusEarth.toFixed(2)} Rearth` });
-  if (b.semiMajorAu !== null) rows.push({ key: k('orbit'),   val: `${b.semiMajorAu.toFixed(3)} AU` });
-  if (b.periodDays !== null)  rows.push({ key: k('period'),  val: formatPeriod(b.periodDays) });
   if (b.avgSurfaceTempK !== null) rows.push({ key: k('temp'), val: `${Math.round(b.avgSurfaceTempK)} K` });
   if (b.surfacePressureBar !== null) rows.push({ key: k('pressure'), val: `${b.surfacePressureBar.toFixed(2)} bar` });
   // Biosphere 'none' is the null-equivalent — skip; a planet with bacteria
@@ -106,18 +153,37 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
     const tierLabel = BIOSPHERE_TIER_LABEL[b.biosphereTier];
     rows.push({ key: k('life'), val: `${archLabel} ${tierLabel}` });
   }
+  const gases = dominantGasLabels(b);
+  if (gases.length > 0) rows.push({ key: k('gas'), val: gases.join(', ') });
+  const chromo = chromophoreLabel(b);
+  if (chromo !== null) rows.push({ key: k('clouds'), val: chromo });
+  // Gas/ice giants have no accessible surface — the procgen resource
+  // grid still carries numbers (atmospheric trace species etc.) but
+  // nothing's mineable in a "land a rig" sense, so suppress the row to
+  // keep player-relevant data forward. Moons of giants stay solid and
+  // still surface their resources.
+  if (!hasInaccessibleSurface(b)) {
+    const resources = dominantResourceLabels(b);
+    if (resources.length > 0) rows.push({ key: k('resources'), val: resources.join(', ') });
+  }
   return rows;
 }
 
-// Belt rows surface the band's extent and its full resource profile.
-// Resources are the gameplay payoff (asteroid mining, ice harvesting),
-// so listing all six lets players compare candidate belts at a glance.
+function hasInaccessibleSurface(b: Body): boolean {
+  return b.worldClass === 'gas_giant'
+      || b.worldClass === 'ice_giant'
+      || b.worldClass === 'gas_dwarf';
+}
+
+// Belt rows surface the band's extent, anchoring metadata, and the top
+// few mineable resources — collapsed from the full six-grid to the 2-3
+// dominant species so the panel reads as "what's worth scooping here"
+// rather than a numeric profile.
 function rowsForBelt(b: Body): BodyRow[] {
   const rows: BodyRow[] = [];
   if (b.innerAu !== null && b.outerAu !== null) {
     rows.push({ key: k('extent'), val: `${b.innerAu.toFixed(2)}–${b.outerAu.toFixed(2)} AU` });
   }
-  if (b.massEarth !== null) rows.push({ key: k('mass'), val: `${b.massEarth.toFixed(4)} Mearth` });
   // Largest body in km — surfaces the parent-body anchor that gives
   // 'discrete' populations their gameplay handle (sortie to Ceres-class
   // rather than sweep-harvest).
@@ -128,27 +194,22 @@ function rowsForBelt(b: Body): BodyRow[] {
   if (b.shepherdBodyIdx !== null) {
     rows.push({ key: k('shepherd'), val: BODIES[b.shepherdBodyIdx].name });
   }
-  for (const r of RES_ROWS) {
-    const v = b[r.field];
-    if (v !== null) rows.push({ key: k(r.key), val: `${v}/10` });
-  }
+  const resources = dominantResourceLabels(b);
+  if (resources.length > 0) rows.push({ key: k('resources'), val: resources.join(', ') });
   return rows;
 }
 
 // Ring rows: extent in planetary radii (so "1.1–2.3 R_p" reads against
-// the host planet's size) plus the full six-resource grid. The grid
-// carries composition (resVolatiles dominant → bright icy, rocky
-// resources dominant → dark dusty) and is what the renderer reads to
-// pick the ring's visual character.
+// the host planet's size) plus the top few dominant resources. The
+// underlying six-resource grid still drives the renderer's icy/dusty
+// lerp — the panel just doesn't surface the long form.
 function rowsForRing(b: Body): BodyRow[] {
   const rows: BodyRow[] = [];
   if (b.innerPlanetRadii !== null && b.outerPlanetRadii !== null) {
     rows.push({ key: k('extent'), val: `${b.innerPlanetRadii.toFixed(2)}–${b.outerPlanetRadii.toFixed(2)} R_p` });
   }
-  for (const r of RES_ROWS) {
-    const v = b[r.field];
-    if (v !== null) rows.push({ key: k(r.key), val: `${v}` });
-  }
+  const resources = dominantResourceLabels(b);
+  if (resources.length > 0) rows.push({ key: k('resources'), val: resources.join(', ') });
   return rows;
 }
 
