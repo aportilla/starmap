@@ -233,7 +233,9 @@ function distributeMoonAngles(
 function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const N = slots.length;
   const positions = new Float32Array(N * 3);
-  const sizesAttr = new Float32Array(N);
+  // Packed render metadata: stride 4 = [size, mode, seed, tilt]. See
+  // planets.ts for the rationale.
+  const renderMeta = new Float32Array(N * 4);
   // Hover flag per moon; flipped to 1 by MoonsLayer.setHovered.
   const hoveredAttr = new Float32Array(N);
   // Procedural-texture inputs — same shape as PlanetsLayer. Every
@@ -243,13 +245,13 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const palette1  = new Float32Array(N * 3);
   const palette2  = new Float32Array(N * 3);
   const weights   = new Float32Array(N * 3);
-  const modes     = new Float32Array(N);
-  const seeds     = new Float32Array(N);
-  const tilts     = new Float32Array(N);
-  const waterFracs = new Float32Array(N);
-  const iceFracs   = new Float32Array(N);
-  const biomeColors    = new Float32Array(N * 3);
-  const biomeCoverages = new Float32Array(N);
+  // Packed coverage scalars: stride 4 = [waterFrac, iceFrac,
+  // biomeCoverage, hazeTint].
+  const coverageScalars = new Float32Array(N * 4);
+  const biomeColors = new Float32Array(N * 3);
+  const hazeColors  = new Float32Array(N * 3);
+  // Packed atmospheric strokes: stride 2 = [rimWidthPx, cloudDensity].
+  const atmoStrokes = new Float32Array(N * 2);
   slots.forEach((slot, i) => {
     const b = BODIES[slot.bodyIdx];
     const disc = buildDiscPalette(b, slot.discPx, c => lerpTowardWhite(c, MOON_BRIGHTEN));
@@ -265,32 +267,35 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
     weights[i * 3 + 0] = disc.weights[0];
     weights[i * 3 + 1] = disc.weights[1];
     weights[i * 3 + 2] = disc.weights[2];
-    modes[i] = disc.mode;
-    seeds[i] = disc.seed;
-    tilts[i] = disc.tilt;
-    waterFracs[i] = disc.waterFrac;
-    iceFracs[i] = disc.iceFrac;
+    renderMeta[i * 4 + 0] = slot.discPx;
+    renderMeta[i * 4 + 1] = disc.mode;
+    renderMeta[i * 4 + 2] = disc.seed;
+    renderMeta[i * 4 + 3] = disc.tilt;
+    coverageScalars[i * 4 + 0] = disc.waterFrac;
+    coverageScalars[i * 4 + 1] = disc.iceFrac;
+    coverageScalars[i * 4 + 2] = disc.biomeCoverage;
+    coverageScalars[i * 4 + 3] = disc.hazeTint;
     biomeColors[i * 3 + 0] = disc.biomeColor[0];
     biomeColors[i * 3 + 1] = disc.biomeColor[1];
     biomeColors[i * 3 + 2] = disc.biomeColor[2];
-    biomeCoverages[i] = disc.biomeCoverage;
-    sizesAttr[i] = slot.discPx;
+    hazeColors[i * 3 + 0] = disc.hazeColor[0];
+    hazeColors[i * 3 + 1] = disc.hazeColor[1];
+    hazeColors[i * 3 + 2] = disc.hazeColor[2];
+    atmoStrokes[i * 2 + 0] = disc.rimWidthPx;
+    atmoStrokes[i * 2 + 1] = disc.cloudDensity;
   });
   const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('aSize',    new BufferAttribute(sizesAttr, 1));
-  geometry.setAttribute('aHovered', new BufferAttribute(hoveredAttr, 1));
-  geometry.setAttribute('aPalette0', new BufferAttribute(palette0, 3));
-  geometry.setAttribute('aPalette1', new BufferAttribute(palette1, 3));
-  geometry.setAttribute('aPalette2', new BufferAttribute(palette2, 3));
-  geometry.setAttribute('aWeights',  new BufferAttribute(weights, 3));
-  geometry.setAttribute('aMode',     new BufferAttribute(modes, 1));
-  geometry.setAttribute('aSeed',     new BufferAttribute(seeds, 1));
-  geometry.setAttribute('aTilt',     new BufferAttribute(tilts, 1));
-  geometry.setAttribute('aWaterFrac', new BufferAttribute(waterFracs, 1));
-  geometry.setAttribute('aIceFrac',   new BufferAttribute(iceFracs, 1));
-  geometry.setAttribute('aBiomeColor',    new BufferAttribute(biomeColors, 3));
-  geometry.setAttribute('aBiomeCoverage', new BufferAttribute(biomeCoverages, 1));
+  geometry.setAttribute('position',     new BufferAttribute(positions, 3));
+  geometry.setAttribute('aRenderMeta',  new BufferAttribute(renderMeta, 4));
+  geometry.setAttribute('aHovered',     new BufferAttribute(hoveredAttr, 1));
+  geometry.setAttribute('aPalette0',    new BufferAttribute(palette0, 3));
+  geometry.setAttribute('aPalette1',    new BufferAttribute(palette1, 3));
+  geometry.setAttribute('aPalette2',    new BufferAttribute(palette2, 3));
+  geometry.setAttribute('aWeights',     new BufferAttribute(weights, 3));
+  geometry.setAttribute('aCoverageScalars', new BufferAttribute(coverageScalars, 4));
+  geometry.setAttribute('aBiomeColor',  new BufferAttribute(biomeColors, 3));
+  geometry.setAttribute('aHazeColor',   new BufferAttribute(hazeColors, 3));
+  geometry.setAttribute('aAtmoStrokes', new BufferAttribute(atmoStrokes, 2));
   const material = makePlanetMaterial(1.0);
   const points = new Points(geometry, material);
   points.renderOrder = renderOrder;

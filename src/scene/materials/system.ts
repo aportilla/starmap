@@ -58,19 +58,26 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       uViewport:  { value: new Vector2(window.innerWidth, window.innerHeight) },
     },
     vertexShader: `
-      attribute float aSize;
+      // Per-body render metadata packed into one vec4 to stay under the
+      // GPU's gl_MaxVertexAttribs cap (8 on some integrated GPUs / WebGL1
+      // contexts). Layout: x = size in px, y = mode, z = seed, w = tilt.
+      attribute vec4  aRenderMeta;
       attribute float aHovered;
       attribute vec3  aPalette0;
       attribute vec3  aPalette1;
       attribute vec3  aPalette2;
       attribute vec3  aWeights;
-      attribute float aMode;
-      attribute float aSeed;
-      attribute float aTilt;
-      attribute float aWaterFrac;
-      attribute float aIceFrac;
+      // Four per-fragment 0..1 scalars packed into one attribute.
+      // Layout: x = waterFrac, y = iceFrac, z = biomeCoverage,
+      // w = hazeTint. Unpacked into individual varyings below so the
+      // fragment shader can stay readable.
+      attribute vec4  aCoverageScalars;
       attribute vec3  aBiomeColor;
-      attribute float aBiomeCoverage;
+      attribute vec3  aHazeColor;
+      // Atmospheric stroke widths/densities packed together.
+      // Layout: x = rimWidthPx (haze or rayleigh rim, 0..N integer px),
+      // y = cloudDensity (1.3c H2O patch coverage, 0..CLOUD_MAX).
+      attribute vec2  aAtmoStrokes;
       varying float vRadius;
       varying vec2  vCenter;
       varying float vHovered;
@@ -85,6 +92,10 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vIceFrac;
       varying vec3  vBiomeColor;
       varying float vBiomeCoverage;
+      varying vec3  vHazeColor;
+      varying float vHazeTint;
+      varying float vRimWidthPx;
+      varying float vCloudDensity;
       uniform float uDiscScale;
       uniform vec2  uViewport;
       void main() {
@@ -93,19 +104,27 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vPalette1 = aPalette1;
         vPalette2 = aPalette2;
         vWeights  = aWeights;
-        vMode     = aMode;
-        vSeed     = aSeed;
-        vTilt     = aTilt;
-        vWaterFrac = aWaterFrac;
-        vIceFrac   = aIceFrac;
+        vMode     = aRenderMeta.y;
+        vSeed     = aRenderMeta.z;
+        vTilt     = aRenderMeta.w;
+        vWaterFrac     = aCoverageScalars.x;
+        vIceFrac       = aCoverageScalars.y;
         vBiomeColor    = aBiomeColor;
-        vBiomeCoverage = aBiomeCoverage;
+        vBiomeCoverage = aCoverageScalars.z;
+        vHazeColor   = aHazeColor;
+        vHazeTint    = aCoverageScalars.w;
+        vRimWidthPx  = aAtmoStrokes.x;
+        vCloudDensity = aAtmoStrokes.y;
 
         // Integer-pixel disc diameter. Floor + 0.5 → round-to-nearest.
-        float sz = floor(aSize * uDiscScale + 0.5);
-        // Rasterizer padding (see RASTER_PAD in shared.ts); the fragment
-        // discard test does the real bounding.
-        gl_PointSize = sz + ${glsl(RASTER_PAD)};
+        float sz = floor(aRenderMeta.x * uDiscScale + 0.5);
+        // Sprite extent must include the atmospheric halo that extends
+        // 0..3 px OUTSIDE the disc (1.3a/b outward rim), so the
+        // rasterizer covers that region. Without the extra padding the
+        // halo fragments would never be rasterized. RASTER_PAD adds the
+        // small fixed bounding-box headroom; the rim term adds enough
+        // space for the per-body halo width.
+        gl_PointSize = sz + ${glsl(RASTER_PAD)} + 2.0 * aAtmoStrokes.x;
         vRadius = sz * 0.5;
 
         // Parity-aware snap of the projected center to the pixel grid:
@@ -137,6 +156,10 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vIceFrac;
       varying vec3  vBiomeColor;
       varying float vBiomeCoverage;
+      varying vec3  vHazeColor;
+      varying float vHazeTint;
+      varying float vRimWidthPx;
+      varying float vCloudDensity;
 
       // Banded-mode density: bands per radius pixel. Tuned so a
       // Uranus-class disc (~43 px radius) gets ~30 bands; Jupiter
@@ -215,6 +238,60 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       const float BIOME_LAT_MAX  = 0.85;
       const float BIOME_LAT_RAMP = 0.15;
 
+      // Phase 1.3c cloud cells — anisotropic worley in the equator-
+      // aligned frame. CLOUD_LON_PX > CLOUD_LAT_PX gives cells stretched
+      // east-west (zonal-flow direction), so cloud silhouettes read as
+      // wind-swept streaks rather than axis-aligned grid squares. The
+      // jittered-center worley pass produces irregular cell boundaries
+      // that follow the ratio. Earth at ~60 px disc gets ~5 cells across
+      // the equator and ~12 across latitudes — plenty of variation.
+      const float CLOUD_LON_PX = 12.0;
+      const float CLOUD_LAT_PX = 5.0;
+
+      // Fixed cloud color — near-white, slightly cool. Same value as
+      // GAS_COLOR[H2O] in stars.ts, hardcoded here so the shader doesn't
+      // need a per-body cloud-color attribute (cloud color is always
+      // H2O white — the only chromophore routing to this pass is H2O).
+      const vec3 CLOUD_COLOR = vec3(0.894, 0.925, 0.941);
+
+      // Phase 1.3a/b atmospheric rim — paints both OUTSIDE the disc (the
+      // halo extending into space, 0..3 px driven by pressure) AND
+      // INSIDE the disc near the limb (an edge-on column-thickness fade
+      // proportional to disc radius, simulating atmospheric haze across
+      // the planet's near-tangential limb).
+      //
+      // **Stroke-stacking model.** For a halo of width W, conceptually
+      // we paint W concentric strokes — one of each width from W down
+      // to 1 — each at the same base opacity. Layer L (counted from the
+      // disc edge outward) is covered by (W - L) of those strokes, so
+      // its effective alpha is 1 - (1 - alpha)^(W - L). The innermost layer
+      // gets the most coverage (densest column at the limb); outer
+      // layers fade naturally as fewer strokes overlap them. Computed
+      // inline rather than actually painting W strokes — the math is
+      // the closed form of multiple back-to-front blends.
+      //
+      // **Fake transparency.** Outward halo fragments output
+      // rimColor × alpha as opaque, treating the scene background as
+      // black. This keeps the planet material at transparent=false
+      // so depthWrite and the diagram's per-vertex z-stack still
+      // function. Inward fade is a per-fragment lerp on the surface
+      // color — always opaque output.
+      const float OUTER_BASE_ALPHA = 0.35;
+      const float INNER_BASE_ALPHA = 0.08;
+      // Width of the inward fade as a fraction of disc radius. Bands
+      // within this width grow as 1, 2, 3, ... px from the limb inward
+      // following the sphere-projection foreshortening curve — see the
+      // inward-fade block below.
+      const float INWARD_RIM_FRACTION = 0.4;
+
+      // Per-pixel dither amplitude (in pixels of distFromLimb) applied
+      // to the inward-fade band boundaries. 1.5 → each pixel jitters by
+      // up to ±0.75 px before its band index is computed, so pixels
+      // near a boundary scatter binary between the two sides. Net
+      // visual: adjacent concentric bands blur into each other and the
+      // rim reads as organic haze rather than clean stripes.
+      const float INWARD_BAND_DITHER = 4.0;
+
       float hash11(float x) {
         return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
       }
@@ -238,7 +315,25 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       void main() {
         vec2 d = gl_FragCoord.xy - vCenter;
         float r = length(d);
-        if (r > vRadius) discard;
+
+        // Outside the disc — paint the atmospheric halo (1.3a/b outward)
+        // if any, else discard. Sprite is sized to give us vRimWidthPx
+        // pixels of overdraw space in the outward direction. Stack count
+        // for layer L = (W - L): innermost layer (closest to disc) is
+        // covered by the widest stroke and every narrower stroke, so it
+        // accumulates the most opacity. Output uses real alpha so the
+        // halo blends correctly with rings, moons, and other scene
+        // elements behind it (the planet material is transparent=true
+        // for this reason — see the material config below).
+        if (r > vRadius) {
+          if (r > vRadius + vRimWidthPx || vRimWidthPx < 1.0) discard;
+          float distOut = r - vRadius;
+          float layer = floor(distOut);
+          float stackCount = vRimWidthPx - layer;
+          float rimA = 1.0 - pow(1.0 - OUTER_BASE_ALPHA, stackCount);
+          gl_FragColor = vec4(vHazeColor, rimA);
+          return;
+        }
 
         vec3 col;
         if (vMode < 0.5) {
@@ -334,7 +429,54 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
                 }
               }
             }
+
+            // Phase 1.3c H2O cloud patches — anisotropic worley cells in
+            // the equator-aligned frame. Paints CLOUD_COLOR over land +
+            // ocean cells (cap is excluded by construction — this branch
+            // only runs when |latSinS| <= 1 - vIceFrac). Cells stretched
+            // east-west give a zonal-flow / wind-swept silhouette rather
+            // than axis-aligned grid squares. Salts (991/997 + 1013/1019
+            // + 1031/1033) are distinct primes from continent (113/127),
+            // resource (1009/2017), and biome (197/311) so cloud
+            // placement decorrelates from every other surface feature.
+            if (vCloudDensity > 0.0) {
+              float cCT = cos(vTilt);
+              float cST = sin(vTilt);
+              float clx =  d.x * cCT + d.y * cST;
+              float cly = -d.x * cST + d.y * cCT;
+              vec2 cloudPos = vec2(clx / CLOUD_LON_PX, cly / CLOUD_LAT_PX);
+              vec2 cloudCellId = floor(cloudPos);
+              vec2 cloudFrac   = cloudPos - cloudCellId;
+              float minCloudD2 = 1e9;
+              vec2  winnerCloudCell = cloudCellId;
+              for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                  vec2 off = vec2(float(dx), float(dy));
+                  vec2 nCell = cloudCellId + off;
+                  vec2 jitter = vec2(
+                    hash21(nCell + vec2(vSeed * 991.0,  vSeed * 997.0)),
+                    hash21(nCell + vec2(vSeed * 1013.0, vSeed * 1019.0))
+                  );
+                  vec2 nCenter = off + jitter;
+                  vec2 diff = nCenter - cloudFrac;
+                  float d2 = dot(diff, diff);
+                  if (d2 < minCloudD2) {
+                    minCloudD2 = d2;
+                    winnerCloudCell = nCell;
+                  }
+                }
+              }
+              float cH = hash21(winnerCloudCell + vec2(vSeed * 1031.0, vSeed * 1033.0));
+              if (cH < vCloudDensity) col = CLOUD_COLOR;
+            }
           }
+
+          // Phase 1.3a haze tint — uniform per-fragment lerp toward the
+          // haze color across every surface paint (resource, ocean, ice,
+          // biome, clouds). vHazeTint = 0 on bodies without a haze-class
+          // chromophore so this is a no-op.
+          if (vHazeTint > 0.0) col = mix(col, vHazeColor, vHazeTint);
+
         } else {
           // Banded atmosphere — Jupiter-style zonal flow.
           //
@@ -420,6 +562,46 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           col = clamp(col + vec3(lightJ), 0.0, 1.0);
         }
 
+        // Phase 1.3a/b INWARD fade — atmospheric haze visible inside
+        // the disc near the limb, simulating column thickening under
+        // edge-on viewing geometry. Applies to BOTH surface and banded
+        // modes: surface bodies show haze over land/ocean/biome, banded
+        // bodies show haze over the band paint. Width = radius ×
+        // INWARD_RIM_FRACTION, purely radius-driven.
+        //
+        // Band widths grow as 1, 2, 3, ... px from the limb inward —
+        // the sphere-projection foreshortening curve. Sampling equal
+        // angular shells from the visible meridian projects to image
+        // bands with widths proportional to k (the shell index), giving
+        // thin bands at the limb and wider ones toward the disc center.
+        // Cumulative width through band k is (k+1)(k+2)/2, so the
+        // inverse map from distFromLimb d to bandIdx is:
+        //   bandIdx = floor((sqrt(1 + 8d) - 1) / 2)
+        //
+        // Same stroke-stacking model as the outward halo: band B
+        // counted from the limb inward gets coverage of (numBands - B)
+        // strokes — limb-side band is most opaque, fading inward.
+        if (vRimWidthPx >= 1.0) {
+          float maxInward = floor(vRadius * INWARD_RIM_FRACTION);
+          float distIn = vRadius - r;
+          if (distIn < maxInward) {
+            // Dither distFromLimb on a per-pixel hash so band boundaries
+            // scatter binary across a 1–2 px transition zone instead of
+            // landing on perfect concentric circles. Salts (829, 853)
+            // are distinct primes from continent (113, 127), resource
+            // (1009, 2017), biome (197, 311), and cloud (991/997/...).
+            float dJ = hash21(floor(d) + vec2(vSeed * 829.0, vSeed * 853.0)) - 0.5;
+            float distInJ = max(0.0, distIn + dJ * INWARD_BAND_DITHER);
+            float bandIdx  = floor((sqrt(1.0 + 8.0 * distInJ) - 1.0) / 2.0);
+            float numBands = floor((sqrt(1.0 + 8.0 * maxInward) - 1.0) / 2.0);
+            float stackCount = numBands - bandIdx;
+            if (stackCount > 0.0) {
+              float fadeA = 1.0 - pow(1.0 - INNER_BASE_ALPHA, stackCount);
+              col = mix(col, vHazeColor, fadeA);
+            }
+          }
+        }
+
         // 1-px hover rim — same as the previous flat-disc material. The
         // discard above bounds the disc; this swap stamps the outermost
         // pixel ring (where r > vRadius - 1) to white when hovered, so
@@ -429,11 +611,19 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         gl_FragColor = vec4(col, 1.0);
       }
     `,
-    transparent: false,
+    // Transparent because the atmospheric halo (1.3a/b outward) outputs
+    // a partial alpha that needs to blend with whatever's behind it
+    // (rings, moons, other bodies). Disc-interior fragments still output
+    // alpha=1.0, so they're opaque-equivalent under the standard blend.
+    transparent: true,
     // depthWrite intentionally true — the system diagram threads a
     // per-vertex z based on each planet's row index so each planet's
     // stack (back-ring / back-moon / disc / front-ring / front-moon)
-    // renders as a single z-layer above or below its neighbors.
+    // renders as a single z-layer above or below its neighbors. The
+    // renderOrder field on each layer enforces the painter's-algorithm
+    // sequence within the transparent bucket, so back-rings and back-
+    // moons paint before the planet halo and front-rings/front-moons
+    // paint after it.
     depthWrite: true,
   });
   snappedMaterials.push(m);

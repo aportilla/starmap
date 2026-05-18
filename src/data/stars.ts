@@ -543,6 +543,29 @@ export const GAS_VISIBILITY_FILTER: Partial<Record<WorldClass, ReadonlySet<AtmGa
   // ice_giant intentionally absent — CH4 is the Uranus/Neptune blue.
 };
 
+// Molecular weight per atmospheric gas (amu). Lighter gases concentrate
+// at high altitude in equilibrium atmospheres — useful for picking the
+// gas most visible at the LIMB of banded bodies whose chromophore is
+// deep cloud chemistry (NH3 on gas giants) rather than a high-altitude
+// haze. Aerosol species (SILICATE, DUST) get a "heavy particulate"
+// weight that keeps them out of the lightest-gas pick — they enter the
+// limb color via the chromophore path, not via this table.
+export const GAS_MOLECULAR_WEIGHT: Record<AtmGas, number> = {
+  H2:   2,
+  He:   4,
+  CH4: 16,
+  NH3: 17,
+  H2O: 18,
+  N2:  28,
+  CO:  28,
+  O2:  32,
+  Ar:  40,
+  CO2: 44,
+  SO2: 64,
+  SILICATE: 100,
+  DUST:     100,
+};
+
 export const GAS_POTENCY: Record<AtmGas, number> = {
   // Transparent / weakly-scattering — present in the atmosphere but
   // contribute little to the apparent color even at high fractions.

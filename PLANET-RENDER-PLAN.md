@@ -13,6 +13,7 @@ Make planets and moons feel like *places* — distinct, beautiful, enticing — 
 Surface mode reads `worldClass`, `axialTiltDeg`, the six-scalar resource grid, atmosphere (top three gases + chromophore), `waterFraction`, `iceFraction`. Banded mode reads the same gases + chromophore + `axialTiltDeg`. Both share parity-aware pixel snap and the same sphere-projection foreshortening (`RING_MINOR_OVER_MAJOR` pole tilt) so a ringed body's bands and ring share one vantage.
 
 Most-recent landings:
+- **Phase 1.3a/b/c — atmospheric rim + tint + clouds** (all done). Every banded body and every surface body with non-trivial pressure now carries an atmospheric column visible at the limb: a stroke-stacked outward halo extending up to 3 px into space, an inward fade following the sphere-projection foreshortening curve (band widths 1, 2, 3, ... px from the limb inward), and a per-fragment uniform tint on surface bodies with a haze-class chromophore. Earth gets the Rayleigh cyan limb plus H2O cloud patches; Venus, Titan, Io get their SO2/CH4 chromophore haze; Jupiter and Saturn get the bright H2 cream limb (the NH3 chromophore color is *deep* cloud chemistry, not at the limb); Uranus and Neptune get CH4 cyan-blue (absorption-dominant ice giants). Curated chromophores expanded from `{Jupiter NH3, Earth H2O, Saturn NH3, Titan CH4}` to also include `{Venus SO2, Mars DUST, Io SO2}`.
 - **Phase 1.2 — biome stipple** driven by `biosphereArchetype × biosphereTier × hostStar.cls`. Earth's temperate land paints as dense green chlorophyll; M-dwarf carbon_aqueous worlds shift to deep purple (Kiang-style "Purple Earth"); K → rust-red; F/A → gold. Tier drives coverage density (microbial sparse, gaian dense). O/B/WD/BD hosts and prebiotic worlds suppress entirely.
 - **Phase 1.1 — oceans + polar caps** from `waterFraction` + `iceFraction`. Earth reads as ocean-dominated with small caps; Europa fills white; Mars keeps a thin polar trim.
 - **Albedo removed from the render path.** Body brightness is now genuinely emergent. The `body.albedo` field stays in the data model for now; pinned for removal pending refactor of the Stefan-Boltzmann temp derivation that still consumes it.
@@ -197,32 +198,53 @@ Combined per body: `biomeColor = BIOME_TINT_COLOR[archetype] · BIOME_STELLAR_SH
 - Stipple, biome, cratering, and clouds all share the per-pixel hash space. The stipple salt must be distinct from all other surface-pass salts (see the cross-cutting salt budget below).
 - Coverage curve for the three tiers is the load-bearing visual choice — too sparse and gaian reads as microbial; too dense and microbial reads as gaian. First pass should leave a clear visual gap between the three.
 
-### 1.3 Clouds / dust haze
+### 1.3 Atmospheric haze and clouds (DONE)
 
-**Why.** Earth's clouds, Mars's dust storms, and any procgen surface body's chromophore aerosol layer should read as a separate layer *above* the ground rather than as another resource patch. Today the chromophore folds into the resource palette slot — it's "another color of patch" rather than "a thin layer above the surface." Hoisting it into its own pass gives the disc real depth — ground + above-ground in two layers.
+Three sub-passes shipped, covering every body in the catalog that carries any atmospheric signal. The chromophore signal splits cleanly into two physically distinct rendering paths driven by *which* chromophore species is set, plus a third channel for clear thick atmospheres:
 
-**Trigger.** All of:
-- Surface mode
-- `chromophoreGas !== null` and `chromophoreFrac > 0`
-- Cell not already ice (cap absorbs everything above; clouds-over-cap loses the cap signal)
+- **H2O** condenses into discrete cloud cells via localized convection (Earth's cumulus, an ocean world's overcast). Patchy → 1.3c.
+- **CH4, SO2, DUST, SILICATE** form well-mixed photochemical hazes or wind-suspended aerosols (Titan tholin, Venusian SO2, Martian dust, hot sub-Neptune silicate fog). Uniform → 1.3a.
+- **Clear thick atmospheres** with no haze chromophore (Earth above 0.1 bar) get Rayleigh-blue scattering at the limb → 1.3b.
 
-**Data inputs.** `chromophoreGas` (color lookup via `CHROMOPHORE_COLOR` / `GAS_COLOR`), `chromophoreFrac` (density of cloud cells).
+Banded bodies (Venus, Titan, gas/ice giants) have no surface to tint, so the 1.3a uniform tint is suppressed for them — but they still get the 1.3a outward halo + inward fade, with the rim color picked from a small three-regime decision (see "Banded rim color" below).
 
-**Pipeline.**
-- Drop the chromophore from the surface-mode resource palette slot (it now has its own pass). Land cells revert to top-3 resources by `dominantResources(body, 3)`.
-- Add a second coarse-cell pass at `CLOUD_PATCH_PX` (independently tuned from `CONTINENT_GROUP × SURFACE_PATCH_PX`), with its own jitter and a salted hash decorrelated from continent + resource hashes.
-- A cloud cell activates when `hash < cloudDensity`, where `cloudDensity = clamp(chromophoreFrac × CLOUD_VISIBILITY_BOOST, 0, CLOUD_MAX_COVERAGE)`. The boost mirrors `CHROMOPHORE_VISUAL_BOOST` (condensed-phase species punch above their molar fraction); the cap prevents an Earth-class body from going fully overcast.
-- Activated cells paint `CHROMOPHORE_COLOR[gas] ?? GAS_COLOR[gas]` over whatever ground/biome/resource lay beneath.
-- Cloud cells skip when `|latSinS| > 1 - vIceFrac` so the cap renders cleanly above.
+**Chromophore exits the surface-mode resource palette in this phase.** Land cells revert to top-3 resources by `dominantResources(body, 3)`. `SURFACE_CHROMOPHORE_WEIGHT` deleted.
 
-**Tuning anchors.**
-- Earth (H2O chromophore) — wispy scattered cover capping at `CLOUD_MAX_COVERAGE` ≈ 35%. Resource and biome hues read through the gaps.
-- Procgen Mars-class (DUST chromophore from `CHROMOPHORE_BY_CLASS`'s desert branch) — rust-haze cells overlay the rust land. Subtle but adds atmospheric feel.
-- Procgen Hycean (H2O chromophore on cold ocean world) — pale clouds over blue ocean, Earth's cold cousin.
+#### Atmospheric rim: outward halo + inward fade
 
-**Risk.**
-- Removing chromophore from the resource palette slot frees one slot. Land cells now pick from up to 3 resources only. Need to verify Earth and Mars-class bodies still read as themselves with the chromophore-out-of-palette configuration. Likely fine — Earth's top three (Volatiles, Silicates, Metals) cover its character; Mars's top three (Metals, Silicates, RareEarths) ditto.
-- Clouds + biome + cratering all paint over the same cells. Pipeline order matters — see Open questions below.
+The rim is symmetric around the disc edge: an outward halo extending into space, plus an inward fade across the visible limb representing edge-on column thickening. Both use the same rim color (`vHazeColor`), the same per-stroke base alpha, and the same **stroke-stacking** opacity model — but their geometries differ to honor how the atmosphere sits on a sphere.
+
+**Outward halo (`vRadius < r ≤ vRadius + vRimWidthPx`).** Width 0–3 px, driven by `log10(surfacePressureBar + 1)` thresholds (`HAZE_RIM_LOG10_THRESHOLDS`). Each integer-pixel layer L outward gets stack count `(W − L)`: innermost layer (closest to disc) is covered by all W conceptual strokes, outermost by only the widest. Effective alpha per layer = `1 − (1 − OUTER_BASE_ALPHA)^stackCount` — the closed form of painting W concentric strokes back-to-front. Output is `vec4(vHazeColor, rimA)` with the planet material's `transparent: true`, so the halo alpha-blends correctly with rings, moons, and other bodies behind it. The sprite (`gl_PointSize`) is enlarged per-vertex by `2 × rimWidthPx` so the rasterizer covers the halo region.
+
+**Inward fade (`vRadius − maxInward ≤ r < vRadius`).** Width `floor(vRadius × INWARD_RIM_FRACTION)`, radius-driven only (a bigger planet has a more visible limb under edge-on column geometry). **Band widths grow 1, 2, 3, ... px from the limb inward**, following the natural sphere-projection foreshortening curve: equal angular shells of a 3D atmosphere project to image bands whose width is approximately linear in shell index. The closed-form inverse maps `distFromLimb d` to `bandIdx = floor((sqrt(1 + 8d) − 1) / 2)`. Stack count and alpha follow the same model as the outward halo (with `INNER_BASE_ALPHA` tuned subtler than the outer base). A per-pixel hash dither (`INWARD_BAND_DITHER`) scatters band boundaries across ±0.75 px so they read as organic haze, not concentric stripes. Output is the standard opaque per-fragment lerp `col = mix(col, vHazeColor, fadeA)`.
+
+The continuity is intentional: at the limb (`r = vRadius`), the innermost outward layer and the outermost inward band both hit their maximum stack, so the opacity ridge centers exactly on the disc edge.
+
+#### Banded rim color: a three-regime decision
+
+`bandedRimColor(body)` in `disc-palette.ts` picks the limb color for banded bodies. The same regime applies to surface-mode bodies too (1.3a haze rim, 1.3b Rayleigh limb) but their decision tree is simpler.
+
+| Regime | What's at the limb | Color source | Examples |
+|---|---|---|---|
+| High-altitude aerosol chromophore | The aerosol layer itself | `CHROMOPHORE_COLOR[gas]` (with `GAS_COLOR` fallback) | Titan CH4 tholin, Venus SO2, hot sub-Neptune SILICATE |
+| Strong absorber mixed throughout (ice giant) | The absorber's transmission color | `topGases(body)[0]` (rank by `frac × potency`) | Uranus / Neptune CH4 cyan-blue |
+| Forward scattering through a transparent column | Lightest gas's clear-gas color | `GAS_COLOR` of `pickLightestAtmGas(body)` (uses `GAS_MOLECULAR_WEIGHT`) | Jupiter / Saturn H2 cream |
+
+`HIGH_ALTITUDE_CHROMOPHORES = {CH4, SO2, SILICATE}` — excludes NH3 (deep cloud chemistry on gas giants, not visible at the limb) and H2O (routes to 1.3c cloud patches, not a limb haze).
+
+Because each body's rim color is now physically appropriate (light for scattering atmospheres, saturated for absorbing/haze atmospheres), the inward fade uses a plain `mix()` lerp and the limb naturally brightens or color-shifts in the right direction.
+
+#### 1.3a Atmospheric haze tint (surface-mode bodies)
+
+The per-fragment uniform tint that paints over the whole disc on surface-mode bodies with a haze chromophore (Mars rust, Io sulfur, procgen pre-banded SO2 / silicate worlds). Quantized into 3 discrete lerp amounts (`HAZE_TINT_LIGHT/MEDIUM/HEAVY_AMOUNT`) keyed off `chromophoreFrac × CHROMOPHORE_VISUAL_BOOST`. Suppressed on banded bodies (no surface to tint).
+
+#### 1.3b Rayleigh limb
+
+A 1-px sky-cyan rim (`THEME_RAYLEIGH_COLOR`) for surface-mode bodies with `surfacePressureBar ≥ RAYLEIGH_PRESSURE_THRESHOLD` and no haze chromophore. Earth is the canonical case. Reuses the rim shader path — `hazeColor` becomes the Rayleigh cyan, `rimWidthPx = 1`, `hazeTint` stays 0.
+
+#### 1.3c H2O cloud patches
+
+Discrete cloud cells painted over land + ocean (suppressed in the polar cap region). Active only when `chromophoreGas === H2O`. Implemented as **anisotropic worley cells** in the equator-aligned frame (`CLOUD_LON_PX / CLOUD_LAT_PX` ≈ 2.4:1 stretch), so cloud silhouettes elongate east-west — wind-swept zonal-flow streaks rather than axis-aligned grid squares. Cells have jittered centers via the standard worley pattern; density = `clamp(chromophoreFrac × CHROMOPHORE_VISUAL_BOOST, 0, CLOUD_MAX_COVERAGE)`. Cloud color is the hardcoded `CLOUD_COLOR` (~`GAS_COLOR[H2O]` near-white).
 
 ### 1.4 Cratering / surface age
 
@@ -345,16 +367,30 @@ Goal: make Jupiter, Saturn, Uranus, Neptune and procgen siblings read as distinc
 - **Animated rotation.** `rotationPeriodHours` is on every body but the renderer is static. Out of scope until the system view gains time semantics.
 - **Vegetation density / canopy detail.** Below the resolution we're rendering at (40–120 px discs).
 
-## Open questions (cross-cutting)
+## Cross-cutting notes
 
-- **Phase 1 paint-order.** Three Phase 1 features (biome stipple, ocean override, ice cap override, cloud overlay, cratering) all paint over the resource cells. Proposed pipeline:
+- **Paint order (current).** Surface fragments traverse this fixed pipeline before the rim/halo passes paint over the disc edge:
   ```
-  resource cell pick → biome stipple → ocean override → ice cap override → cloud overlay → cratering
+  resource cell pick
+    → biome stipple
+    → ocean override
+    → ice cap override
+    → cloud patches (1.3c, H2O only)
+    → haze surface tint (1.3a, non-H2O haze chromophores)
+    → INWARD fade (1.3a/b rim color × bandIdx alpha)
   ```
-  Biome before ocean because biome only applies to land. Ocean before cap because the cap should still cover ocean at high lat. Clouds after cap means clouds skip the cap region (already in 1.3 trigger). Cratering last because it's a per-cell lightness shift that should apply to everything beneath it — including biome pixels (an old surface with sparse alien moss should still read as old AND mossy).
+  Banded fragments skip everything before the inward fade — their disc-interior pass is the banded-strip paint, and the inward fade lerps that toward the rim color near the limb. The outward halo (1.3a/b) paints at fragments where `r > vRadius` regardless of mode, as alpha-blended `vec4(vHazeColor, rimA)` with the planet material `transparent: true`. Hover rim (1-px white stamp at `r > vRadius - 1`) is the final per-fragment override on the disc-interior pass.
 
-- **Hash-salt budget.** Each new feature adds one or two hash21 calls. Salts must be distinct so the same cell doesn't accidentally light up multiple features in correlation. Track allocated salts in a comment block at the top of the surface block.
+  When 1.4 cratering lands it sits **after** cap and **before** clouds/haze — the per-cell lightness perturbation should apply to the surface beneath any atmospheric layer.
 
-- **`SURFACE_CHROMOPHORE_WEIGHT` after Phase 1.3.** Once chromophore exits the surface-mode palette slot, this constant becomes unused. Delete in the 1.3 commit.
+- **Hash-salt budget.** Each feature adds one or two hash21 calls. Salts must be distinct so the same cell doesn't accidentally light up multiple features in correlation. Allocated so far (per-body multipliers on `vSeed`):
+  - Worley jitter: 13/19, 23/29
+  - Continent group: 113/127
+  - Resource pick: 1009/2017
+  - Biome stipple: 197/311
+  - Inward-fade boundary dither: 829/853
+  - Cloud cells (jitter + pick): 991/997, 1013/1019, 1031/1033
 
-- **Browser smoke between phases.** Each Phase entry should ship with a manual verification pass against the eleven Sol bodies before moving on — the data is anchored, the visual outcome is predictable enough to eyeball.
+- **Attribute budget.** Some GPUs cap `gl_MaxVertexAttribs` at the WebGL1 minimum (16 — and in practice we've seen failures at 15). The planet/moon Points pools pack scalars aggressively to stay at 11 attributes total: `aRenderMeta: vec4` (size/mode/seed/tilt), `aCoverageScalars: vec4` (water/ice/biomeCov/hazeTint), `aAtmoStrokes: vec2` (rimWidth/cloudDensity), plus `position`, `aHovered`, three `aPalette` vec3s, `aWeights`, `aBiomeColor`, `aHazeColor`. New features should pack into a spare vec4 component before adding a new attribute.
+
+- **Browser smoke.** Each Phase entry ships with a manual verification pass against the eleven Sol bodies before moving on — the data is anchored, the visual outcome is predictable enough to eyeball.
