@@ -10,13 +10,15 @@ Make planets and moons feel like *places* — distinct, beautiful, enticing — 
 
 ## Current state
 
-Surface mode reads `worldClass`, `axialTiltDeg`, the six-scalar resource grid, atmosphere (top three gases + chromophore), `waterFraction`, `iceFraction`. Banded mode reads the same gases + chromophore + `axialTiltDeg`. Both share parity-aware pixel snap and the same sphere-projection foreshortening (`RING_MINOR_OVER_MAJOR` pole tilt) so a ringed body's bands and ring share one vantage.
+Surface mode reads `worldClass`, `axialTiltDeg`, the six-scalar resource grid, atmosphere (top three gases + chromophore), `waterFraction`, `iceFraction`, `surfaceAge`, plus `biosphereArchetype × biosphereTier × hostStar.cls`. Banded mode reads the same gases + chromophore + `axialTiltDeg`. Both share parity-aware pixel snap and the same sphere-projection foreshortening (`RING_MINOR_OVER_MAJOR` pole tilt) so a ringed body's bands and ring share one vantage.
 
 Most-recent landings:
+- **Phase 1.4 — cratering from `surfaceAge`** (done). Per-worley-cell uniform-RGB lightness perturbation in the surface branch, amplitude tapered by `(1 − surfaceAge)`. Restores the Ganymede/Enceladus distinction sacrificed when albedo left the render path — properly this time, via the primary attribute that *causes* the brightness difference rather than the derived measurement of it. Mercury / Luna / Callisto read as mottled, pitted; Io / Enceladus / Earth stay smooth. Same perturbation on cap, ocean, and land cells — one visual language for "old surface."
+- **`surfaceAge` primary attribute landed.** 0..1 fraction of the surface that is geologically young; per-class procgen prior plus a tidal-lift branch for moons of giants (linear in eccentricity past `TIDAL_E_THRESHOLD`). Eleven hand-curated Sol anchors in `bodies.csv`.
+- **Albedo fully out of the data model.** The Stefan-Boltzmann temp pass derives its Bond albedo locally via `effectiveBondAlbedo` rather than consuming a stored field; procgen-derived `avgSurfaceTempK` stays byte-identical against the prior catalog.
 - **Phase 1.3a/b/c — atmospheric rim + tint + clouds** (all done). Every banded body and every surface body with non-trivial pressure now carries an atmospheric column visible at the limb: a stroke-stacked outward halo extending up to 3 px into space, an inward fade following the sphere-projection foreshortening curve (band widths 1, 2, 3, ... px from the limb inward), and a per-fragment uniform tint on surface bodies with a haze-class chromophore. Earth gets the Rayleigh cyan limb plus H2O cloud patches; Venus, Titan, Io get their SO2/CH4 chromophore haze; Jupiter and Saturn get the bright H2 cream limb (the NH3 chromophore color is *deep* cloud chemistry, not at the limb); Uranus and Neptune get CH4 cyan-blue (absorption-dominant ice giants). Curated chromophores expanded from `{Jupiter NH3, Earth H2O, Saturn NH3, Titan CH4}` to also include `{Venus SO2, Mars DUST, Io SO2}`.
 - **Phase 1.2 — biome stipple** driven by `biosphereArchetype × biosphereTier × hostStar.cls`. Earth's temperate land paints as dense green chlorophyll; M-dwarf carbon_aqueous worlds shift to deep purple (Kiang-style "Purple Earth"); K → rust-red; F/A → gold. Tier drives coverage density (microbial sparse, gaian dense). O/B/WD/BD hosts and prebiotic worlds suppress entirely.
 - **Phase 1.1 — oceans + polar caps** from `waterFraction` + `iceFraction`. Earth reads as ocean-dominated with small caps; Europa fills white; Mars keeps a thin polar trim.
-- **Albedo removed from the render path.** Body brightness is now genuinely emergent. The `body.albedo` field stays in the data model for now; pinned for removal pending refactor of the Stefan-Boltzmann temp derivation that still consumes it.
 
 ## Design principles
 
@@ -30,98 +32,13 @@ These are constraints every Phase entry must satisfy.
 
 ---
 
-## New primary attribute: `surfaceAge`
+## Primary attribute: `surfaceAge`
 
-A 0..1 scalar capturing how recently a body's surface has been geologically/dynamically refreshed. Introduced as a primary procgen attribute (not a derivation) so the renderer can read it directly.
+A 0..1 scalar — the fraction of a body's surface that is geologically young. **1.0** = perpetually refreshed (Io's lava, Enceladus's cryovolcanic plumes, Earth's plate-tectonics-refreshed crust). **0.5** = mixed (Mars's young plains over old highlands, Titan's hydrocarbon-eroded crust). **0.0** = ancient unmodified (Mercury, Luna, Callisto). `null` for bodies with no solid surface (gas/ice giants, gas dwarfs, belts, rings).
 
-### Motivation
+Sampled per-class via `SURFACE_AGE_BY_CLASS` in `procgen-priors.mjs` — priors lean "old" by default; `ocean` and `lava` classes anchor high. Moons of giants get a tidal-heating lift: above `SURFACE_AGE_TIDAL_LIFT.eThreshold`, eccentricity normalizes linearly to `eMaxNormalize` and pulls the age toward 1.0 by `liftAmount × normalizedFraction`. Eccentricity-only is a simplification — real tidal heating scales as `M_host² · e² / a⁵`, but the host-mass term doesn't change ordering across our catalog (giants all dominate). Eleven hand-curated Sol anchors in `bodies.csv` (Mercury 0.05, Earth 0.70, Io 1.00, Enceladus 0.95, …).
 
-Removing albedo from the render path sacrificed the Ganymede / Enceladus distinction — both `iceFraction=1`, both render fully white today. The signal that actually distinguishes them is *surface age*: fresh cryovolcanic ice on Enceladus vs ancient impact-darkened ice on Ganymede. Albedo encoded that observation indirectly; surface age captures it directly as the primary cause.
-
-Surface age also unlocks Phase 1.4 (cratering): high-contrast pitted texture on old surfaces (Moon, Mercury, Callisto), smooth on young ones (Io, Europa, Enceladus, Earth).
-
-### Semantics
-
-- **1.0** — perpetually refreshed. Io's lava lakes, Enceladus's cryovolcanic plumes, Earth's plate-tectonics-refreshed crust within a few hundred Myr.
-- **0.5** — mixed. Mars's old highlands + younger volcanic plains. Titan's atmosphere-weathered surface.
-- **0.0** — ancient unmodified. The lunar highlands, Mercury, Callisto.
-
-The scalar represents the *fraction of the surface that is geologically young*, not literal age in years.
-
-`null` for `kind in (gas_giant, ice_giant, gas_dwarf, belt, ring)` — no solid surface to age.
-
-### Procgen pipeline
-
-Add to `scripts/lib/procgen-priors.mjs`:
-
-```js
-export const SURFACE_AGE_BY_CLASS = {
-  rocky:    { mean: ..., sd: ... },   // mostly old; resurfacing rare
-  ocean:    { mean: ..., sd: ... },   // active oceans + tectonics likely
-  desert:   { mean: ..., sd: ... },   // little resurfacing once dry
-  ice:      { mean: ..., sd: ... },   // bimodal: dead vs cryovolcanic
-  lava:     { mean: ..., sd: ... },   // by definition continuously molten
-  // n/a for gas/ice giants — never sampled
-};
-```
-
-Calibrate `mean` per class so the Sol-system curated values fall within one sigma of the class mean (sanity check via `audit-procgen.mjs`).
-
-Filler in `scripts/lib/procgen.mjs`:
-1. Sample base from `SURFACE_AGE_BY_CLASS` using `fieldPrng(body, 'surfaceAge')` (deterministic per body).
-2. **Tidal lift for moons of giants.** If `kind === 'moon'`, the host is a giant, and `eccentricity > TIDAL_E_THRESHOLD`, lift toward 1.0 by `TIDAL_LIFT_AMOUNT × normalizedEccentricity`. Reflects the tidal-heating squeeze that drives Io and Enceladus.
-3. Clamp to `[0, 1]`.
-
-Compute order: must run after `worldClass`, `eccentricity`, and host resolution — consistent with the existing Filler order.
-
-Eccentricity-only is the simplest defensible proxy. Real tidal heating scales as `M_host² · e² / a⁵`; for our catalog the host-mass term doesn't change ordering (gas giants all dominate the term), so we tabling the more elaborate formula until we see a counterexample.
-
-### Hand-curated values for Sol
-
-`bodies.csv` gains a `surface_age` column. Curated values for the eleven Sol planets/moons:
-
-| Body | surface_age | Why |
-|---|---|---|
-| Mercury | 0.05 | Lunar-style cratered surface ~4 Gyr |
-| Venus | 0.55 | Global volcanic resurfacing ~500 Myr ago |
-| Earth | 0.70 | Plate tectonics resurfaces continuously |
-| Luna | 0.05 | Lunar highlands ~4.4 Gyr |
-| Mars | 0.20 | Old highlands dominate; young volcanic plains in patches |
-| Io | 1.00 | Active lava resurfacing on observation timescales |
-| Europa | 0.85 | Young ice shell, cycloid cracks |
-| Ganymede | 0.30 | Old dark + younger grooved terrain mix |
-| Callisto | 0.05 | Most heavily cratered body in Sol |
-| Titan | 0.50 | Hidden surface but atmosphere-eroded, hydrocarbon lakes |
-| Enceladus | 0.95 | Cryovolcanic plumes, fresh ice everywhere |
-
-Procgen targets should be tuned so these eleven anchors aren't pulled outside their class prior.
-
-### Renderer consumption
-
-Plumbed identically to `aWaterFrac` / `aIceFrac`:
-
-- `DiscPalette.surfaceAge: number` — default 0.5 when null (middle of the road, so missing data renders unobtrusively rather than as extreme young/old).
-- Banded bodies and sub-`PROCEDURAL_TEXTURE_MIN_PX` discs force to 0.5 (cratering not applicable).
-- Per-vertex `aSurfaceAge` attribute → `vSurfaceAge` varying.
-- Consumed by Phase 1.4 cratering — see that section for the shader math.
-
-### Migration checklist
-
-1. Add `SURFACE_AGE_BY_CLASS` + tidal-lift constants to `procgen-priors.mjs`.
-2. Add `surface_age` column to `bodies.csv` schema in `scripts/scrape-planets-from-stellarcatalog.mjs` and to the architect's emit list in `scripts/lib/procgen-architect.mjs`.
-3. Implement `surfaceAgeFor(body)` in `procgen.mjs`; wire into the Filler in the correct order.
-4. Update `Body` interface in `src/data/stars.ts` with `readonly surfaceAge: number | null`.
-5. Update column mapping in `scripts/build-catalog.mjs`.
-6. Hand-set Sol curated values in `bodies.csv`.
-7. Add to `scripts/inspect-body.mjs` printout.
-8. Add to `scripts/audit-procgen.mjs` distribution check.
-9. Decide whether to surface in the system-view info card (likely not as a number — possibly as a derived category like "young / mixed / ancient" if a future gameplay system reads it).
-10. Plumb to the renderer (`DiscPalette` + layers + shader) when Phase 1.4 lands.
-
-### Open questions
-
-- **Tidal lift formulation.** Eccentricity-only is the proposed starting point. If audit reveals weirdness (e.g. a low-e tidally-locked moon of a giant rolling "ancient" when intuition says it should be heated), revisit.
-- **Sol curated values.** Verify against `audit-procgen.mjs` once Phase 1.4 lands; visual character is the final arbiter.
+Drives the Phase 1.4 cratering pass (below). Restores the Ganymede/Enceladus distinction lost when albedo left the render path — properly, via the primary attribute that *causes* the brightness difference rather than the derived measurement of it.
 
 ---
 
@@ -246,33 +163,13 @@ A 1-px sky-cyan rim (`THEME_RAYLEIGH_COLOR`) for surface-mode bodies with `surfa
 
 Discrete cloud cells painted over land + ocean (suppressed in the polar cap region). Active only when `chromophoreGas === H2O`. Implemented as **anisotropic worley cells** in the equator-aligned frame (`CLOUD_LON_PX / CLOUD_LAT_PX` ≈ 2.4:1 stretch), so cloud silhouettes elongate east-west — wind-swept zonal-flow streaks rather than axis-aligned grid squares. Cells have jittered centers via the standard worley pattern; density = `clamp(chromophoreFrac × CHROMOPHORE_VISUAL_BOOST, 0, CLOUD_MAX_COVERAGE)`. Cloud color is the hardcoded `CLOUD_COLOR` (~`GAS_COLOR[H2O]` near-white).
 
-### 1.4 Cratering / surface age
+### 1.4 Cratering (DONE)
 
-**Depends on** the new primary attribute `surfaceAge` plumbed. Cannot land until that is in.
+Per-worley-cell uniform-RGB lightness perturbation in the surface branch, amplitude `(1 − vSurfaceAge) × CRATER_MAX_AMPLITUDE`. Uniform RGB delta preserves hue — only lightness varies cell-to-cell — so an old icy moon (Callisto) gets dimmed-ice mottling and an old rocky body (Mercury) gets dimmed-rock cratering, both reading as the same "old surface" visual language.
 
-**Why.** Restores the Enceladus/Ganymede distinction sacrificed when albedo left the render path — properly this time, via the primary attribute that *causes* the brightness difference rather than the derived measurement of it.
+Sits in the paint pipeline AFTER the cap/ocean/land branches set `col`, and BEFORE the cloud and haze passes — so atmospheric layers cover the perturbed surface intact. Active on all three surface branches (cap, ocean, land), since the unifying read is "old = pitted everywhere," not "old rock looks different from old ice."
 
-**Trigger.** Surface mode, every body. Effect amplitude tapers to zero as `surfaceAge → 1`.
-
-**Data inputs.** `surfaceAge`, fragment's worley `winnerCell`.
-
-**Pipeline.**
-- After the cell-pick branches (resource / ocean / ice) have set `col`, apply a per-cell lightness perturbation:
-  - `craterAmount = (1.0 - vSurfaceAge) * CRATER_MAX_AMPLITUDE`
-  - `perturb = (hash11(winnerCell-salt) - 0.5) * 2.0 * craterAmount`
-  - `col = clamp(col + vec3(perturb), 0.0, 1.0)`
-- Uniform-RGB shift preserves hue; only lightness varies cell-to-cell.
-- Apply to all surface branches (land / ocean / ice) — the effect reads as "old surface = pitted everywhere," not just on resource patches. Old icy moon (Callisto) gets mottled ice; old rocky body (Mercury) gets cratered iron-grey.
-
-**Tuning anchors.**
-- Moon (surfaceAge=0.05) — high amplitude, visible cell-to-cell mottling. Reads as cratered.
-- Mercury (0.05) — same. Reads as ancient.
-- Earth (0.70) — low amplitude, mostly smooth.
-- Io (1.0) — zero amplitude, perfectly smooth land cells (lava resurfaces faster than craters accumulate).
-- Enceladus (0.95) — near-zero. Disc reads as clean bright ice.
-- Ganymede (0.30) — mid amplitude. Disc reads as mottled ice — distinct from Enceladus at a glance.
-
-**Risk.** Cratering and biome tint share the cell hash space — salts must be distinct so a "lucky" cell doesn't go *both* ancient AND extra-biome-y by accident.
+Hash salts (547, 569) are distinct primes from worley jitter (13/19, 23/29), continent (113/127), resource (1009/2017), biome (197/311), cloud (991/...), and inward-fade dither (829/853), so a "lucky" cell can't accidentally line up old + biome-y or old + ocean-y from a shared noise stream.
 
 ---
 
@@ -381,16 +278,17 @@ Goal: make Jupiter, Saturn, Uranus, Neptune and procgen siblings read as distinc
   ```
   Banded fragments skip everything before the inward fade — their disc-interior pass is the banded-strip paint, and the inward fade lerps that toward the rim color near the limb. The outward halo (1.3a/b) paints at fragments where `r > vRadius` regardless of mode, as alpha-blended `vec4(vHazeColor, rimA)` with the planet material `transparent: true`. Hover rim (1-px white stamp at `r > vRadius - 1`) is the final per-fragment override on the disc-interior pass.
 
-  When 1.4 cratering lands it sits **after** cap and **before** clouds/haze — the per-cell lightness perturbation should apply to the surface beneath any atmospheric layer.
+  Cratering (1.4) sits **after** cap and **before** clouds/haze — the per-cell lightness perturbation applies to the surface beneath any atmospheric layer.
 
 - **Hash-salt budget.** Each feature adds one or two hash21 calls. Salts must be distinct so the same cell doesn't accidentally light up multiple features in correlation. Allocated so far (per-body multipliers on `vSeed`):
   - Worley jitter: 13/19, 23/29
   - Continent group: 113/127
   - Resource pick: 1009/2017
   - Biome stipple: 197/311
+  - Cratering: 547/569
   - Inward-fade boundary dither: 829/853
   - Cloud cells (jitter + pick): 991/997, 1013/1019, 1031/1033
 
-- **Attribute budget.** Some GPUs cap `gl_MaxVertexAttribs` at the WebGL1 minimum (16 — and in practice we've seen failures at 15). The planet/moon Points pools pack scalars aggressively to stay at 11 attributes total: `aRenderMeta: vec4` (size/mode/seed/tilt), `aCoverageScalars: vec4` (water/ice/biomeCov/hazeTint), `aAtmoStrokes: vec2` (rimWidth/cloudDensity), plus `position`, `aHovered`, three `aPalette` vec3s, `aWeights`, `aBiomeColor`, `aHazeColor`. New features should pack into a spare vec4 component before adding a new attribute.
+- **Attribute budget.** Some GPUs cap `gl_MaxVertexAttribs` at the WebGL1 minimum (16 — and in practice we've seen failures at 15). The planet/moon Points pools pack scalars aggressively to stay at 11 attributes total: `aRenderMeta: vec4` (size/mode/seed/tilt), `aCoverageScalars: vec4` (water/ice/biomeCov/hazeTint), `aAtmoStrokes: vec3` (rimWidth/cloudDensity/surfaceAge), plus `position`, `aHovered`, three `aPalette` vec3s, `aWeights`, `aBiomeColor`, `aHazeColor`. New features should pack into a spare vec4 component before adding a new attribute.
 
 - **Browser smoke.** Each Phase entry ships with a manual verification pass against the eleven Sol bodies before moving on — the data is anchored, the visual outcome is predictable enough to eyeball.
