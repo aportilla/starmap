@@ -247,6 +247,8 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const seeds     = new Float32Array(N);
   const tilts     = new Float32Array(N);
   const albedos   = new Float32Array(N);
+  const waterFracs = new Float32Array(N);
+  const iceFracs   = new Float32Array(N);
   slots.forEach((slot, i) => {
     const b = BODIES[slot.bodyIdx];
     const disc = buildDiscPalette(b, slot.discPx, c => lerpTowardWhite(c, MOON_BRIGHTEN));
@@ -266,6 +268,8 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
     seeds[i] = disc.seed;
     tilts[i] = disc.tilt;
     albedos[i] = disc.albedo;
+    waterFracs[i] = disc.waterFrac;
+    iceFracs[i] = disc.iceFrac;
     sizesAttr[i] = slot.discPx;
   });
   const geometry = new BufferGeometry();
@@ -280,6 +284,8 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   geometry.setAttribute('aSeed',     new BufferAttribute(seeds, 1));
   geometry.setAttribute('aTilt',     new BufferAttribute(tilts, 1));
   geometry.setAttribute('aAlbedo',   new BufferAttribute(albedos, 1));
+  geometry.setAttribute('aWaterFrac', new BufferAttribute(waterFracs, 1));
+  geometry.setAttribute('aIceFrac',   new BufferAttribute(iceFracs, 1));
   const material = makePlanetMaterial(1.0);
   const points = new Points(geometry, material);
   points.renderOrder = renderOrder;

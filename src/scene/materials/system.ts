@@ -68,6 +68,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       attribute float aSeed;
       attribute float aTilt;
       attribute float aAlbedo;
+      attribute float aWaterFrac;
+      attribute float aIceFrac;
       varying float vRadius;
       varying vec2  vCenter;
       varying float vHovered;
@@ -79,6 +81,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vSeed;
       varying float vTilt;
       varying float vAlbedo;
+      varying float vWaterFrac;
+      varying float vIceFrac;
       uniform float uDiscScale;
       uniform vec2  uViewport;
       void main() {
@@ -91,6 +95,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vSeed     = aSeed;
         vTilt     = aTilt;
         vAlbedo   = aAlbedo;
+        vWaterFrac = aWaterFrac;
+        vIceFrac   = aIceFrac;
 
         // Integer-pixel disc diameter. Floor + 0.5 → round-to-nearest.
         float sz = floor(aSize * uDiscScale + 0.5);
@@ -125,6 +131,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vSeed;
       varying float vTilt;
       varying float vAlbedo;
+      varying float vWaterFrac;
+      varying float vIceFrac;
 
       // Surface-mode albedo floor — how dark the lowest-albedo body
       // (Moon ~0.12, Callisto ~0.22, Mercury ~0.14) gets relative to the
@@ -192,6 +200,26 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // organic lumps rather than rectangular tiles.
       const float SURFACE_PATCH_PX = 4.0;
 
+      // Continent grouping: every CONTINENT_GROUP worley cells along
+      // each axis share one ocean/land decision. Inherits the worley
+      // boundary irregularity for free (rather than grid-aligned 16-px
+      // squares), so continents have ragged Earth-like coasts at no
+      // extra shader cost beyond one hash. 4 → ~16 px continents.
+      const float CONTINENT_GROUP = 4.0;
+
+      // Ocean fill color for sub-sea-level continent cells. Deep navy
+      // — desaturated enough not to fight resource palette hues on
+      // adjacent land cells, dark enough to read as "below sealevel"
+      // against bright icy resource patches.
+      const vec3 OCEAN_COLOR = vec3(0.16, 0.34, 0.55);
+
+      // Polar cap fill. Pale ice-white — not pure white so the cap
+      // still reads as "frozen surface" rather than "missing pixels"
+      // against a dark scene background, but bright enough that even
+      // after the albedo darken (Earth ~0.72×) it's clearly the
+      // brightest region on the disc.
+      const vec3 ICE_COLOR = vec3(0.93, 0.97, 1.0);
+
       float hash11(float x) {
         return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
       }
@@ -248,12 +276,53 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               }
             }
           }
-          float h = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
-          col = pickFromPalette(h);
+
+          // Sphere projection — reconstruct the forward-hemisphere
+          // surface normal at this fragment and dot it with the
+          // band-aligned pole (tipped forward by arcsin(POLE_SIN), same
+          // foreshortening the rings and banded mode use). latSinS is
+          // the sine of latitude on the visible sphere; polar caps
+          // hug |latSinS| ≈ 1. Tilt rotation matches banded mode so
+          // a ringed terrestrial's caps and ring share one vantage.
+          float cT = cos(vTilt);
+          float sT = sin(vTilt);
+          float lxs =  d.x * cT + d.y * sT;
+          float lys = -d.x * sT + d.y * cT;
+          float nxs = lxs / vRadius;
+          float nys = lys / vRadius;
+          float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
+          float latSinS = nys * POLE_COS + nzs * POLE_SIN;
+
+          // Layered fill, evaluated in priority order:
+          //   1. Polar cap — |latSin| past (1 - iceFrac). iceFrac=1 fills
+          //      the whole disc (Europa); iceFrac=0.1 leaves just the
+          //      pole rim (Earth); iceFrac=0 disables (Venus).
+          //   2. Ocean — coarse-cell hash < waterFrac flips this
+          //      continent cell to flat OCEAN_COLOR. Earth at 0.71 lands
+          //      ~71% of continent cells under sea level.
+          //   3. Land — existing resource-palette pick from the fine
+          //      worley winner cell.
+          if (abs(latSinS) > 1.0 - vIceFrac) {
+            col = ICE_COLOR;
+          } else {
+            // CONTINENT_GROUP-sized blocks of worley cells share one
+            // ocean/land coin flip. Salt offset from the resource-pick
+            // hash so the two scales decorrelate.
+            vec2 contCell = floor(winnerCell / CONTINENT_GROUP);
+            float contH = hash21(contCell + vec2(vSeed * 113.0, vSeed * 127.0));
+            if (contH < vWaterFrac) {
+              col = OCEAN_COLOR;
+            } else {
+              float h = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
+              col = pickFromPalette(h);
+            }
+          }
           // Surface-mode albedo darkening — see SURFACE_ALBEDO_FLOOR.
-          // Applied after the cell pick so every palette entry on the
-          // disc darkens uniformly, preserving relative hue contrast
-          // between resource patches.
+          // Applied to every branch (ice / ocean / land) uniformly so
+          // a body's overall brightness reflects its measured albedo
+          // even when ice or ocean dominates — Earth (0.306) reads
+          // dimmer overall than Enceladus (~1.0) regardless of which
+          // surface type fills the most pixels.
           col *= mix(SURFACE_ALBEDO_FLOOR, 1.0, clamp(vAlbedo, 0.0, 1.0));
         } else {
           // Banded atmosphere — Jupiter-style zonal flow.

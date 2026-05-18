@@ -74,6 +74,18 @@ export interface DiscPalette {
   // are hand-tuned for visibility — applying physical albedo there
   // would dim Jupiter/Saturn against their carefully picked gas hues).
   readonly albedo: number;
+  // Surface water cover in [0..1]. Surface-mode shader splits the disc
+  // into coarse continent cells; a per-cell hash < waterFrac flips that
+  // cell from resource patch to flat ocean color. Earth at 0.71 reads
+  // as ~71% ocean; Mars at 0 stays all-land. Forced to 0 on banded
+  // bodies and on tiny discs (PROCEDURAL_TEXTURE_MIN_PX gate).
+  readonly waterFrac: number;
+  // Surface ice cover in [0..1]. Surface-mode shader paints any latitude
+  // band with |sin(lat)| > 1 - iceFrac as polar cap. Europa at 1.0 reads
+  // as fully white; Earth at 0.1 reads as small caps; Venus at 0 has
+  // none. Uses the same sphere-projection foreshortening as banded mode
+  // so caps curve as latitude lines.
+  readonly iceFrac: number;
 }
 
 // Pull the world-class color or unknown-grey fallback. Same precedence
@@ -225,9 +237,18 @@ export function buildDiscPalette(
 
   // Force flat fill on very small discs — the per-pixel hash texture
   // and the band strips both degrade to noise below ~16 px.
-  if (discPx < PROCEDURAL_TEXTURE_MIN_PX) {
+  const tinyDisc = discPx < PROCEDURAL_TEXTURE_MIN_PX;
+  if (tinyDisc) {
     w0 = 1; w1 = 0; w2 = 0;
   }
+
+  // Surface terrain scalars. Suppressed on banded bodies (the shader's
+  // surface block is unreachable there) and on tiny discs (would resolve
+  // to single-pixel polar slivers / one-cell oceans). Null treated as 0
+  // so a procgen body that didn't fill the slot just renders without
+  // oceans or caps rather than throwing.
+  const waterFrac = banded || tinyDisc ? 0 : (body.waterFraction ?? 0);
+  const iceFrac   = banded || tinyDisc ? 0 : (body.iceFraction   ?? 0);
 
   // Per-class hue tint (gas-giant warm shift, etc.) runs first so the
   // caller-supplied transform (moon brighten) lerps from the tinted
@@ -248,6 +269,8 @@ export function buildDiscPalette(
     seed,
     tilt: bodyVisualTiltRad(body),
     albedo: body.albedo ?? 1.0,
+    waterFrac,
+    iceFrac,
   };
 }
 
