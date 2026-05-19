@@ -13,6 +13,7 @@ Make planets and moons feel like *places* — distinct, beautiful, enticing — 
 Surface mode reads `worldClass`, `axialTiltDeg`, the six-scalar resource grid, atmosphere (top three gases + chromophore), `waterFraction`, `iceFraction`, `surfaceAge`, plus `biosphereArchetype × biosphereTier × hostStar.cls`. Banded mode reads the same gases + chromophore + `axialTiltDeg`. Both share parity-aware pixel snap and the same sphere-projection foreshortening (`RING_MINOR_OVER_MAJOR` pole tilt) so a ringed body's bands and ring share one vantage.
 
 Most-recent landings:
+- **Phase 1.5d — linea** (done). Voronoi cell-boundary cracks painted with the body's subsurface palette, gated on `icyHere && (iceFraction × surfaceAge) > LINEA_BODY_THRESHOLD = 0.5`. The worley pass now tracks F2 (second-nearest) cell so the edge geometry is the standard F2−F1 distance metric; fragments within `LINEA_WIDTH_FRAC = 0.18` cell-fraction of a boundary are eligible. `LINEA_DENSITY = 0.18` of edges (per-edge hash gate, salts 743/761) actually promote to linea — the remaining ~82% stay invisible so the network reads as a sparse crisscross. Europa (0.85 × 0.85 ≈ 0.72) and Enceladus (0.95 × 0.95 ≈ 0.90) fire; Ganymede (0.30), Callisto (0.05), Earth (0.07) suppressed. Same layered resource model as 1.5c — a linea is "the ice shell cracked open and the underlying composition shows through." Two refinements landed alongside as smoke-render corrections to 1.6: (a) `liquidOceanHere = waterHere && vGlobalness < 0.5` suppresses the `OCEAN_COLOR` override on cold bodies so frozen-ocean moons don't show liquid water punching through the ice shell; (b) `effectiveIceFrac = mix(vIceFrac, 1.0, smoothstep(0.8, 1.0, vGlobalness))` ramps surface ice coverage toward 100% on bodies cold enough that liquid surface water is thermodynamically impossible (T ≤ ~206 K), so Europa-class moons read as fully iced with linea carrying the iceFraction-deficit signal rather than as patchy ice + resource regions.
 - **Phase 1.6 — ice as a contextual surface state** (done). `'ice'` retired from `WorldClass`; ice geometry now emerges from `iceFraction` + `avgSurfaceTempK` + `surfaceAge` rather than a class enum. Surface-mode shader composes three layers per fragment — `resourceSurface` (region-masked pick + ocean + biome stipple), `iceLayer` (flat `ICE_COLOR`), `resourceSubsurface` (complement-masked pick) — with stack order keyed off `surfaceAge` (young → ice on top, old → resource on top with ice buried). Per-fragment ice flag mixes a cap-latitude priority and a per-cell hash priority via `globalness` (smoothstep on `avgSurfaceTempK` between `ICE_TEMP_GLOBAL_K = 180` and `ICE_TEMP_CAP_K = 270`). Crater branch composes with the layer stack — young icy bodies' craters reveal subsurface resources (Europa-style), old icy bodies' craters reveal `ICE_COLOR` (Callisto-style). Procgen rewires: outer-cold worlds route to ocean (water-eligible) or rocky (sub-Mars); CH4 tholin chromophore moves to a `(rocky | ocean) + insolationBelow: 0.1` gate; `subsurface_aqueous` and `cryogenic` biospheres pick up a new `cold` insolation gate; Titan-class thick-atm retention re-keys on `INSOLATION_COLD_MAX`. `PROCGEN_VERSION` bumped to v10. Hash salts 701/719 for the ice priority pass; attribute `aAtmoStrokes` expanded `vec3 → vec4` with `globalness` as the fourth component.
 - **Phase 1.5c — discrete crater features with layered resource model** (done). The surface-age visual signal is now *features* rather than *noise*. Each land-branch fragment scans a 3×3 neighborhood of crater seed cells in the same sphere-projected `(lon, lat)` frame as 1.5a/b; existence per cell scales with `(1 − surfaceAge)²` so Mercury / Luna / Callisto saturate while Earth-class bodies show only rare craters. A winning crater paints solid-color from the **subsurface mask** — the complement of the 1.5b bucket the crater's center lies in — so a metals-surface region with rare-earth subsurface shows pink-grey craters, a silicate-surface region with metals subsurface shows iron-grey. Surface features carry the body's own resource palette. `CRATER_PATCH_FACTOR = 2.0`, `CRATER_DENSITY_MAX = 0.8`, radius range `[0.2, 0.9]` with `hash²` bias toward small. Salts 547/569/587.
 - **Per-cell mottling pass removed.** The earlier surface-age mechanism (uniform-RGB lightness perturbation per worley cell, amplitude tapered by `1 − surfaceAge`) was a stopgap that read as noise rather than as planetary features. Removed cleanly; the "old surface" visual signal moves to Phase 1.5c (discrete crater features) where surface age drives crater *density* instead of cell *noise*.
@@ -270,9 +271,35 @@ Each fragment scans the 3×3 neighborhood of crater seed cells, accepts the *clo
 - Subsurface complement of a body with one zero-weight resource (e.g. weights (0.7, 0.3, 0.0)) can produce an effective subsurface of pure-zero-weight, which falls through to the `pickFromPalette` palette0 fallback. Craters in those regions paint as palette0 — visible against a non-palette0 surface, invisible against a palette0 surface. Edge case; tolerable.
 - Crater overlap pattern (later impacts overlay earlier ones) is not modeled; first-pass is "if any crater contains me, paint it." Real Callisto shows overlapping crater rings; we render the union.
 
-### 1.5d Linea (deferred)
+### 1.5d Linea (DONE)
 
-Surface linea — Europa's red cracks, Enceladus's tiger stripes — would emerge from the same layered-resource model. A linea is a thin stair-stepped path painted from the region's subsurface mask, drawn across the surface where the body is icy (per the Phase 1.6 `iceFraction × surfaceAge` model) and `surfaceAge` is high — the cracks are *young* features on icy crust, the opposite signal from craters. One mechanism — point features for craters, line features for linea — both colored by the body's own subsurface palette. Trigger gate: `icyHere && vSurfaceAge > LINEA_AGE_THRESHOLD`. Defer until the Phase 1.6 layered ice model has been visually validated.
+Voronoi cell-boundary cracks painted with the body's subsurface palette — Europa's red lineae, Enceladus's tiger stripes. Same layered resource model as 1.5c craters; only the geometry differs (line features along cell edges vs. point features filling disc cells).
+
+**Worley extension.** The existing 1.5a worley pass now tracks F2 (second-nearest) cell alongside F1 (nearest). The 3×3 neighborhood scan is still sufficient — the closest TWO cells to any fragment in the central cell are always adjacent to it, so no off-window candidates can sneak past. F2 − F1 worley distance is the standard cell-boundary metric: roughly the perpendicular distance from the fragment to the nearest cell edge, measured in cell-coordinate units.
+
+**Trigger.** Body-level + fragment-level:
+- Body-level: `vIceFrac × vSurfaceAge > LINEA_BODY_THRESHOLD = 0.5`. Catches Europa (0.85 × 0.85 ≈ 0.72) and Enceladus (0.95 × 0.95 ≈ 0.90); rejects Ganymede (0.30 × 0.30 ≈ 0.09 — wait, iceFrac=0.60 → 0.60 × 0.30 = 0.18), Callisto (0.70 × 0.05 ≈ 0.035), Earth (0.10 × 0.70 ≈ 0.07). The product is the load-bearing form: both signals need to be high for linea to fire, mirroring the physics (a body with thin ice can't have linea regardless of age; an old icy body has had its cracks erased by impact gardening).
+- Fragment-level: `icyHere`. Cracks only exist where ice exists — connecting through non-icy cells would visually break the linea, but at Europa-class iceFraction (~85%) the disruptions are sparse enough to read as "the crack briefly exposes ocean beneath."
+
+**Geometry.** Two thresholds:
+- `LINEA_WIDTH_FRAC = 0.18` — fragments within this cell-fraction of any cell boundary are eligible. Roughly 1.5 px wide on `SURFACE_PATCH_PX`-pitch cells.
+- `LINEA_DENSITY = 0.18` — fraction of cell edges that actually promote to linea, gated by `hash21(winnerCell + secondCell + salts)` (commutative key so the same edge hashes identically regardless of which side the fragment lies on). Salts 743/761.
+
+**Color.** `resourceSubsurface` — the 1.5b complement-masked palette pick that 1.5c craters also paint with. Same value the crater branch computed earlier in the fragment, no new attribute or palette derivation. For Europa, this resolves to the body's non-volatile resources (metals + rare-earths complement of the volatile-dominant region), giving the cracks a non-ice tone that contrasts against the bright ICE_COLOR surface.
+
+**Composition.** Linea paint AFTER the crater branch but BEFORE the cloud branch — they sit between "old features punched through the surface" and "atmospheric features painted above." On young icy bodies the crater branch is rarely active (craters need low surfaceAge), so the crater/linea overlap is small; where it does occur both passes paint `resourceSubsurface`, so they read continuous.
+
+**Tuning anchors.**
+- Europa — bright ice surface with sparse cracks revealing non-volatile subsurface palette. Lineae visible across the disc, isotropically distributed.
+- Enceladus — same pattern, slightly denser cracks (slightly higher product 0.90 vs Europa's 0.72; both still under the same gate so density is uniform, but the visual is similar).
+- Ganymede — no linea (body gate fails: 0.60 × 0.30 = 0.18 < 0.5). Reads as patchy ice + non-ice surface without cracks. Real Ganymede's grooved terrain is a different signal we don't capture today.
+- Callisto — no linea (gate fails on age). Reads as dark surface with ice-revealing craters.
+- Earth — no linea (gate fails on iceFraction). Polar caps stay flat.
+
+**Risk.**
+- **Linea crossing non-icy cells.** On Europa-class bodies (icyHere true ~85%), the network has small gaps at non-icy cells. Acceptable visual; reads as "the crack briefly exposes ocean." On a body with iceFraction ~0.5, gaps would dominate and the linea network would fracture. The body-level gate keeps such bodies from firing the pass at all.
+- **F2 second-cell ordering.** The `else if` branch in the worley loop tracks F2 only on candidates that lost to F1. Correctness depends on the cells being scanned in 3×3 order rather than 9-element-deepest-first; both work but the current order matches the existing code and produces correct F2 across all 9 candidates.
+- **Edge key collision.** `winnerCell + secondCell` is commutative but not injective — two distinct edges could sum to the same vec2 (e.g., (0,0)+(2,0) and (1,0)+(1,0)). The (1,0)+(1,0) collision would only occur if winnerCell == secondCell, which is impossible (different cells by definition). The remaining collisions are between edges in different parts of the disc, where the visual outcome is just "two distinct edges promote/suppress together" — invisible. Distinct from a hash that mixes the bits more carefully but cheaper.
 
 ---
 
@@ -307,16 +334,20 @@ if (inCrater) {
 
 A mid-age body mixes both stacks — the body reads as a hybrid, no hard switch. Future 1.5d linea slot in as crack-shaped windows that always paint `resourceSubsurface`, gated on `iceCoverage × surfaceAge`. Europa's lineae fall out of the same machinery without new attributes.
 
-**`iceCoverageAt(latSinS, iceFraction, avgSurfaceTempK)` — geometry decider.** Continuous lerp between cap and global patterns, indexed by temperature rather than class:
+**Per-fragment ice flag (`icyHere`) — geometry decider.** Two priorities, lerped by `vGlobalness`. Cap mode peaks at the poles (`|latSin|`); global mode uses a per-cell worley hash so a cold body gets ice scattered randomly across all latitudes. Threshold is `icePriority > 1 − effectiveIceFrac`, where `effectiveIceFrac` smoothsteps the CSV `iceFraction` toward 1.0 on bodies cold enough that liquid surface water is thermodynamically impossible:
 
 ```glsl
-float capPattern    = step(abs(latSinS), 1.0 - vIceFrac);  // 1 inside cap latitude band
-float globalPattern = vIceFrac;                             // uniform fraction
-float globalness    = smoothstep(WARM_TEMP_K, COLD_TEMP_K, vAvgTempK);
-float iceCoverage   = mix(capPattern, globalPattern, globalness);
+float capPriority     = abs(latSinS);
+float globalPriority  = hash21(winnerCell + vec2(vSeed * 701.0, vSeed * 719.0));
+float icePriority     = mix(capPriority, globalPriority, vGlobalness);
+float frozenBoost     = smoothstep(0.8, 1.0, vGlobalness);
+float effectiveIceFrac = mix(vIceFrac, 1.0, frozenBoost);
+bool  icyHere         = icePriority > (1.0 - effectiveIceFrac);
 ```
 
-`WARM_TEMP_K` / `COLD_TEMP_K` straddle ~250 K. Earth (288 K) → caps; Europa (102 K) → global; an ice-age Earth analog at ~260 K crosses through "caps expanding to merge across mid-latitudes" rather than snapping between modes. CPU-side packs `globalness ∈ [0, 1]` as a normalized scalar on a spare attribute component so the shader doesn't plumb the thresholds.
+`vGlobalness` is CPU-precomputed via `smoothstep(ICE_TEMP_CAP_K = 270, ICE_TEMP_GLOBAL_K = 180, avgSurfaceTempK)` in `disc-palette.ts` (descending lerp so cold T → globalness 1, warm T → globalness 0), packed into the spare slot of `aAtmoStrokes`. Earth (288 K) → globalness 0 → cap mode at small `iceFraction`; Mars (210 K) → globalness ≈ 0.74, cap mode preserved; Europa (102 K) → globalness 1 + `frozenBoost` 1 → `effectiveIceFrac` 1 → every cell `icyHere=true`, full ice shell with linea carrying the non-ice signal. The 0.8 crossover for `frozenBoost` lands at T ≈ 206 K — comfortably below Mars, comfortably above any of the catalog's outer-system icies.
+
+Ocean rendering also gates on warm bodies via `liquidOceanHere = waterHere && vGlobalness < 0.5`. Liquid surface water requires the body to be warm enough to hold it; on a cold body the water is the ice, and "water cells" fall back to the bulk resource palette (which on a volatile-rich body like Europa reads as pale-ice-colored anyway). Without this gate, cold ocean moons render deep-blue ocean cells punching through their ice shells — physically wrong and visually competes with the linea pass.
 
 ### 1.6a Data migration — retire `'ice'` from `WorldClass`
 
@@ -496,6 +527,7 @@ Goal: make Jupiter, Saturn, Uranus, Neptune and procgen siblings read as distinc
   - Region modifier: 401/419
   - Crater features (1.5c): 547/569/587 (5 distinct salt pairs needed for existence + jitter X/Y + radius + palette)
   - Ice priority (1.6): 701/719
+  - Linea edge gate (1.5d): 743/761
   - Inward-fade boundary dither: 829/853
   - Cloud cells (jitter + pick): 991/997, 1013/1019, 1031/1033
 

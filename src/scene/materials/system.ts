@@ -390,6 +390,31 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       const float CRATER_RADIUS_MIN   = 0.2;
       const float CRATER_RADIUS_MAX   = 0.9;
 
+      // Phase 1.5d — linea (Europa-style cracks). Paints subsurface
+      // resource color along Voronoi cell boundaries (F2 − F1 worley
+      // distance) where the body has young icy crust. Same layered
+      // resource model as craters; only the geometry differs (line
+      // features along cell edges instead of point features filling
+      // disc cells).
+      //
+      //   LINEA_BODY_THRESHOLD = 0.5 — body-wide gate on
+      //     iceFraction × surfaceAge. Sol anchors:
+      //       Europa     0.85 × 0.85 ≈ 0.72  → linea fires
+      //       Enceladus  0.95 × 0.95 ≈ 0.90  → linea fires
+      //       Ganymede   0.60 × 0.30 ≈ 0.18  → suppressed
+      //       Callisto   0.70 × 0.05 ≈ 0.035 → suppressed
+      //       Earth      0.10 × 0.70 ≈ 0.07  → suppressed
+      //   LINEA_WIDTH_FRAC = 0.18 — cell-fraction band along the cell
+      //     boundary that paints as linea. Roughly 1.5 px wide at the
+      //     SURFACE_PATCH_PX-pitch cell size.
+      //   LINEA_DENSITY = 0.18 — fraction of cell edges promoted to
+      //     linea. The remaining ~82% of edges stay invisible so the
+      //     network reads as a thin crisscross rather than a tiled
+      //     grid.
+      const float LINEA_BODY_THRESHOLD = 0.5;
+      const float LINEA_WIDTH_FRAC     = 0.18;
+      const float LINEA_DENSITY        = 0.18;
+
       float hash11(float x) {
         return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
       }
@@ -490,8 +515,16 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           vec2 cellPos = vec2(lon, lat) * vRadius / SURFACE_PATCH_PX;
           vec2 cellId  = floor(cellPos);
           vec2 cellFrac = cellPos - cellId;
+          // Track F1 (closest) AND F2 (second-closest) cells. F2-F1
+          // worley distance is the cell-boundary distance the 1.5d
+          // linea pass uses to draw cracks along cell edges. Closest
+          // TWO cells to any fragment in the central cell are always
+          // adjacent to it, so the 3x3 neighborhood scan is sufficient
+          // — no off-window candidates can sneak past.
           float minDist2 = 1e9;
+          float secondMinDist2 = 1e9;
           vec2  winnerCell = cellId;
+          vec2  secondCell = cellId;
           for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
               vec2 off = vec2(float(dx), float(dy));
@@ -504,8 +537,13 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               vec2 diff = nCenter - cellFrac;
               float d2 = dot(diff, diff);
               if (d2 < minDist2) {
+                secondMinDist2 = minDist2;
+                secondCell = winnerCell;
                 minDist2 = d2;
                 winnerCell = nCell;
+              } else if (d2 < secondMinDist2) {
+                secondMinDist2 = d2;
+                secondCell = nCell;
               }
             }
           }
@@ -532,18 +570,42 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           // body gets ice randomly scattered across all latitudes.
           // Salts 701/719 stay distinct from every other surface pass —
           // see "Hash-salt budget" in PLANET-RENDER-PLAN.md.
+          //
+          // On a body cold enough that liquid surface water is
+          // thermodynamically impossible (T well below ~200 K), the
+          // entire surface IS frozen — the iceFraction "deficit"
+          // (1 − vIceFrac) manifests as linea cracks rather than as
+          // visible non-ice cells punching through the ice shell. The
+          // smoothstep on vGlobalness ramps effectiveIceFrac toward 1.0
+          // for those bodies (Europa, Ganymede, Callisto, Triton),
+          // while Mars-class transitional bodies (globalness ~0.7)
+          // keep the cap pattern at the CSV iceFraction value. The 0.8
+          // crossover lands at T ≈ 206 K — comfortably below Mars at
+          // 210 K, comfortably above Triton at 38 K.
           float capPriority    = abs(latSinS);
           float cellHashIce    = hash21(winnerCell + vec2(vSeed * 701.0, vSeed * 719.0));
           float globalPriority = cellHashIce;
           float icePriority    = mix(capPriority, globalPriority, vGlobalness);
-          bool  icyHere        = icePriority > (1.0 - vIceFrac);
+          float frozenBoost    = smoothstep(0.8, 1.0, vGlobalness);
+          float effectiveIceFrac = mix(vIceFrac, 1.0, frozenBoost);
+          bool  icyHere        = icePriority > (1.0 - effectiveIceFrac);
 
           // CONTINENT_GROUP-sized blocks of worley cells share one
           // ocean/land coin flip. Salt offset from the resource-pick
-          // hash so the two scales decorrelate.
+          // hash so the two scales decorrelate. The OCEAN_COLOR
+          // override only fires on bodies warm enough for liquid
+          // surface water — on a cold body (vGlobalness > 0.5, T <
+          // ~225 K), water exists but as ice, so "water cells" fall
+          // back to the resource palette (which on a volatile-rich
+          // body like Europa reads as pale-ice colored anyway). This
+          // keeps the dark-blue ocean from punching through the ice
+          // shell on cryogenic moons whose surface is globally
+          // frozen; the linea pass below carries the non-ice signal
+          // on those bodies.
           vec2 contCell = floor(winnerCell / CONTINENT_GROUP);
           float contH = hash21(contCell + vec2(vSeed * 113.0, vSeed * 127.0));
           bool  waterHere = contH < vWaterFrac;
+          bool  liquidOceanHere = waterHere && vGlobalness < 0.5;
 
           // Phase 1.5b — per-region resource-subset selection. The
           // super-cell hash discretizes into one of REGION_BUCKET_COUNT
@@ -587,7 +649,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               if (bH < effective) landCol = vBiomeColor;
             }
           }
-          vec3 resourceSurface = waterHere ? OCEAN_COLOR : landCol;
+          vec3 resourceSurface = liquidOceanHere ? OCEAN_COLOR : landCol;
 
           // Subsurface (complement bucket) — drives crater color. Same
           // resource hash so the surface and subsurface picks correlate
@@ -689,6 +751,36 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             vec3 craterYoung = craterRevealCol;
             vec3 craterOld   = icyHere ? ICE_COLOR : craterRevealCol;
             col = mix(craterOld, craterYoung, vSurfaceAge);
+          }
+
+          // Phase 1.5d — linea. Voronoi cell-boundary cracks painted
+          // with the body's subsurface palette. Fires where the body
+          // has young icy crust (Europa, Enceladus). Body-level gate
+          // on iceFraction × surfaceAge keeps the pass off non-icy or
+          // ancient surfaces; fragment-level icyHere gate keeps cracks
+          // confined to the actual ice. Painting subsurface fits the
+          // layered resource model — a linea is "the ice shell cracked
+          // open and the underlying composition is visible."
+          //
+          // Edge geometry: F2 − F1 worley distance is roughly the
+          // perpendicular distance from the fragment to the nearest
+          // cell boundary. Fragments within LINEA_WIDTH_FRAC of any
+          // boundary are eligible. Only LINEA_DENSITY of edges promote
+          // to actual linea, gated by a per-edge hash so the network
+          // reads as a sparse crisscross rather than every-cell-edge.
+          // The edge key is winnerCell + secondCell (commutative, so
+          // the same edge keyed identically regardless of which side
+          // the fragment is on). Salts 743/761 — distinct primes from
+          // every other surface-pass salt.
+          if (icyHere && (vIceFrac * vSurfaceAge) > LINEA_BODY_THRESHOLD) {
+            float edgeDist = sqrt(secondMinDist2) - sqrt(minDist2);
+            if (edgeDist < LINEA_WIDTH_FRAC) {
+              vec2 edgeKey = winnerCell + secondCell;
+              float edgeH = hash21(edgeKey + vec2(vSeed * 743.0, vSeed * 761.0));
+              if (edgeH < LINEA_DENSITY) {
+                col = resourceSubsurface;
+              }
+            }
           }
 
           // Clouds float above the body's surface. Suppressed on icy
