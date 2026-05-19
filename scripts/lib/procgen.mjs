@@ -41,7 +41,9 @@ import {
   AXIAL_TILT_DEG,
   WATER_BUDGET_THRESHOLDS,
   WATER_FRACTION_BY_CLASS,
-  ICE_FRACTION_BY_CLASS,
+  ICE_FRACTION_BY_INSOLATION,
+  ICE_FRACTION_INSOLATION_BUCKETS,
+  ICE_FRACTION_CLASS_MUL,
   ALBEDO_BY_CLASS,
   SURFACE_AGE_BY_CLASS,
   SURFACE_AGE_TIDAL_LIFT,
@@ -53,8 +55,10 @@ import {
   MAGNETIC_DYNAMO_MULTIPLIER_BY_CLASS,
   GREENHOUSE_K_BY_CLASS,
   ATMOSPHERE_GASES_BY_CLASS,
+  ATMOSPHERE_GASES_COLD_OVERLAY,
   ATMOSPHERE_O2_BIOTIC_LIFT,
   ATMOSPHERE_MIN_PRESSURE_BAR,
+  INSOLATION_COLD_MAX,
   ICE_THICK_ATM_PROBABILITY,
   ICE_THICK_ATM_MIN_MASS_EARTH,
   ICE_THICK_ATM_PRESSURE_BAR,
@@ -165,19 +169,27 @@ export function worldClassFor(body, S) {
     const r_w = fieldPrng(body, 'water_budget')();
     return r_w < WATER_BUDGET_THRESHOLDS.hot.desertMax ? 'desert' : 'rocky';
   }
-  if (S < 0.1) return 'ice';         // outer cold
 
-  // Temperate band (0.1 < S < 1.5) — seeded water budget chooses surface.
-  // Thresholds in WATER_BUDGET_THRESHOLDS.temperate.
+  // Cold and temperate bands both use the seeded water budget to split
+  // between rocky and ocean. Class is bulk composition (does this body
+  // have a water mantle / dominant volatile budget?) — the surface state
+  // (frozen vs liquid) emerges from insolation downstream via the
+  // iceFraction prior and the cold-zone atmosphere overlay. Outer-cold
+  // bodies still split between rocky (Callisto-like: silicate bulk) and
+  // ocean (Europa-like: water-ice mantle); the difference is that ALL
+  // cold worlds carry a high iceFraction regardless of which class they
+  // land in.
   const r_w = fieldPrng(body, 'water_budget')();
   if (r_w < WATER_BUDGET_THRESHOLDS.temperate.rockyMax) return 'rocky';
   if (r_w < WATER_BUDGET_THRESHOLDS.temperate.oceanMax) {
     // Ocean classification requires sufficient mass to sustain the
     // atmospheric pressure needed to keep surface water liquid against
-    // evaporation. Sub-Mars-mass would-be-oceans (Europa-class moons)
-    // can't hold thick atms — their water exists as frozen surface +
-    // possible subsurface ocean, which our taxonomy buckets as `ice`.
-    if ((body.massEarth ?? 0) < OCEAN_MIN_MASS_EARTH) return 'ice';
+    // evaporation. Sub-Mars-mass would-be-oceans can't hold thick atms,
+    // so their water exists as frozen surface ± subsurface ocean — bulk
+    // composition is still "watery" but they fall back to rocky here
+    // because the cold-zone iceFraction prior will dominate the surface
+    // read either way.
+    if ((body.massEarth ?? 0) < OCEAN_MIN_MASS_EARTH) return 'rocky';
     return 'ocean';
   }
   return 'desert';
@@ -252,30 +264,40 @@ function avgSurfaceTempFor(body, S) {
 // Baseline atmospheric pressure (bar) per world_class. Scaled by sqrt(mass)
 // as a rough proxy for escape-velocity-driven retention (Earth=1, Mars
 // ≈ 0.003 because of low mass, super-Earth at 5 M⊕ ≈ 2.2 bar baseline).
-// Returns null for gaseous bodies — no defined surface.
+// Returns null for gaseous bodies — no defined surface. Cold-zone
+// terrestrials fall to the desert-baseline value (0.01) by default;
+// mass-eligible cold bodies get the Titan-class thick-atm retention
+// roll layered on top — see below.
 const PRESSURE_BAR_BY_CLASS = {
   rocky:   1.0,    // Earth
   ocean:   1.5,    // thicker on average — more volatiles, water vapor
   desert:  0.01,   // Mars-class trace
   lava:   50,      // Venus-class outgassed CO2 atmosphere
-  ice:     0.001,  // typically airless surface
 };
 
-function surfacePressureFor(body) {
+// Cold-zone (S < INSOLATION_COLD_MAX) override for the pressure baseline.
+// Cold terrestrials default to airless regardless of bulk class — volatile
+// outgassing is suppressed below the freezing point of water and most
+// other condensables, so a Callisto-class cold rocky and a Europa-class
+// cold ocean both read as ~0.001 bar before the Titan retention roll.
+const PRESSURE_BAR_COLD_BASELINE = 0.001;
+
+function surfacePressureFor(body, S) {
   if (body.worldClass == null) return null;
   const baseline = PRESSURE_BAR_BY_CLASS[body.worldClass];
   if (baseline == null) return null;  // gas/ice giants land here — no surface
   const m = body.massEarth ?? 1.0;
+  const cold = S != null && S < INSOLATION_COLD_MAX;
 
-  // Ice worlds — mass-eligible bodies get a Titan-class retention roll.
-  // The class baseline (0.001 bar) puts every ice body in the airless
-  // category by default, but ~15% of Titan-mass-or-larger icies retain
-  // a thick atmosphere (Titan = 1.45 bar in Sol). The roll uses an
-  // isolated 'thickAtm' seed so adding/removing it doesn't perturb
+  // Cold mass-eligible terrestrials get a Titan-class retention roll.
+  // The cold baseline (0.001 bar) puts every cold terrestrial in the
+  // airless category by default, but ~15% of Titan-mass-or-larger cold
+  // bodies retain a thick atmosphere (Titan = 1.45 bar). The roll uses
+  // an isolated 'thickAtm' seed so adding/removing it doesn't perturb
   // other fields. When it fires, the actual pressure draws from a
   // separate 'thickAtmPressure' seed.
   if (
-    body.worldClass === 'ice' &&
+    cold &&
     m >= ICE_THICK_ATM_MIN_MASS_EARTH &&
     fieldPrng(body, 'thickAtm')() < ICE_THICK_ATM_PROBABILITY
   ) {
@@ -284,7 +306,8 @@ function surfacePressureFor(body) {
     );
   }
 
-  return Number((baseline * Math.sqrt(Math.max(m, 0.001))).toFixed(3));
+  const effective = cold ? PRESSURE_BAR_COLD_BASELINE : baseline;
+  return Number((effective * Math.sqrt(Math.max(m, 0.001))).toFixed(3));
 }
 
 // =============================================================================
@@ -302,10 +325,31 @@ function waterFractionFor(body) {
   return Number(sampleTruncated(fieldPrng(body, 'waterFraction'), spec).toFixed(3));
 }
 
-function iceFractionFor(body) {
-  const spec = ICE_FRACTION_BY_CLASS[body.worldClass];
-  if (spec == null) return null;
-  if (spec.max === 0) return 0;
+function iceFractionFor(body, S) {
+  if (body.worldClass == null) return null;
+  const mul = ICE_FRACTION_CLASS_MUL[body.worldClass];
+  if (mul == null) return null;       // giants — no surface, no ice
+  if (mul === 0) return 0;            // lava — always zero
+
+  // Insolation drives the geometry (bucket); class drives the amplitude
+  // (multiplier on the bucket's mean and max). A cold ocean and a cold
+  // rocky both land in the cold bucket; the ocean's mul=1.2 pushes its
+  // sample slightly higher to reflect more available water.
+  let bucketName = 'cold';
+  for (const [name, range] of Object.entries(ICE_FRACTION_INSOLATION_BUCKETS)) {
+    if (S != null && S >= range.min && S < range.max) {
+      bucketName = name;
+      break;
+    }
+  }
+  const bucket = ICE_FRACTION_BY_INSOLATION[bucketName];
+  if (bucket == null) return null;
+  const spec = {
+    mean: Math.min(1, bucket.mean * mul),
+    sd:   bucket.sd,
+    min:  bucket.min,
+    max:  Math.min(1, bucket.max * mul),
+  };
   return Number(sampleTruncated(fieldPrng(body, 'iceFraction'), spec).toFixed(3));
 }
 
@@ -444,11 +488,21 @@ function surfaceTempRangeFor(body) {
 // without replacement, then renormalize their fractions to sum to 1.0.
 // Returns null entries for classes with no atmosphere table or when the
 // surface pressure is below the trace floor.
-function atmosphereFor(body) {
+function atmosphereFor(body, S) {
   if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
     return [null, null, null];
   }
-  const table = ATMOSPHERE_GASES_BY_CLASS[body.worldClass];
+  // Cold terrestrials that passed the Titan-class thick-atm retention
+  // roll get the N2/CH4 outgassed mix rather than the warm-body
+  // CO2/H2O baseline (Titan's real chemistry). Gas/ice giants and
+  // gas dwarfs always use their own class entries since they don't
+  // have a cold-zone variant.
+  const cold = S != null && S < INSOLATION_COLD_MAX;
+  const wc = body.worldClass;
+  const isTerrestrial = wc === 'rocky' || wc === 'ocean' || wc === 'desert';
+  const table = (cold && isTerrestrial)
+    ? ATMOSPHERE_GASES_COLD_OVERLAY
+    : ATMOSPHERE_GASES_BY_CLASS[wc];
   if (!table) return [null, null, null];
   const prng = fieldPrng(body, 'atmosphere');
   // Per-gas seeded weight perturbation (×0.5 to ×1.5) so two same-class
@@ -688,7 +742,7 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, waterFraction };
   if (unknowns.has('iceFraction')) {
-    iceFraction = iceFractionFor(working);
+    iceFraction = iceFractionFor(working, S);
   }
   working = { ...working, iceFraction };
 
@@ -723,7 +777,7 @@ function fillBody(b, allBodies, stars) {
   // Pressure must precede temperature: avgSurfaceTempFor reads pressure
   // for the greenhouse-pressure scaling.
   if (unknowns.has('surfacePressureBar')) {
-    const p = surfacePressureFor(working);
+    const p = surfacePressureFor(working, S);
     if (p != null) surfacePressureBar = p;
   }
   working = { ...working, surfacePressureBar };
@@ -775,7 +829,7 @@ function fillBody(b, allBodies, stars) {
   // Atmosphere — picks top 3 gases with renormalized fractions. Skips
   // worlds with sub-trace surface pressure (ice / airless bodies).
   if (unknowns.has('atm1') || unknowns.has('atm2') || unknowns.has('atm3')) {
-    const [a1, a2, a3] = atmosphereFor(working);
+    const [a1, a2, a3] = atmosphereFor(working, S);
     if (unknowns.has('atm1')) { atm1 = a1?.gas ?? null; atm1Frac = a1?.frac ?? null; }
     if (unknowns.has('atm2')) { atm2 = a2?.gas ?? null; atm2Frac = a2?.frac ?? null; }
     if (unknowns.has('atm3')) { atm3 = a3?.gas ?? null; atm3Frac = a3?.frac ?? null; }

@@ -20,7 +20,6 @@ import { colors, fonts, sizes } from '../theme';
 const WORLD_CLASS_LABEL: Record<WorldClass, string> = {
   rocky:     'Rocky',
   ocean:     'Ocean',
-  ice:       'Ice',
   desert:    'Desert',
   lava:      'Lava',
   gas_dwarf: 'Gas Dwarf',

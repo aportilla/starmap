@@ -37,7 +37,9 @@ import {
   BELT_RESOURCE_PRIORS,
   COMPANION_PLANET_SUPPRESSION,
   WATER_FRACTION_BY_CLASS,
-  ICE_FRACTION_BY_CLASS,
+  ICE_FRACTION_BY_INSOLATION,
+  ICE_FRACTION_INSOLATION_BUCKETS,
+  ICE_FRACTION_CLASS_MUL,
   SURFACE_AGE_BY_CLASS,
   TECTONIC_ACTIVITY_BY_CLASS,
   MAGNETIC_FIELD_GAUSS_BY_CLASS,
@@ -436,8 +438,58 @@ function auditScalar(field, priorTable, label) {
     );
   }
 }
+// iceFraction is insolation-keyed (not class-keyed) — its prior comes
+// from ICE_FRACTION_BY_INSOLATION buckets adjusted by an ICE_FRACTION_CLASS_MUL
+// multiplier. Audit grouped by (worldClass, insolation bucket) rather
+// than worldClass alone.
+function auditIceFraction() {
+  console.log('  --- iceFraction (by class × insolation bucket) ---');
+  console.log('  class       bucket      |  n      obs.mean  obs.sd     prior.mean  prior.sd   z');
+  const byKey = {};
+  for (const b of bodies) {
+    if (b.kind !== 'planet' || b.source !== 'procgen') continue;
+    if (b.worldClass == null || b.iceFraction == null) continue;
+    const mul = ICE_FRACTION_CLASS_MUL[b.worldClass];
+    if (mul == null) continue;
+    const S = b.insolation ?? null;  // bodies don't store S; fall through
+    // Reconstruct insolation bucket using avgSurfaceTempK as a proxy —
+    // exact S requires host-star walk which we skip in audit. Use the
+    // same temp-thresholds the cold gate uses: T < 200K ≈ cold.
+    let bucketName = 'cold';
+    if (b.avgSurfaceTempK != null) {
+      if      (b.avgSurfaceTempK > 450) bucketName = 'hot';
+      else if (b.avgSurfaceTempK > 270) bucketName = 'temperate';
+      else if (b.avgSurfaceTempK > 200) bucketName = 'cool';
+      else                              bucketName = 'cold';
+    }
+    const key = `${b.worldClass}|${bucketName}`;
+    if (!byKey[key]) byKey[key] = [];
+    byKey[key].push(b.iceFraction);
+  }
+  for (const cls of Object.keys(ICE_FRACTION_CLASS_MUL).sort()) {
+    const mul = ICE_FRACTION_CLASS_MUL[cls];
+    if (mul === 0) continue;  // lava — always zero, skip
+    for (const bucket of Object.keys(ICE_FRACTION_BY_INSOLATION)) {
+      const arr = byKey[`${cls}|${bucket}`] || [];
+      if (!arr.length) continue;
+      const obs = meanStd(arr);
+      const base = ICE_FRACTION_BY_INSOLATION[bucket];
+      const p = { mean: Math.min(1, base.mean * mul), sd: base.sd };
+      console.log(
+        '  ' + pad(cls, 11) + ' ' + pad(bucket, 10) +
+        ' |' + pad(arr.length, 5, true) +
+        '   ' + pad(obs.mean.toFixed(3), 6, true) +
+        '   ' + pad(obs.sd.toFixed(3), 5, true) +
+        '      ' + pad(p.mean.toFixed(3), 5, true) +
+        '       ' + pad(p.sd.toFixed(3), 5, true) +
+        fmtZ(zMean(obs.mean, arr.length, p.mean, p.sd || 0.001), arr.length),
+      );
+    }
+  }
+}
+
 auditScalar('waterFraction',    WATER_FRACTION_BY_CLASS,    'waterFraction');
-auditScalar('iceFraction',      ICE_FRACTION_BY_CLASS,      'iceFraction');
+auditIceFraction();
 auditScalar('surfaceAge',       SURFACE_AGE_BY_CLASS,       'surfaceAge (post-tidal-lift; expect bias above prior on giant-moon eccentric branches)');
 auditScalar('tectonicActivity', TECTONIC_ACTIVITY_BY_CLASS, 'tectonicActivity (post-mass-scale; expect bias on non-Earth-mass)');
 auditScalar('magneticFieldGauss', MAGNETIC_FIELD_GAUSS_BY_CLASS, 'magneticFieldGauss (post-tect/rot scaling for terrestrials)');

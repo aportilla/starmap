@@ -77,7 +77,7 @@ export interface Star {
 }
 
 export type WorldClass =
-  | 'rocky' | 'ocean' | 'ice' | 'desert' | 'lava'
+  | 'rocky' | 'ocean' | 'desert' | 'lava'
   | 'gas_dwarf' | 'gas_giant' | 'ice_giant';
 // Biosphere is two orthogonal axes:
 //   - archetype: what kind of life (carbon/water, methane/cryogenic, etc.)
@@ -276,7 +276,6 @@ export const CLASS_COLOR: Record<SpectralClass, Color> = {
 export const WORLD_CLASS_COLOR: Record<WorldClass, Color> = {
   rocky:     new Color(0xc4956a),
   ocean:     new Color(0x4a9fd9),
-  ice:       new Color(0xd6e8f0),
   desert:    new Color(0xe4a854),
   lava:      new Color(0xd64a3a),
   gas_dwarf: new Color(0xa090c8),

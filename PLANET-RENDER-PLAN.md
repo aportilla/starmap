@@ -271,7 +271,109 @@ Each fragment scans the 3×3 neighborhood of crater seed cells, accepts the *clo
 
 ### 1.5d Linea (deferred)
 
-Surface linea — Europa's red cracks, Enceladus's tiger stripes — would emerge from the same layered-resource model. A linea is a thin stair-stepped path painted from the region's subsurface mask, drawn across the surface where `worldClass = ice` and `surfaceAge` is high (the cracks are *young* features on icy crust, the opposite signal from craters). One mechanism — point features for craters, line features for linea — both colored by the body's own subsurface palette. Defer until 1.5c is shipped and the layered model is proven.
+Surface linea — Europa's red cracks, Enceladus's tiger stripes — would emerge from the same layered-resource model. A linea is a thin stair-stepped path painted from the region's subsurface mask, drawn across the surface where `worldClass = ice` and `surfaceAge` is high (the cracks are *young* features on icy crust, the opposite signal from craters). One mechanism — point features for craters, line features for linea — both colored by the body's own subsurface palette. Defer until 1.5c is shipped and the layered model is proven. (Phase 1.6 retires the `worldClass='ice'` gate; the trigger updates to `iceCoverage × surfaceAge` as part of that work — see below.)
+
+---
+
+## Phase 1.6 — Ice as a contextual surface state
+
+Retire `'ice'` from `WorldClass`. Ice becomes a surface state composed on top of whatever the body is actually made of — Europa is fundamentally `ocean`, Callisto and Ganymede are `rocky`, an ice-age Earth is still `ocean`. Ice presence, distribution, and role in the layer stack emerge from `iceFraction`, `avgSurfaceTempK`, and `surfaceAge` rather than a class enum. Composes with the existing 1.5b region / 1.5c crater machinery — the layered resource model already does the structural work; this phase just gives ice a position in the stack.
+
+**Why.** Today's renderer treats `iceFraction` as polar-cap latitude band geometry only (`|latSinS| > 1 - iceFrac` flips to flat `ICE_COLOR`). That matches one physical regime — a warm body where ice persists only at the coldest latitudes (Earth, Mars) — but breaks for cold-body global ice (Europa, Ganymede, Callisto, Enceladus). The cap branch is also a *terminator* in the pipeline: regions, resources, biome stipple, and craters all skip — so an ice moon's defining features (Callisto's impact dots, Europa's lineae character) can't render even when the data is right. And `worldClass='ice'` carries overlapping meaning with `iceFraction`: Callisto's CSV today says `iceFraction=0.05` *and* `worldClass='ice'`, an ambiguous combination on its face. `worldClass` should describe what the body is *made of*; ice is a surface property the body *has*.
+
+**Three-layer surface stack.** Per fragment, three values compose:
+- `resourceSurface` — 1.5b region pick (`pickFromPalette` over `vWeights × regionMask`).
+- `resourceSubsurface` — 1.5c subsurface pick (`pickFromPalette` over `vWeights × complementMask`).
+- `iceLayer` — flat `ICE_COLOR`, present when `iceCoverageAt > 0`.
+
+Stack order is chosen by `surfaceAge`:
+- Young (high age) → `[ice, resourceSurface, resourceSubsurface]`. Fresh resurfacing keeps ice on top; craters cut through to expose underlying resources. Europa pattern.
+- Old (low age) → `[resourceSurface, ice, resourceSubsurface]`. Accumulated impact regolith + radiation darkening buries the ice; craters punch through and reveal it. Callisto pattern.
+
+Per-fragment composition reads:
+
+```glsl
+youngTop = mix(resourceSurface, iceLayer, iceCoverage);
+oldTop   = resourceSurface;
+col      = mix(oldTop, youngTop, surfaceAge);
+
+if (inCrater) {
+  youngCrater = resourceSubsurface;
+  oldCrater   = mix(iceLayer, resourceSubsurface, 1.0 - iceCoverage);
+  col         = mix(oldCrater, youngCrater, surfaceAge);
+}
+```
+
+A mid-age body mixes both stacks — the body reads as a hybrid, no hard switch. Future 1.5d linea slot in as crack-shaped windows that always paint `resourceSubsurface`, gated on `iceCoverage × surfaceAge`. Europa's lineae fall out of the same machinery without new attributes.
+
+**`iceCoverageAt(latSinS, iceFraction, avgSurfaceTempK)` — geometry decider.** Continuous lerp between cap and global patterns, indexed by temperature rather than class:
+
+```glsl
+float capPattern    = step(abs(latSinS), 1.0 - vIceFrac);  // 1 inside cap latitude band
+float globalPattern = vIceFrac;                             // uniform fraction
+float globalness    = smoothstep(WARM_TEMP_K, COLD_TEMP_K, vAvgTempK);
+float iceCoverage   = mix(capPattern, globalPattern, globalness);
+```
+
+`WARM_TEMP_K` / `COLD_TEMP_K` straddle ~250 K. Earth (288 K) → caps; Europa (102 K) → global; an ice-age Earth analog at ~260 K crosses through "caps expanding to merge across mid-latitudes" rather than snapping between modes. CPU-side packs `globalness ∈ [0, 1]` as a normalized scalar on a spare attribute component so the shader doesn't plumb the thresholds.
+
+### 1.6a Data migration — retire `'ice'` from `WorldClass`
+
+One commit; touches procgen tables, the world-class cascade, the Sol body CSV, and a few `WorldClass`-keyed lookup tables.
+
+**Type + tables (`src/data/stars.ts`).** Drop `'ice'` from the `WorldClass` union. Remove `WORLD_CLASS_COLOR['ice']`, any `WORLD_CLASS_TINT['ice']` entry, and `GAS_VISIBILITY_FILTER['ice']`.
+
+**Procgen routing (`scripts/lib/procgen.mjs`, `scripts/lib/procgen-priors.mjs`).**
+- `worldClass` cascade — cases that flipped to `'ice'` now stay on their primary class with `iceFraction` sourced from a temperature-driven prior. `OCEAN_MIN_MASS_EARTH` sub-Mars gate stops routing would-be-oceans to `'ice'`; they flip to `'rocky'` (mass too low to retain liquid surface water; body is fundamentally rocky with frozen surface volatiles).
+- `SURFACE_AGE_BY_CLASS['ice']` → deleted. Cold-rocky / cold-ocean bodies pick from their primary class entries; the `SURFACE_AGE_TIDAL_LIFT` branch for eccentric giant moons continues to drive Europa/Enceladus-young-surface.
+- `ATMOSPHERE_GASES_BY_CLASS['ice']` → deleted. Cold-class atmospheres come from rocky/ocean branches plus an insolation-keyed bias for outgassed N2/CH4 retention.
+- `ICE_THICK_ATM_PROBABILITY` / `ICE_THICK_ATM_PRESSURE_BAR` → re-keyed on `insolation < ICE_THICK_ATM_INSOLATION_THRESHOLD` (rather than class). Titan-class thick atmospheres emerge on cold rocky/ocean worlds.
+- `PLANET_RESOURCE_PRIORS_BY_CLASS['ice']` → deleted; volatile-heavy distributions roll into cold branches of rocky/ocean via insolation gating.
+- `CHROMOPHORE_BY_CLASS['ice']` (CH4 tholin) → moved to a gated rule on `(rocky | ocean) + cold-insolation + (surfacePressureBar ≥ CHROMOPHORE_THIN_ATM_MIN_BAR)`.
+- `iceFraction` prior — from class-keyed to insolation-driven. Cold rocky → moderate; cold ocean → high; warm → low (cap-band fraction).
+
+**Sol bodies (`src/data/bodies.csv`).** Reclassify the affected anchors:
+- Europa: `ice` → `ocean`. Bulk is "ocean covered with ice". Keep `iceFraction=0.85`.
+- Ganymede: `ice` → `ocean`. Differentiated body with subsurface ocean. Bump `iceFraction` to ~0.6 (globally icy with rocky exposures).
+- Callisto: `ice` → `rocky`. Bulk silicate body. Bump `iceFraction` to ~0.7 (surface globally icy but heavily impact-mixed; the dark surface emerges from low `surfaceAge` aging the ice underneath).
+- Enceladus: `ice` → `ocean`. Subsurface ocean with cryovolcanic resurfacing; iceFraction stays high.
+- Titan: `ice` → `rocky`. Bulk character is rocky+icy mantle; banded mode renders the tholin haze regardless of surface `iceFraction`.
+- Future Pluto/Triton: `rocky` with very high `iceFraction`.
+
+**Smoke pass after 1.6a.** Re-run `build:catalog` and load the renderer. Non-ice bodies should look unchanged. Ice bodies render cap-pattern geometry against the migrated `iceFraction` values — visually "wrong but consistent" (Europa stays approximately white via the bumped cap; Callisto reads bare-rocky since its cap pattern won't fire globally yet — 1.6b's job).
+
+### 1.6b Render — continuous `iceCoverage` + surfaceAge-driven layer stack
+
+Touches `src/scene/materials/system.ts` (the planet shader) and `src/scene/system-diagram/disc-palette.ts` (attribute plumbing).
+
+**Attribute additions.** `surfaceAge` already plumbed (1.5c). `globalness` (the temperature-derived 0..1 scalar from `iceCoverageAt`) packs into a spare component of an existing vec — `aAtmoStrokes: vec3` (rimWidth / cloudDensity / surfaceAge) expands to a `vec4` with `globalness` as the fourth. No new attribute slot; stays under the `gl_MaxVertexAttribs` budget called out in `README.md`.
+
+**Shader (`makePlanetMaterial`).** Replace the cap branch with the three-layer composition. Compute `iceCoverage` from `(latSinS, vIceFrac, vGlobalness)` per fragment. Compute `resourceSurface` and `resourceSubsurface` once each (region pick + complement pick — both already exist in the surface branch), then `mix` per the stack-order rule. The crater branch keeps its existing closest-wins geometry; the *color* it paints now branches on stack order. The cloud (1.3c) and biome (1.2) gates change from "not in cap latitude" to "ice doesn't fully cover this fragment", so a patchy mid-coverage Ganymede analog still gets cloud/biome passes where ice is sparse.
+
+**`disc-palette.ts`.** Drop any `worldClass === 'ice'` special cases. Banded-mode triggers (gas/ice giant, pressure ≥ banded threshold, haze chromophore + Titan-class pressure) are already class-agnostic outside the 'ice' branch. Plumb `globalness` into `DiscProps`; null `avgSurfaceTempK` (shouldn't happen for surface bodies post-Filler) falls back to `0` (cap pattern, safest default).
+
+**Tuning anchors (Sol bodies after 1.6a + 1.6b).**
+- Europa — bright global ice with rare resource-revealing craters (`surfaceAge` high × `iceCoverage` high). Top of stack is ice. Lineae (future 1.5d) are the natural payoff.
+- Callisto — dark resource-color surface with bright ice-revealing crater dots (`surfaceAge` low × `iceCoverage` ~0.7). Top of stack is resource regions.
+- Ganymede — hybrid; body-level surfaceAge averages out real Ganymede's regional young/old dichotomy. Craters appear in *both* ice and resource colors depending on which surface layer they cut through. See Risk.
+- Enceladus — bright global ice, high surfaceAge; cryovolcanic plumes out of scope.
+- Earth — warm body → cap pattern. Low `iceFraction` → small caps. Continents + oceans + biome stipple unchanged.
+- Mars — warm-ish + low `iceFraction` → small caps. No visual change.
+- Mercury / Luna / Io — zero `iceFraction` → no ice layer; three-layer stack collapses to today's two-layer rocky pipeline. No visual change.
+- Titan — banded mode; surface `iceFraction` doesn't render under banded.
+- A procgen ice-age Earth analog (cold rocky with `iceFraction > 0.5`) — smoothly transitions through globalness rather than stepping. Verify the visual reads as physically motivated.
+
+**Risk.**
+- **Ganymede's regional dichotomy is averaged out.** A body whose surface is half young (grooved, ice-on-top) and half old (cratered, ice-buried) reads as a body-level mix rather than a spatial split. Acceptable for v1; if disappointing, fold an age-bias into the 1.5b region bucket so each region picks its own ice-role independently of the body-level value.
+- **Determinism + `avgSurfaceTempK`.** Keying shader behavior off a Filler-derived field means a `PROCGEN_VERSION` bump can flip borderline bodies' geometry from cap to global as temperatures recompute. The smoothstep absorbs most of the visual shift; both `globalness` and `iceFraction` derive from the same upstream anchors so internal consistency holds.
+- **Off-distribution hand-edits.** A CSV with mismatched `(T, iceFraction, surfaceAge)` — e.g. a hot body with high `iceFraction` — falls into a parameter region procgen wouldn't generate. The rule still produces *something* (`globalness ≈ 0` → small cap regardless of `iceFraction`), so no crash, just a body that reads as physically nonsensical. CSV is the source of truth; cross-field plausibility isn't validated today and won't be here either.
+- **Data migration before render lands.** Between 1.6a and 1.6b shipping, Callisto and Ganymede render with cap-pattern geometry against their bumped `iceFraction` values, which looks wrong. Ship together if possible; otherwise the intermediate state is brief and recoverable.
+
+### Phasing
+
+1. **1.6a — data migration.** Retire `'ice'` from `WorldClass`. Update procgen tables and cascade. Migrate Sol body CSV. Regenerate catalog. Smoke-render: confirm no non-ice body changes; ice bodies look "wrong but consistent."
+2. **1.6b — render.** Replace cap branch with the three-layer stack + continuous `iceCoverage`. Plumb `vGlobalness`. Update cloud and biome gates to read ice coverage instead of cap latitude. Smoke-render the eleven Sol anchors.
+3. **1.5d — linea (still deferred but unblocked by 1.6's layered model).** Surface linea become a small extension: trigger gates on `iceCoverage × surfaceAge`, paint `resourceSubsurface`. Defer until 1.6 ships and the model is proven.
 
 ---
 
