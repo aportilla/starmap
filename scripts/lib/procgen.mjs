@@ -39,9 +39,11 @@ import {
   ECCENTRICITY,
   INCLINATION_DEG,
   AXIAL_TILT_DEG,
-  FROST_LINE_S,
+  zoneForFormationAu,
+  SNOW_LINE_TEMPERATURES,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
+  BULK_VOLATILE_FRACTION_BY_ZONE,
   ALBEDO_COMPONENTS,
   CLOUD_BY_GAS,
   GREENHOUSE,
@@ -74,7 +76,7 @@ import {
   CHROMOPHORE_REGIME_THRESHOLDS,
   BIOSPHERE_HABITATS,
 } from './procgen-priors.mjs';
-import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass } from './astrophysics.mjs';
+import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
   return mulberry32(hash32(`${body.id}:${field}:${PROCGEN_VERSION}`));
@@ -507,19 +509,28 @@ function boilingPointK(P_bar) {
 
 // Fill bulkWaterFraction from the formation-zone prior for catalog rows
 // that landed without an Architect-set value. Symmetric with the
-// Architect's sampleBulkWaterFraction. Returns null when insolation is
-// unknown.
-function bulkWaterFractionFor(body, S) {
-  const zone = (S != null && S >= FROST_LINE_S) ? 'inner' : 'outer';
+// Architect's sampleBulkWaterFraction. Returns null when formationAu /
+// frost lines are unknown.
+function bulkWaterFractionFor(body, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
   return Number(sampleLogTruncated(fieldPrng(body, 'bulk_water'), BULK_WATER_FRACTION_BY_ZONE[zone]).toFixed(5));
 }
 
-// Architect's companion bulk-metal sampler for catalog rows. Same zone
-// gate as bulkWater — refractory metals condense first in the inner
-// zone, ices dominate outer.
-function bulkMetalFractionFor(body, S) {
-  const zone = (S != null && S >= FROST_LINE_S) ? 'inner' : 'outer';
+// Architect's companion bulk-metal sampler for catalog rows. Same
+// four-zone gate as bulkWater — refractory metals condense first inside
+// the H2O line, each successive snow line dilutes metal fraction as
+// volatiles join the solid budget.
+function bulkMetalFractionFor(body, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
   return Number(sampleLogTruncated(fieldPrng(body, 'bulk_metal'), BULK_METAL_FRACTION_BY_ZONE[zone]).toFixed(5));
+}
+
+// Non-water condensable volatile inventory — same four-zone formation
+// gate. Past CH4 line this becomes the dominant ice; inside H2O it's
+// only the refractory-trapped CO2/N2 floor.
+function bulkVolatileFractionFor(body, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
+  return Number(sampleLogTruncated(fieldPrng(body, 'bulk_volatile'), BULK_VOLATILE_FRACTION_BY_ZONE[zone]).toFixed(5));
 }
 
 // Fraction of surface covered by liquid water. Three gates compose:
@@ -1070,17 +1081,26 @@ function fillBody(b, allBodies, stars) {
   }
 
   const S = hostStar ? insolation(hostStar.mass, aFromStar) : null;
-  // Composition (bulkWater / bulkMetal) reads insolation at the body's
-  // formation location, not its current orbit — a hot Jupiter that
-  // migrated from past the frost line keeps its outer-zone water budget.
-  // For in-situ formation (formationAu null or equal to semiMajorAu),
-  // Sform === S. Moons inherit formation context from their host planet.
+  // Composition (bulkWater / bulkMetal / bulkVolatile) reads insolation
+  // at the body's formation location, not its current orbit — a hot
+  // Jupiter that migrated from past the frost line keeps its outer-zone
+  // water budget. For in-situ formation (formationAu null or equal to
+  // semiMajorAu), Sform === S. Moons inherit formation context from
+  // their host planet.
   const aFormation = b.kind === 'planet'
     ? (b.formationAu ?? aFromStar)
     : (b.kind === 'moon' && hostBody)
       ? (hostBody.formationAu ?? aFromStar)
       : aFromStar;
   const Sform = hostStar ? insolation(hostStar.mass, aFormation) : null;
+  // Frost-line trio for the four-zone bulk-composition gate. Deterministic
+  // from host star mass — no PRNG draw, computed once per body. Null when
+  // the host star is missing; bulk* fillers fall through to null.
+  const frostLinesAu = hostStar ? {
+    H2O: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.H2O),
+    NH3: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.NH3),
+    CH4: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.CH4),
+  } : null;
   const lockProxy = (b.kind === 'planet' && hostStar)
     ? tidalLockProxy(hostStar.mass, b.semiMajorAu)
     : (b.kind === 'moon' ? tidalLockProxy(hostMassSolar, b.semiMajorAu) : null);
@@ -1091,7 +1111,7 @@ function fillBody(b, allBodies, stars) {
   // previously-filled values; that's how downstream rules pick up upstream
   // results within the same pass.
   let {
-    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction,
+    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
     waterFraction, iceFraction, surfaceAge,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
@@ -1111,17 +1131,26 @@ function fillBody(b, allBodies, stars) {
 
   let working = { ...b, radiusEarth };
 
-  // bulkWaterFraction + bulkMetalFraction fill for catalog rows the
-  // Architect didn't touch. Symmetric with the Architect's per-body
-  // draws; both read insolation for the zone gate. Fall through to
-  // null when S is unknown.
+  // Bulk composition fill for catalog rows the Architect didn't touch.
+  // Symmetric with the Architect's per-body draws; all three read the
+  // four-zone formation gate (aFormation vs the host star's frost-line
+  // trio). Fall through to null when host star or formationAu unknown.
   if (unknowns.has('bulkWaterFraction')) {
-    if (Sform != null) bulkWaterFraction = bulkWaterFractionFor(working, Sform);
+    if (aFormation != null && frostLinesAu != null) {
+      bulkWaterFraction = bulkWaterFractionFor(working, aFormation, frostLinesAu);
+    }
   }
   if (unknowns.has('bulkMetalFraction')) {
-    if (Sform != null) bulkMetalFraction = bulkMetalFractionFor(working, Sform);
+    if (aFormation != null && frostLinesAu != null) {
+      bulkMetalFraction = bulkMetalFractionFor(working, aFormation, frostLinesAu);
+    }
   }
-  working = { ...working, bulkWaterFraction, bulkMetalFraction };
+  if (unknowns.has('bulkVolatileFraction')) {
+    if (aFormation != null && frostLinesAu != null) {
+      bulkVolatileFraction = bulkVolatileFractionFor(working, aFormation, frostLinesAu);
+    }
+  }
+  working = { ...working, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction };
 
   // Orbital flavor early so tilt + eccentricity are available when temp
   // range and surface age run later.
@@ -1319,7 +1348,7 @@ function fillBody(b, allBodies, stars) {
   const { _unknowns, ...rest } = b;
   return {
     ...rest,
-    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction,
+    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
     waterFraction, iceFraction, surfaceAge,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,

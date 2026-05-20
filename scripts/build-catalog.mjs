@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass, planetTypeFor } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay } from './lib/procgen-architect.mjs';
-import { MAX_PLANETS_PER_CLUSTER } from './lib/procgen-priors.mjs';
-import { insolation } from './lib/astrophysics.mjs';
+import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES } from './lib/procgen-priors.mjs';
+import { insolation, frostLineAU } from './lib/astrophysics.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -530,6 +530,7 @@ const BODY_NUMERIC_FIELDS = [
   ['radius_earth',           'radiusEarth'],
   ['bulk_water_fraction',    'bulkWaterFraction'],
   ['bulk_metal_fraction',    'bulkMetalFraction'],
+  ['bulk_volatile_fraction', 'bulkVolatileFraction'],
   ['avg_surface_temp_k',     'avgSurfaceTempK'],
   ['surface_temp_min_k',     'surfaceTempMinK'],
   ['surface_temp_max_k',     'surfaceTempMaxK'],
@@ -960,7 +961,17 @@ async function main() {
     // used. Curated-system planets skipped above stay planetType: null.
     planet.planetType = planetType;
     if (!catalogMoonHosts.has(planet.id)) {
-      backfillMoons.push(...generateMoons(planet, planetType, S));
+      // Moons inherit the host planet's formation zone for bulk
+      // composition. Catalog planets don't carry formationAu (architect-
+      // only); fall back to the host's current semiMajorAu as the in-situ
+      // formation proxy. Frost lines are deterministic from host mass.
+      const hostFormationAu = planet.formationAu ?? aForS;
+      const frostLinesAu = {
+        H2O: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.H2O),
+        NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),
+        CH4: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.CH4),
+      };
+      backfillMoons.push(...generateMoons(planet, planetType, hostFormationAu, frostLinesAu));
     }
     // Ring backfill mirrors the moon backfill: the catalog is silent on
     // rings (transit + RV detection methods don't surface them), so we

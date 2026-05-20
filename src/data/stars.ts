@@ -176,12 +176,35 @@ export interface Body {
   // (huge iron core); Earth/Venus ≈ 0.32 (canonical 32% iron core);
   // Mars ≈ 0.24; Moon ≈ 0.03 (silicate-dominant, tiny core); Europa
   // ≈ 0.10 (silicate mantle); gas giants ≈ 0.02-0.05 (mostly H/He
-  // envelope). Sampled at Architect time from a zone-based prior
-  // (inner zone metal-rich, outer zone ice-dominant), then persists.
-  // Used by resource priors (metals, silicates) and downstream
-  // chromophore/atmosphere variety (iron-world, carbon-world). Null
-  // on belt/ring kinds.
+  // envelope). Sampled at Architect time from a four-zone prior keyed
+  // on formationAu vs the host star's H2O/NH3/CH4 snow lines, then
+  // persists. Inside_H2O is metal-rich; each successive zone dilutes
+  // the metal fraction as more volatiles join the solid budget. Used
+  // by resource priors and downstream chromophore/atmosphere variety
+  // (iron-world, carbon-world). Null on belt/ring kinds.
   readonly bulkMetalFraction: number | null;
+  // 0..1 mass fraction of body that is non-water condensable volatiles
+  // — NH3, CH4, CO, CO2, N2, organics. Captures what bulkWater doesn't:
+  // the inventory that drives ammonia/methane-world variety and the
+  // CO2/N2 outgassing budget for inner rockies (replaces the implicit
+  // OUTGASSING.volatileFloor proxy). Sampled at Architect time from
+  // the same four-zone formation gate as bulkWater/bulkMetal; values
+  // climb past each successive snow line as NH3 then CH4 condense.
+  //
+  // Anchors (Sol):
+  //   Mercury  ~0.001  (trace mineralized CO2)
+  //   Earth    0.005   (CO2/N2 carbonate inventory)
+  //   Venus    0.01    (CO2-dominated atmosphere + crustal carbonate)
+  //   Mars     0.003   (CO2 + trace N2)
+  //   Galilean ~0.02   (trace CO2/organics in water-ice mantle)
+  //   Titan    0.05    (methane + nitrogen)
+  //   Saturn   0.02
+  //   Uranus   0.30    (large NH3/CH4 component in ice mantle)
+  //   Neptune  0.30
+  //   Triton   0.10    (NH3 + N2 surface ices)
+  //
+  // Null on belt/ring kinds.
+  readonly bulkVolatileFraction: number | null;
   // Diameter of the largest body in the belt, in km. Shepherded
   // belts (anchored to a giant via the architect's BELT_GIANT_ADJACENCY)
   // sample from the parent-body range — Sol Main Belt's Ceres = 940 km,

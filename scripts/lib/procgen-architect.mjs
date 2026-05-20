@@ -36,9 +36,10 @@ import {
   MOON_COUNT_BY_TYPE,
   MOON_MASS_LOG_EARTH,
   MOON_MAX_HOST_MASS_RATIO,
-  FROST_LINE_S,
+  zoneForFormationAu,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
+  BULK_VOLATILE_FRACTION_BY_ZONE,
   ECCENTRICITY,
   INCLINATION_DEG,
   AXIAL_TILT_DEG,
@@ -72,25 +73,35 @@ function moonPrng(planetId, mIdx, salt) {
   return mulberry32(hash32(`${planetId}:moon${mIdx}:${salt}:${PROCGEN_VERSION}`));
 }
 
-// Sample a body's bulkWaterFraction (0..1 mass fraction in volatiles)
-// keyed off the insolation zone where the body sits / formed. Inner
-// zone (S ≥ FROST_LINE_S) draws low values; outer draws Galilean-class.
+// Sample a body's bulkWaterFraction (0..1 H₂O mass fraction) keyed on
+// the formation zone — which snow lines the body accreted past. Threads
+// formationAu + frostLinesAu rather than current insolation, so a
+// migrated hot Jupiter still draws its outer-zone water budget.
 // Sub-Mercury-or-airless bodies still draw the floor of their zone —
 // composition is set at formation and persists, even if surface state
 // later reads as "dry."
-function sampleBulkWaterFraction(prng, S) {
-  const zone = (S != null && S >= FROST_LINE_S) ? 'inner' : 'outer';
+function sampleBulkWaterFraction(prng, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
   return Number(sampleLogTruncated(prng, BULK_WATER_FRACTION_BY_ZONE[zone]).toFixed(5));
 }
 
 // Refractory metals condense first in the protoplanetary disk; bodies
-// forming inside the frost line draw from a metal-rich distribution,
-// bodies forming outside draw from a silicate/ice-dominant one.
+// forming inside_H2O draw from a metal-rich distribution, each further
+// zone dilutes metal fraction as more volatiles join the solid budget.
 // Independent per-body draw — moons sample independently, same posture
 // as bulkWater.
-function sampleBulkMetalFraction(prng, S) {
-  const zone = (S != null && S >= FROST_LINE_S) ? 'inner' : 'outer';
+function sampleBulkMetalFraction(prng, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
   return Number(sampleLogTruncated(prng, BULK_METAL_FRACTION_BY_ZONE[zone]).toFixed(5));
+}
+
+// Non-water condensable volatile inventory (NH3, CH4, CO/CO2, N2,
+// organics). Climbs past each successive snow line: inside_H2O has only
+// the refractory-trapped fraction; past CH4 it dominates. Feeds
+// atmosphere regime decisions and methane-world variety.
+function sampleBulkVolatileFraction(prng, formationAu, frostLinesAu) {
+  const zone = zoneForFormationAu(formationAu, frostLinesAu);
+  return Number(sampleLogTruncated(prng, BULK_VOLATILE_FRACTION_BY_ZONE[zone]).toFixed(5));
 }
 
 // Per-(star, context, salt) PRNG. Belts are system-level structural
@@ -179,6 +190,7 @@ function makeBody(props) {
     formationAu: null,
     bulkWaterFraction: null,
     bulkMetalFraction: null,
+    bulkVolatileFraction: null,
     largestBodyKm: null,
     // shepherdId is the architect's deferred form of shepherdBodyIdx —
     // it stores the giant's *string id* because the Body's array
@@ -217,10 +229,11 @@ function makeBody(props) {
 // none — observed exoplanets rarely have moon coverage, but every body
 // should be explorable for the game.
 //
-// `S` is the host planet's insolation (moons inherit stellar flux); used
-// to gate the bulkWaterFraction zone draw. Defaults to null so the
-// backfill path can pass it in without breaking older callers.
-export function generateMoons(planet, planetType, S = null) {
+// Moons inherit their host's formation zone for bulk-composition sampling
+// — they accreted in the same circumplanetary disk slice. `hostFormationAu`
+// + `frostLinesAu` are passed through; defaults to null so the backfill
+// path can pass them in without breaking older callers.
+export function generateMoons(planet, planetType, hostFormationAu = null, frostLinesAu = null) {
   const spec = MOON_COUNT_BY_TYPE[planetType];
   if (!spec) return [];
   const countPrng = moonPrng(planet.id, -1, 'count');
@@ -237,6 +250,7 @@ export function generateMoons(planet, planetType, S = null) {
     const tiltPrng = moonPrng(planet.id, mIdx, 'tilt');
     const bulkWaterPrng = moonPrng(planet.id, mIdx, 'bulk_water');
     const bulkMetalPrng = moonPrng(planet.id, mIdx, 'bulk_metal');
+    const bulkVolatilePrng = moonPrng(planet.id, mIdx, 'bulk_volatile');
 
     // Mass: truncated log-normal centered on Europa-class with a tail
     // extending to Earth-mass+. Each moon's upper bound is further capped
@@ -278,8 +292,9 @@ export function generateMoons(planet, planetType, S = null) {
       axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
       massEarth: Number(massEarth.toFixed(4)),
       radiusEarth: Number(radiusEarth.toFixed(4)),
-      bulkWaterFraction: sampleBulkWaterFraction(bulkWaterPrng, S),
-      bulkMetalFraction: sampleBulkMetalFraction(bulkMetalPrng, S),
+      bulkWaterFraction: sampleBulkWaterFraction(bulkWaterPrng, hostFormationAu, frostLinesAu),
+      bulkMetalFraction: sampleBulkMetalFraction(bulkMetalPrng, hostFormationAu, frostLinesAu),
+      bulkVolatileFraction: sampleBulkVolatileFraction(bulkVolatilePrng, hostFormationAu, frostLinesAu),
     }));
   }
   return moons;
@@ -552,7 +567,7 @@ export function generateSystem(star, clusterRole = 'primary', clusterPlanetBudge
   const bodies = [];
   for (const p of planets) {
     bodies.push(p);
-    bodies.push(...attachMoonsAndRing(p, star));
+    bodies.push(...attachMoonsAndRing(p, star, diskCtx));
   }
   // Belts roll independently of the planet stream, but their placement
   // depends on it — asteroid/ice belts anchor against the system's
@@ -630,9 +645,11 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
   const tiltPrng = slotPrng(star.id, slotIdx, saltPrefix + 'axial_tilt');
   const phasePrng = slotPrng(star.id, slotIdx, saltPrefix + 'orbital_phase');
   const bulkWaterPrng = slotPrng(star.id, slotIdx, saltPrefix + 'bulk_water');
-  const bulkWaterFraction = sampleBulkWaterFraction(bulkWaterPrng, S);
+  const bulkWaterFraction = sampleBulkWaterFraction(bulkWaterPrng, formationAu, diskCtx.frostLines);
   const bulkMetalPrng = slotPrng(star.id, slotIdx, saltPrefix + 'bulk_metal');
-  const bulkMetalFraction = sampleBulkMetalFraction(bulkMetalPrng, S);
+  const bulkMetalFraction = sampleBulkMetalFraction(bulkMetalPrng, formationAu, diskCtx.frostLines);
+  const bulkVolatilePrng = slotPrng(star.id, slotIdx, saltPrefix + 'bulk_volatile');
+  const bulkVolatileFraction = sampleBulkVolatileFraction(bulkVolatilePrng, formationAu, diskCtx.frostLines);
 
   // Kepler: P² = a³ / M_host_solar. Computed against semiMajorAu (which
   // currently equals formationAu); the migration pass recomputes period
@@ -658,15 +675,18 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
     radiusEarth: Number(radiusEarth.toFixed(3)),
     bulkWaterFraction,
     bulkMetalFraction,
+    bulkVolatileFraction,
   });
 }
 
 // Attach moons + (optional) ring to a planet that survived migration.
-// Moons inherit insolation from the planet's formation location — a
-// migrated hot Jupiter's moons still carry their outer-zone composition.
-function attachMoonsAndRing(planet, star) {
-  const Sform = insolation(star.mass, planet.formationAu ?? planet.semiMajorAu);
-  const out = [...generateMoons(planet, planet.planetType, Sform)];
+// Moons inherit the host planet's formation zone for bulk composition —
+// a migrated hot Jupiter's moons still carry their outer-zone water,
+// volatiles, and metal budget despite the system's hot current orbit.
+function attachMoonsAndRing(planet, star, diskCtx) {
+  const hostFormationAu = planet.formationAu ?? planet.semiMajorAu;
+  const frostLinesAu = diskCtx ? diskCtx.frostLines : null;
+  const out = [...generateMoons(planet, planet.planetType, hostFormationAu, frostLinesAu)];
   const ring = generateRing(planet, planet.planetType);
   if (ring) out.push(ring);
   return out;
@@ -795,7 +815,7 @@ export function generateOverlay(star, catalogPlanets, clusterRole = 'primary', c
         const p = buildPlanetCore(star, slotIdx, a, allocLetter(), 'overlay_', diskCtx);
         if (p) {
           out.push(p);
-          out.push(...attachMoonsAndRing(p, star));
+          out.push(...attachMoonsAndRing(p, star, diskCtx));
         }
       }
     }

@@ -437,71 +437,110 @@ export const MIN_HOT_JUPITER_AU = 0.01;
 // Bulk composition (read by the Architect, persisted on the body)
 // ---------------------------------------------------------------------------
 
-// Insolation threshold separating the inner (volatile-poor, formed inside
-// the protoplanetary frost line) and outer (volatile-rich) zones. Sol's
-// frost line sits ~2.7 AU around a G2V, giving S ≈ 1/2.7² ≈ 0.14. The
-// boundary isn't a hard step in real formation — but for a sampling prior
-// it gives a clean inside/outside cut. Mars (S=0.43) lands inner; Sol's
-// main belt (S≈0.13) and everything outward lands outer.
-export const FROST_LINE_S = 0.15;
+// Formation-zone classifier. Bodies sample bulk composition from one of
+// four buckets keyed on which snow lines they accreted past. Threaded
+// the per-star frost-line trio (computed in buildStarDiskContext) rather
+// than a global S threshold — M-dwarf systems have their H2O snow line
+// inside 1 AU, A-stars have it past 5 AU.
+//
+// Inputs: formationAu (where the body accreted) and frostLinesAu
+// ({ H2O, NH3, CH4 } AU). Returns one of the four zone keys below.
+export function zoneForFormationAu(formationAu, frostLinesAu) {
+  if (formationAu == null || frostLinesAu == null) return 'inside_H2O';
+  if (formationAu < frostLinesAu.H2O) return 'inside_H2O';
+  if (formationAu < frostLinesAu.NH3) return 'H2O_to_NH3';
+  if (formationAu < frostLinesAu.CH4) return 'NH3_to_CH4';
+  return 'past_CH4';
+}
 
-// Body-mass fraction that is H₂O / condensable volatiles. Architect
-// samples once per body from one of two zones, then persists on the body
-// — bulk composition is a formation-time property, not a re-rollable
-// surface scalar. Future phases derive surface waterFraction / iceFraction
-// /pressure-retention from this attribute + temperature + pressure.
+// Body-mass fraction that is H₂O ice / liquid water. Architect samples
+// once per body from one of four zones, then persists — bulk composition
+// is a formation-time property, not a re-rollable surface scalar. The
+// Filler derives surface waterFraction / iceFraction / pressure-retention
+// from this attribute + temperature + pressure.
 //
-// Anchors (Sol):
-//   inner zone — Mercury 0, Earth 0.00023, Mars 0.0001, Luna 1e-5
-//   outer zone — Europa/Titan/Callisto/Ganymede ≈ 0.5, Enceladus 0.6
+// Zones (formationAu vs per-star frost lines):
+//   inside_H2O   — interior to H2O snow line (Mercury, Earth, Mars zone)
+//   H2O_to_NH3   — past H2O, inside NH3 (Europa, Ganymede formation zone) — peak water
+//   NH3_to_CH4   — past NH3, inside CH4 (Triton, Pluto zone) — water present but ammonia competes for ice budget
+//   past_CH4     — past CH4 (Eris-class) — methane dominant, water lower fraction
 //
-// Specs are linear-space {mean, sd, min, max} consumed by
-// `sampleLogTruncated` — the helper log-transforms the mean and uses
-// `sd/mean` as the log-space sigma, so values spread by ~factor-e
-// around the mean and clamp to [min, max].
+// Anchors (Sol, formationAu = semiMajorAu for in-situ):
+//   inside_H2O — Mercury ~0, Earth 0.00023, Mars 0.0001, Luna 1e-5
+//   H2O_to_NH3 — Europa/Ganymede/Callisto/Titan ≈ 0.5, Enceladus 0.6
+//   NH3_to_CH4 — Uranus/Neptune ≈ 0.1, Triton 0.5 (captured KBO)
+//   past_CH4   — Pluto ~0.4 (mixed ice), Eris-class ~0.3
+//
+// Specs are linear-space {mean, sd, min, max} consumed by sampleLogTruncated.
 export const BULK_WATER_FRACTION_BY_ZONE = {
-  // Inner: dry. Earth's 0.00023 is the upper tail — most inner-system
-  // bodies are drier (Mars, Mercury, Venus). Log-uniform-ish from sub-
-  // Mercury (1e-6) to a Venus-class hothouse cap (1e-3).
-  inner: { mean: 1e-4, sd: 1e-4, min: 1e-6, max: 1e-3 },
-  // Outer: wet. Galilean moons centered around 0.5 with a tail down to
-  // Io-class dry outliers (post-tidal water loss). 0.5 is the geometric
-  // cap — half the body's mass in water is the upper bound short of a
-  // pure ice ball.
-  outer: { mean: 0.2,  sd: 0.2,  min: 0.01, max: 0.5 },
+  // Dry. Earth's 0.00023 is the upper tail — most inner-system bodies
+  // are drier (Mars, Mercury, Venus). Log-uniform-ish from sub-Mercury
+  // (1e-6) to a Venus-class hothouse cap (1e-3).
+  inside_H2O: { mean: 1e-4, sd: 1e-4, min: 1e-6, max: 1e-3 },
+  // Peak water zone — Galilean moons centered around 0.5 with a tail
+  // down to Io-class dry outliers (post-tidal water loss). 0.5 is the
+  // geometric cap — half the body's mass in water is the upper bound
+  // short of a pure ice ball.
+  H2O_to_NH3: { mean: 0.20, sd: 0.20, min: 0.01, max: 0.5 },
+  // Past ammonia line — water is still present (H2O froze out at the
+  // inner edge of this zone) but the ice budget is split with NH3.
+  // Triton's 0.5 sits at the upper tail; typical body lands lower.
+  NH3_to_CH4: { mean: 0.15, sd: 0.10, min: 0.01, max: 0.40 },
+  // Past methane line — methane dominates condensables, water is the
+  // minority ice. Pluto-class.
+  past_CH4:   { mean: 0.08, sd: 0.08, min: 0.01, max: 0.30 },
 };
 
 // Body-mass fraction that is iron / metallic content (vs. silicate +
 // volatile). Refractory metals (Fe, Ni, Al, Si) condense first in the
-// proto-planetary disk so inner-zone bodies form metal-rich; outer-zone
-// bodies form silicate+ice dominated with smaller metal cores.
-// Architect samples per body and persists.
+// proto-planetary disk so inside-H2O bodies form metal-rich; bodies
+// formed past each successive snow line dilute their metal fraction
+// further as more volatiles join the solid budget.
 //
 // Anchors (Sol):
-//   Mercury 0.70  — extreme iron-world (giant impact stripped silicate)
-//   Earth   0.32  — canonical iron-core fraction
-//   Venus   0.31
-//   Mars    0.24  — proportionally smaller core
-//   Moon    0.03  — silicate-dominant, giant-impact-formed
-//   Io      0.20  — differentiated, iron-rich
-//   Europa  0.10  — silicate mantle under ice shell
-//   Ganymede 0.20 — differentiated
-//   Callisto 0.10 — poorly differentiated
-//   Titan   0.10
-//   Triton  0.15
-//   Jupiter 0.02  — mostly H/He envelope (minor metal core)
-//   Saturn  0.05
-//   Uranus  0.20  — heavy elements in ice mantle
-//   Neptune 0.20
-//
-// Log-truncated normal via sampleLogTruncated, same shape as bulkWater.
+//   Mercury 0.70 (inside_H2O, super-iron tail), Earth/Venus 0.32, Mars 0.24
+//   Moon 0.03 (silicate-dominant, giant-impact-formed)
+//   Galilean moons 0.10–0.20, Titan 0.10
+//   Uranus/Neptune 0.20 (heavy elements in ice mantle)
+//   Pluto-class 0.10 (silicate + ice + organics)
 export const BULK_METAL_FRACTION_BY_ZONE = {
-  // Inner: metal-rich. Mercury 0.70 is the upper tail (super-Mercury
-  // iron-world variant). Mean ~0.30 places Earth-class.
-  inner: { mean: 0.30, sd: 0.20, min: 0.02, max: 0.80 },
-  // Outer: silicate/ice dominant. Mean ~0.10 places Galilean-moon
-  // and ice-giant-mantle class. Low minimum for almost-pure-ice bodies.
-  outer: { mean: 0.10, sd: 0.10, min: 0.01, max: 0.30 },
+  // Metal-rich. Mercury 0.70 upper tail; mean ~0.30 places Earth-class.
+  inside_H2O: { mean: 0.30, sd: 0.20, min: 0.02, max: 0.80 },
+  // Silicate + water-ice dominant — Galilean / Titan-class differentiation.
+  H2O_to_NH3: { mean: 0.12, sd: 0.10, min: 0.01, max: 0.35 },
+  // Ice-rich, lower core fraction. Ice-giant mantles + KBO captures.
+  NH3_to_CH4: { mean: 0.08, sd: 0.07, min: 0.01, max: 0.25 },
+  // Almost pure ice + organics; tiny silicate/iron core.
+  past_CH4:   { mean: 0.05, sd: 0.05, min: 0.005, max: 0.20 },
+};
+
+// Body-mass fraction that is non-water condensable volatiles — NH3, CH4,
+// CO, CO2, N2, organics. Captures the inventory that water doesn't, so
+// downstream atmosphere / chromophore / biosphere decisions can read a
+// real "non-water volatile budget" rather than papering over with a
+// per-body floor (cf. OUTGASSING.volatileFloor — the proxy this replaces).
+//
+// Each zone adds the volatiles that just condensed plus carryover from
+// upstream:
+//   inside_H2O — only the refractory-trapped fraction (CO2 mineralized
+//     in carbonates, N2 from accretion). Venus / Earth / Mars all sit here.
+//   H2O_to_NH3 — water dominates; non-water volatiles still trace (CO2/
+//     organics in the ice). Jupiter's atmosphere CH4/NH3 are minor here.
+//   NH3_to_CH4 — ammonia condenses, adds substantial mass. Uranus and
+//     Neptune "ice" mantles are ~30-40% non-water (NH3 + CH4 + organics).
+//   past_CH4 — methane condenses, becomes the dominant ice. Triton-Pluto-
+//     Eris class. The driver of methane-world variety.
+//
+// Anchors (Sol):
+//   inside_H2O — Mercury ~0.001, Earth/Venus/Mars 0.003–0.01 (mostly CO2)
+//   H2O_to_NH3 — Galilean/Titan moons 0.01–0.05, Jupiter/Saturn 0.01–0.03
+//   NH3_to_CH4 — Uranus/Neptune 0.25–0.35, Triton 0.10
+//   past_CH4   — Pluto 0.30, Eris-class 0.25
+export const BULK_VOLATILE_FRACTION_BY_ZONE = {
+  inside_H2O: { mean: 0.005, sd: 0.005, min: 1e-4, max: 0.02 },
+  H2O_to_NH3: { mean: 0.02,  sd: 0.02,  min: 1e-3, max: 0.10 },
+  NH3_to_CH4: { mean: 0.15,  sd: 0.10,  min: 0.02, max: 0.40 },
+  past_CH4:   { mean: 0.30,  sd: 0.15,  min: 0.05, max: 0.55 },
 };
 
 // ---------------------------------------------------------------------------
@@ -614,7 +653,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v12';
+export const PROCGEN_VERSION = 'v13';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands

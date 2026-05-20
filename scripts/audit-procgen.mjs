@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planetTypeFor } from './lib/procgen.mjs';
-import { insolation } from './lib/astrophysics.mjs';
+import { insolation, frostLineAU } from './lib/astrophysics.mjs';
 import {
   PLANET_COUNT_BY_CLASS,
   MAX_PLANETS_PER_CLUSTER,
@@ -36,8 +36,11 @@ import {
   BELT_OCCURRENCE_BY_CLASS,
   BELT_RESOURCE_PRIORS,
   COMPANION_PLANET_SUPPRESSION,
-  FROST_LINE_S,
+  zoneForFormationAu,
+  SNOW_LINE_TEMPERATURES,
   BULK_WATER_FRACTION_BY_ZONE,
+  BULK_METAL_FRACTION_BY_ZONE,
+  BULK_VOLATILE_FRACTION_BY_ZONE,
   TRIPLE_POINT_BAR,
   BIOSPHERE_HABITATS,
   BIOSPHERE_ARCHETYPES,
@@ -544,33 +547,51 @@ function auditSurfaceCover() {
   console.log('  airless or dry (cover ≈ 0):                 ' + airlessOrDry);
 }
 
-// bulkWaterFraction is Architect-set, zone-keyed (inner / outer of the
-// frost line). Geometric stats per zone — the prior is log-space
-// `sampleLogTruncated`, so geometric mean lines up cleanly with the
-// `mean` field of BULK_WATER_FRACTION_BY_ZONE.
-function auditBulkWaterFraction() {
-  console.log('  --- bulkWaterFraction (by formation zone) ---');
-  console.log('  zone     |  n      obs.geo-mean   prior.mean   obs.min   obs.max');
-  const byZone = { inner: [], outer: [] };
+// Bulk-composition audit. Architect samples bulkWater / bulkMetal /
+// bulkVolatile per body from the four-zone formation gate (inside_H2O /
+// H2O_to_NH3 / NH3_to_CH4 / past_CH4). Geometric stats per zone — the
+// priors are log-space sampleLogTruncated, so geometric mean lines up
+// cleanly with each spec's mean.
+//
+// Zones the body via host star mass → per-star frost lines + body's
+// formationAu (planets) or host's formationAu (moons). Planets / moons
+// without a formationAu (catalog rows) fall back to their semiMajorAu.
+function bulkCompositionZone(body) {
+  const host = body.kind === 'moon' ? (bodies[body.hostBodyIdx] ?? null) : body;
+  if (!host || host.hostStarIdx == null) return null;
+  const star = stars[host.hostStarIdx];
+  if (!star || star.mass == null) return null;
+  const aForm = host.formationAu ?? host.semiMajorAu;
+  if (aForm == null) return null;
+  const fl = {
+    H2O: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.H2O),
+    NH3: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.NH3),
+    CH4: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.CH4),
+  };
+  return zoneForFormationAu(aForm, fl);
+}
+
+function auditBulkComposition(field, label, priors) {
+  console.log('  --- ' + label + ' (by formation zone) ---');
+  console.log('  zone         |  n      obs.geo-mean   prior.mean   obs.min   obs.max');
+  const byZone = { inside_H2O: [], H2O_to_NH3: [], NH3_to_CH4: [], past_CH4: [] };
   for (const b of bodies) {
     if ((b.kind !== 'planet' && b.kind !== 'moon') || b.source !== 'procgen') continue;
-    if (b.bulkWaterFraction == null) continue;
-    const S = b.kind === 'planet' ? insolationFor(b) : insolationFor(bodies[b.hostBodyIdx] ?? {});
-    if (S == null) continue;
-    const zone = S >= FROST_LINE_S ? 'inner' : 'outer';
-    byZone[zone].push(b.bulkWaterFraction);
+    if (b[field] == null) continue;
+    const zone = bulkCompositionZone(b);
+    if (!zone) continue;
+    byZone[zone].push(b[field]);
   }
-  for (const zone of ['inner', 'outer']) {
+  for (const zone of ['inside_H2O', 'H2O_to_NH3', 'NH3_to_CH4', 'past_CH4']) {
     const arr = byZone[zone];
-    if (!arr.length) { console.log('  ' + pad(zone, 8) + ' |     0   (none)'); continue; }
-    // Geometric mean: exp(mean(log(x))). Floor x at 1e-9 to keep zeros usable.
+    if (!arr.length) { console.log('  ' + pad(zone, 12) + ' |     0   (none)'); continue; }
     const logs = arr.map(x => Math.log(Math.max(x, 1e-9)));
     const geoMean = Math.exp(logs.reduce((a, b) => a + b, 0) / logs.length);
     const min = Math.min(...arr);
     const max = Math.max(...arr);
-    const p = BULK_WATER_FRACTION_BY_ZONE[zone];
+    const p = priors[zone];
     console.log(
-      '  ' + pad(zone, 8) +
+      '  ' + pad(zone, 12) +
       ' |' + pad(arr.length, 5, true) +
       '   ' + pad(geoMean.toExponential(2), 11, true) +
       '   ' + pad(p.mean.toExponential(2), 10, true) +
@@ -582,7 +603,9 @@ function auditBulkWaterFraction() {
 
 auditSurfaceCover();
 auditCoverBugClosure();
-auditBulkWaterFraction();
+auditBulkComposition('bulkWaterFraction',    'bulkWaterFraction',    BULK_WATER_FRACTION_BY_ZONE);
+auditBulkComposition('bulkMetalFraction',    'bulkMetalFraction',    BULK_METAL_FRACTION_BY_ZONE);
+auditBulkComposition('bulkVolatileFraction', 'bulkVolatileFraction', BULK_VOLATILE_FRACTION_BY_ZONE);
 // Phase 4: surfaceAge / tectonicActivity / magneticFieldGauss are now
 // physics-derived (no per-class prior table); the class-keyed auditScalar
 // is incompatible. Drop these reports for now; replace with derivation-
