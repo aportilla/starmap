@@ -125,19 +125,27 @@ const PLANET_COUNT_BY_CLASS_REALISTIC = {
   BD: { mean: 1,   sd: 1,   min: 0, max: 4  },  // compact, tight orbits when present
 };
 
-// Gameplay tune: cap every system at 8 planets. Sol sits at 8 and reads as
-// a full system; pushing past that crowds the system-diagram row and the
-// extra outer planets — usually neptunes/jupiters per the insolation-zone
-// weights — add visual mass without adding decisions. A/M/O/B/WD/BD are
-// already ≤ 8 in the realistic block, so only F/G/K need the clamp.
-// The clamp lives on `max` only; means and SDs stay at their realistic
-// values, so the distribution body is unchanged and the tune is pure
-// upper-tail truncation. `generateSystem` and `generateOverlay` already
-// apply `Math.min(countSpec.max, …)` to the sampled count.
+// Gameplay tune: pull system planet counts into the 0..8 range the
+// system-diagram dome can lay out without crowding. Lowered means (not
+// just `max` clamps) so the post-prune distribution lands organically
+// across 0..8 instead of piling at the cap. The Architect walks the
+// full realistic orbital extent under the spacing prior above, then
+// uniformly-randomly prunes to K (sampled from this distribution). The
+// random part is load-bearing: trimming outer planets would
+// systematically remove gas giants (they form past the snow line),
+// trimming small planets would systematically remove terrestrials, and
+// either bias would shift the galaxy-wide body-type frequency away
+// from what physics produces. Random preserves the type distribution
+// exactly; only absolute count drops.
+//
+// Sol's 8 planets sit at the upper tail of G's distribution (+2σ
+// against mean=4, sd=2) — Sol is curated so its CSV is authoritative
+// regardless. M dwarfs unchanged; their realistic block already lands
+// in range.
 const PLANET_COUNT_BY_CLASS_TUNE = {
-  F: { max: 8 },
-  G: { max: 8 },
-  K: { max: 8 },
+  F: { mean: 4,   sd: 2,   max: 8 },
+  G: { mean: 4,   sd: 2,   max: 8 },
+  K: { mean: 3.5, sd: 2,   max: 8 },
 };
 
 export const PLANET_COUNT_BY_CLASS = mergeTunes(
@@ -168,15 +176,32 @@ export const MAX_PLANETS_PER_CLUSTER = 8;
 // the gas-giant zone matter less for 4X gameplay.
 //
 // spacingRatio: period ratio between consecutive planets (P_n+1 / P_n).
-// Sampled log-normal: exp(N(log(mean), sd)). Kepler multis cluster around
-// 1.5–2.5; Sol's average is ~2.1. SD is in log space.
+// Sampled log-normal: exp(N(log(mean), sd)). AU ratio = period_ratio^(2/3).
+// Kepler multi-transit detection is biased toward tightly-spaced
+// near-coplanar systems, so the literature's median-of-detected ~1.9
+// understates the true population: Sol's average adjacent period ratio
+// across observed planets is 2.6 (excluding the Mars→Jupiter asteroid
+// gap; 3.1 with). FGK values here sit closer to Sol's pattern under the
+// bias-correction principle that drives every other prior in this file
+// — what the universe actually contains, not what Kepler can detect.
+// M dwarfs stay tight (TRAPPIST-1's adjacent ratios cluster around
+// 1.4–1.6, and near-coplanar tight packing is dynamically favored at
+// low stellar mass), so the bias-correction lift applies to FGK only.
+// SD is in log space; widened slightly on FGK so a few systems realize
+// Sol-like wide gaps while others stay near the median. Inner edges
+// raised on FGK: previous 0.03–0.05 AU values were Kepler-USP-anchored
+// (rare hot-tail floor, ~1–5% of detected innermost), not the
+// bias-corrected typical innermost (~0.1 AU for FGK multis after
+// accounting for the long-period detection cliff). With the orbital
+// walk starting at the typical-not-floor value, the 8-planet budget
+// can reach the snow line and gas giants can form.
 const ORBITAL_GEOMETRY_BY_CLASS_REALISTIC = {
   O:  { innerEdgeAu: 0.5,   outerEdgeAu: 80, spacingRatio: { mean: 1.9, sd: 0.3 } },
   B:  { innerEdgeAu: 0.3,   outerEdgeAu: 70, spacingRatio: { mean: 1.9, sd: 0.3 } },
-  A:  { innerEdgeAu: 0.10,  outerEdgeAu: 60, spacingRatio: { mean: 1.9, sd: 0.3 } },
-  F:  { innerEdgeAu: 0.05,  outerEdgeAu: 50, spacingRatio: { mean: 1.9, sd: 0.3 } },
-  G:  { innerEdgeAu: 0.04,  outerEdgeAu: 40, spacingRatio: { mean: 1.9, sd: 0.3 } },
-  K:  { innerEdgeAu: 0.03,  outerEdgeAu: 30, spacingRatio: { mean: 1.8, sd: 0.3 } },
+  A:  { innerEdgeAu: 0.10,  outerEdgeAu: 60, spacingRatio: { mean: 2.4, sd: 0.4 } },
+  F:  { innerEdgeAu: 0.08,  outerEdgeAu: 50, spacingRatio: { mean: 2.5, sd: 0.4 } },
+  G:  { innerEdgeAu: 0.06,  outerEdgeAu: 40, spacingRatio: { mean: 2.5, sd: 0.4 } },
+  K:  { innerEdgeAu: 0.05,  outerEdgeAu: 30, spacingRatio: { mean: 2.3, sd: 0.4 } },
   M:  { innerEdgeAu: 0.008, outerEdgeAu: 8,  spacingRatio: { mean: 1.6, sd: 0.3 } },
   WD: { innerEdgeAu: 0.005, outerEdgeAu: 5,  spacingRatio: { mean: 1.7, sd: 0.4 } },
   BD: { innerEdgeAu: 0.001, outerEdgeAu: 0.5, spacingRatio: { mean: 1.4, sd: 0.3 } },
@@ -396,15 +421,17 @@ export const TIME_TO_RUNAWAY_MYR = 0.5;
 // inner system clean of original-zone planets (the architect's migration
 // pass removes any companions inside the migrator's formationAu).
 //
-// MIGRATION_RATE: probability a qualifying body migrates. Real Kepler
-//   hot-Jupiter occurrence around Sun-likes is ~1%; we calibrate higher
-//   because the architect's pool of eligible giants is structurally
-//   small (~5 per build). Overlay-path planets are excluded from
-//   migration — a star with observed catalog companions would already
-//   have had any hot Jupiter detected. The high per-roll rate produces
-//   ~2 visible hot Jupiters per build; lowering would erase them from
-//   sampling noise. Revisit when the gas-giant population grows (e.g.
-//   Phase D's multi-snow-line composition).
+// MIGRATION_RATE: probability the system's innermost gas giant
+//   migrates inward. System-level roll (not per-body) — multi-migrator
+//   chains are dynamically unstable and observed hot-Jupiter systems
+//   almost always have a solo migrator, so migratePass picks the
+//   innermost eligible giant and rolls once. Real Kepler hot-Jupiter
+//   occurrence around Sun-likes is ~1%, but our visible eligible pool
+//   (Architect-only stars with a gas giant) is smaller than the
+//   catalog-wide observed rate would suggest. 10% per eligible system
+//   produces a noticeable but-not-dominant population of hot Jupiters
+//   without cascading migration sweeping inner systems away from their
+//   physics-produced body-type mix.
 // MIGRATION_FRACTION: how far inward, sampled as fraction of formation
 //   distance. Real hot Jupiters sit at 0.02–0.10 AU after forming at
 //   3–10 AU — fractions in the 0.005–0.05 band.
@@ -414,7 +441,7 @@ export const TIME_TO_RUNAWAY_MYR = 0.5;
 //   GJ 1214b at ~6 M⊕) so we sit the cutoff below Neptune-mass.
 // MIN_HOT_JUPITER_AU: hard floor — migrators can't end inside ~0.01 AU
 //   (Roche-limit destruction territory).
-export const MIGRATION_RATE = 0.60;
+export const MIGRATION_RATE = 0.10;
 export const MIGRATION_FRACTION = { mean: 0.02, sd: 0.015, min: 0.005, max: 0.08 };
 export const MIGRATION_MIN_MASS_EARTH = 15;
 export const MIN_HOT_JUPITER_AU = 0.01;

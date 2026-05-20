@@ -533,55 +533,73 @@ export function generateRing(planet, hostFormationAu = null, frostLinesAu = null
 // the primary's actual planet count, and passes the remainder to each
 // companion in turn. Defaults to Infinity for callers without cluster
 // context (no extra clamp).
+// Hard safety bound on the orbital walk's length. The walk normally
+// stops at `outerEdgeAu`, but a degenerate sequence of low-tail
+// spacing draws could in principle stall a step at AU ratio ≈ 1 and
+// run forever. 30 slots is well past any class's natural physical
+// count (G walks ~10–12, M ~15–20).
+const MAX_ORBITAL_SLOTS = 30;
+
 export function generateSystem(star, clusterRole = 'primary', clusterPlanetBudget = Infinity) {
   const cls = star.cls;
   const countSpec = PLANET_COUNT_BY_CLASS[cls];
   if (!countSpec) return [];
 
-  // Planet count, suppressed by cluster role. Multi-star companions
-  // inside tight binaries have narrow planet-stability windows; the
-  // suppression multiplier reflects that. We let the post-suppression
-  // count fall to 0 even when countSpec.min ≥ 1 — the spec floor
-  // represents single-star occurrence; tight companions can legitimately
-  // be barren (α Cen A and B have zero confirmed planets).
+  // Target post-prune planet count K — the gameplay-range filter. The
+  // realistic walk below builds the full physics inventory; this K
+  // sets how many of those survive into the player-visible system.
+  // Cluster role suppression still applies (tight binaries are barren).
   const countPrng = slotPrng(star.id, -1, 'planet_count');
-  const rawN = sampleTruncated(countPrng, countSpec, true);
+  const rawK = sampleTruncated(countPrng, countSpec, true);
   const suppression = COMPANION_PLANET_SUPPRESSION[clusterRole] ?? 1.0;
-  const N = Math.max(0, Math.min(clusterPlanetBudget, countSpec.max, Math.round(rawN * suppression)));
+  const K = Math.max(0, Math.min(clusterPlanetBudget, countSpec.max, Math.round(rawK * suppression)));
 
-  // Orbit layout — start past the inner edge, walk outward by sampled
-  // period ratios. Stop when we exceed the outer edge or hit N planets.
+  // Walk orbits from the inner edge to the outer edge under the realistic
+  // spacing prior — no count cap. The orbital walk is pure physics: the
+  // natural planet count emerges from log(outerEdge / innerEdge) /
+  // log(spacingRatio^(2/3)). For most classes that's ~10–20 candidates.
   const geom = ORBITAL_GEOMETRY_BY_CLASS[cls];
   const orbits = [];
-  let a = geom.innerEdgeAu;
-  for (let i = 0; i < N; i++) {
-    if (i === 0) {
-      // First planet sits between 1.0 and 2.0× the inner edge — small
-      // jitter so two stars of the same class don't always start at
-      // exactly the same distance.
-      const firstPrng = slotPrng(star.id, i, 'first_a');
-      a = geom.innerEdgeAu * (1.0 + firstPrng() * 1.0);
-    } else {
-      // Log-normal period ratio per the prior. Period ratio → a ratio
-      // via P ∝ a^(3/2), so the AU ratio is (period_ratio)^(2/3).
-      const ratioPrng = slotPrng(star.id, i, 'spacing');
-      const periodRatio = Math.exp(sampleNormal(ratioPrng, Math.log(geom.spacingRatio.mean), geom.spacingRatio.sd));
-      a *= Math.pow(periodRatio, 2 / 3);
-    }
+  const firstPrng = slotPrng(star.id, 0, 'first_a');
+  let a = geom.innerEdgeAu * (1.0 + firstPrng() * 1.0);
+  for (let i = 0; i < MAX_ORBITAL_SLOTS; i++) {
     if (a > geom.outerEdgeAu) break;
     orbits.push(a);
+    const ratioPrng = slotPrng(star.id, i + 1, 'spacing');
+    const periodRatio = Math.exp(sampleNormal(ratioPrng, Math.log(geom.spacingRatio.mean), geom.spacingRatio.sd));
+    a *= Math.pow(periodRatio, 2 / 3);
   }
 
   const diskCtx = buildStarDiskContext(star);
-  // Build planets first, run migration before satellites — a migrated
-  // giant sweeps the inner system and we don't want to spend PRNG draws
-  // building moons for bodies that get removed.
+  // Build planets at every realistic orbit, then run migration. Pruning
+  // happens after migration because migration is physics (a real
+  // migrator sweeps the inner system) and the gameplay prune should
+  // operate on the post-physics inventory.
   const rawPlanets = [];
   for (let i = 0; i < orbits.length; i++) {
     const p = buildPlanetCore(star, i, orbits[i], planetLetterAt(i), '', diskCtx);
     if (p) rawPlanets.push(p);
   }
-  const planets = migratePass(rawPlanets, star);
+  const migrated = migratePass(rawPlanets, star);
+
+  // Gameplay-range filter: keep K planets, chosen uniformly at random.
+  // Random (not "trim outer", not "trim small") is load-bearing — any
+  // mass-or-orbit-biased prune would shift the galaxy-wide body-type
+  // frequency. Uniform random keeps the realistic mix exactly; only
+  // absolute counts drop.
+  const planets = pruneToK(migrated, K, star.id);
+
+  // Reletter survivors by orbital order so display names stay
+  // contiguous (b, c, d, …) after pruning. Sampling PRNG seeds inside
+  // buildPlanetCore are keyed off the original slot index, so this is
+  // a display-only rename — physical attributes don't re-roll.
+  for (let i = 0; i < planets.length; i++) {
+    const letter = planetLetterAt(i);
+    planets[i].id = `${star.id}-${letter}`;
+    planets[i].name = `${star.name} ${letter}`;
+    planets[i].formalName = `${star.name} ${letter}`;
+  }
+
   const bodies = [];
   for (const p of planets) {
     bodies.push(p);
@@ -594,6 +612,23 @@ export function generateSystem(star, clusterRole = 'primary', clusterPlanetBudge
   // configurations are valid) — they just take the giantless path.
   bodies.push(...generateBelts(star, planets));
   return bodies;
+}
+
+// Fisher-Yates partial shuffle to pick K planets uniformly at random,
+// returned in semi-major-axis order. Deterministic via per-star PRNG so
+// the same star reduces to the same kept set across builds.
+function pruneToK(planets, K, starId) {
+  if (planets.length <= K) return planets;
+  if (K <= 0) return [];
+  const prng = slotPrng(starId, -2, 'prune');
+  const arr = planets.slice();
+  // Partial shuffle of the last K slots: swap arr[i] with a random
+  // index in [0..i]. After K swaps, arr.slice(-K) is a uniform K-subset.
+  for (let i = arr.length - 1; i >= arr.length - K; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(-K).sort((a, b) => a.semiMajorAu - b.semiMajorAu);
 }
 
 // Build one planet body at its formation orbit. Physics-driven mass
@@ -719,31 +754,41 @@ function attachMoonsAndRing(planet, star, diskCtx) {
 // migration outcomes.
 function migratePass(planets, star, saltPrefix = '') {
   if (planets.length === 0) return planets;
-  const migrators = [];
-  for (let i = 0; i < planets.length; i++) {
-    const p = planets[i];
-    if (p.massEarth < MIGRATION_MIN_MASS_EARTH) continue;
-    if (p.formationAu == null) continue;
-    const prng = slotPrng(star.id, i, saltPrefix + 'migration');
-    if (prng() >= MIGRATION_RATE) continue;
-    const newA = Math.max(
-      MIN_HOT_JUPITER_AU,
-      p.formationAu * sampleTruncated(prng, MIGRATION_FRACTION),
-    );
-    p.semiMajorAu = Number(newA.toFixed(4));
-    p.periodDays = Number(
-      (365.25 * Math.sqrt(Math.pow(newA, 3) / Math.max(star.mass, 0.01))).toFixed(2),
-    );
-    migrators.push(p);
-  }
-  if (migrators.length === 0) return planets;
-  // Sweep: any planet whose current orbit is inside ANY migrator's
-  // formation orbit gets cleared. Migrators themselves are kept (their
-  // semiMajorAu is now smaller than their formationAu, so the inequality
-  // wouldn't match them — but we guard explicitly to be safe).
-  const migratorSet = new Set(migrators);
-  const sweepFloor = Math.max(...migrators.map(m => m.formationAu));
-  return planets.filter(p => migratorSet.has(p) || p.semiMajorAu >= sweepFloor);
+  // Eligibility: massive bodies (cleared the migration mass floor) that
+  // carry a formation orbit. Both gates are required — the floor models
+  // disk-coupling strength, formationAu is the orbital anchor.
+  const eligible = planets.filter(p =>
+    p.massEarth >= MIGRATION_MIN_MASS_EARTH && p.formationAu != null);
+  if (eligible.length === 0) return planets;
+
+  // One migrator per system, ever. Two-giant hot chains are dynamically
+  // unstable on Gyr timescales — observed hot-Jupiter systems almost
+  // always have a solo migrator. Earlier per-body rolls produced
+  // cascading migration that swept every inner system into a
+  // giants-only configuration; that's the variety-killer to avoid.
+  //
+  // The innermost eligible giant is the migrator candidate: it sits
+  // closest to the disk's inner edge and is the most disk-torque-coupled,
+  // and its formationAu sets the smallest possible sweep floor so the
+  // surviving outer system stays maximally intact.
+  const migrator = eligible.reduce((a, b) =>
+    a.formationAu < b.formationAu ? a : b);
+
+  const prng = slotPrng(star.id, -3, saltPrefix + 'migration');
+  if (prng() >= MIGRATION_RATE) return planets;
+
+  const newA = Math.max(
+    MIN_HOT_JUPITER_AU,
+    migrator.formationAu * sampleTruncated(prng, MIGRATION_FRACTION),
+  );
+  migrator.semiMajorAu = Number(newA.toFixed(4));
+  migrator.periodDays = Number(
+    (365.25 * Math.sqrt(Math.pow(newA, 3) / Math.max(star.mass, 0.01))).toFixed(2),
+  );
+
+  // Sweep planets whose current orbit sits inside the migrator's
+  // formation distance. The migrator itself is kept.
+  return planets.filter(p => p === migrator || p.semiMajorAu >= migrator.formationAu);
 }
 
 // Partial-system overlay. For stars that already host one or more catalog
