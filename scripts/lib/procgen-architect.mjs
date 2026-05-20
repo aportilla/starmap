@@ -13,7 +13,7 @@
 // for the Filler (procgen.mjs) to derive.
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson } from './prng.mjs';
-import { insolation, frostLineAU, solidSurfaceDensity, isolationMass } from './astrophysics.mjs';
+import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';
 import { radiusFromMass, planetTypeFor } from './procgen.mjs';
 import {
   PROCGEN_VERSION,
@@ -33,7 +33,8 @@ import {
   MIGRATION_MIN_MASS_EARTH,
   MIN_HOT_JUPITER_AU,
   RADIUS_SCATTER_LOG,
-  MOON_COUNT_BY_TYPE,
+  MOON_CAPACITY_SCALE,
+  MOON_COUNT_MAX,
   MOON_MASS_LOG_EARTH,
   MOON_MAX_HOST_MASS_RATIO,
   zoneForFormationAu,
@@ -233,11 +234,21 @@ function makeBody(props) {
 // — they accreted in the same circumplanetary disk slice. `hostFormationAu`
 // + `frostLinesAu` are passed through; defaults to null so the backfill
 // path can pass them in without breaking older callers.
-export function generateMoons(planet, planetType, hostFormationAu = null, frostLinesAu = null) {
-  const spec = MOON_COUNT_BY_TYPE[planetType];
-  if (!spec) return [];
+//
+// Count is Poisson(λ) with λ = R_H × MOON_CAPACITY_SCALE, where R_H is
+// the host's Hill radius in AU (see hillRadiusAu in astrophysics.mjs).
+// Capacity scales with Hill volume: a Jupiter-class at 5 AU gets ~4
+// moons, an Earth-class at 1 AU gets ~0, a hot Jupiter at 0.05 AU gets ~0.
+// The migration-strip behavior emerges naturally from the shrunk Hill
+// sphere — no per-planet planetType dispatch.
+export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu = null) {
+  if (planet.massEarth == null || planet.semiMajorAu == null) return [];
+  if (!star || star.mass == null) return [];
+  const hillAu = hillRadiusAu(planet.semiMajorAu, planet.massEarth, star.mass);
+  if (hillAu == null || hillAu <= 0) return [];
+  const lambda = hillAu * MOON_CAPACITY_SCALE;
   const countPrng = moonPrng(planet.id, -1, 'count');
-  const N = Math.min(spec.max, samplePoisson(countPrng, spec.mean));
+  const N = Math.min(MOON_COUNT_MAX, samplePoisson(countPrng, lambda));
   if (N === 0) return [];
 
   const moons = [];
@@ -686,7 +697,7 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
 function attachMoonsAndRing(planet, star, diskCtx) {
   const hostFormationAu = planet.formationAu ?? planet.semiMajorAu;
   const frostLinesAu = diskCtx ? diskCtx.frostLines : null;
-  const out = [...generateMoons(planet, planet.planetType, hostFormationAu, frostLinesAu)];
+  const out = [...generateMoons(planet, star, hostFormationAu, frostLinesAu)];
   const ring = generateRing(planet, planet.planetType);
   if (ring) out.push(ring);
   return out;

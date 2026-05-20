@@ -155,6 +155,28 @@ export function isolationMass(aAu, starMassSun, surfaceDensity) {
   return (numerator / denominator) / M_EARTH_G;
 }
 
+// Hill radius in AU — the planet's gravitational sphere of influence.
+// Inside R_H, satellite orbits are stable against the host star's tidal
+// perturbation; outside, satellites are stripped on Gyr timescales.
+//
+//   R_H = a × (M_planet / (3 × M_star))^(1/3)
+//
+// Drives moon-count capacity (Phase E+): bigger Hill spheres hold more
+// satellites. A hot Jupiter at 0.05 AU has a tiny R_H (~0.003 AU) and
+// loses essentially all its original moons; Jupiter at 5 AU has R_H ≈
+// 0.35 AU and retains a Galilean-class satellite system.
+//
+// aAu in AU, planetMassEarth in Earth masses, starMassSun in solar
+// masses. Returns R_H in AU; null on missing inputs.
+export function hillRadiusAu(aAu, planetMassEarth, starMassSun) {
+  if (aAu == null || aAu <= 0) return null;
+  if (planetMassEarth == null || planetMassEarth <= 0) return null;
+  if (starMassSun == null || starMassSun <= 0) return null;
+  const EARTH_PER_SUN = 333000;
+  const massRatio = planetMassEarth / (3 * starMassSun * EARTH_PER_SUN);
+  return aAu * Math.pow(massRatio, 1 / 3);
+}
+
 // Dimensionless proxy for tidal-locking timescale, normalized so Earth = 1.
 // The physical timescale is τ_lock ∝ a^6 / M_star^2 (the planet-side factors
 // are weaker and don't vary much across our taxonomy). Earth at 1 AU around

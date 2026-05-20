@@ -26,13 +26,14 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planetTypeFor } from './lib/procgen.mjs';
-import { insolation, frostLineAU } from './lib/astrophysics.mjs';
+import { insolation, frostLineAU, hillRadiusAu } from './lib/astrophysics.mjs';
 import {
   PLANET_COUNT_BY_CLASS,
   MAX_PLANETS_PER_CLUSTER,
   PLANET_TYPES,
   RING_OCCURRENCE_BY_TYPE,
-  MOON_COUNT_BY_TYPE,
+  MOON_CAPACITY_SCALE,
+  MOON_COUNT_MAX,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_RESOURCE_PRIORS,
   COMPANION_PLANET_SUPPRESSION,
@@ -382,34 +383,54 @@ for (const t of PLANET_TYPES) {
 }
 console.log();
 
-// --- 5. Moon count by planet type -------------------------------------------
+// --- 5. Moon count by Hill-sphere capacity ----------------------------------
 
-console.log('=== Moons per planet, by planet type ===');
-console.log('  type        | planets |  obs.mean  obs.sd     prior.mean  prior.sd   z            %with-moons');
-console.log('  ------------+---------+----------  ------     ----------  --------   --------     -----------');
-const moonsByType = {};
+// Moon count is Poisson(λ_p) with λ_p = R_H(p) × MOON_CAPACITY_SCALE per
+// planet (Phase E). Bucket procgen planets by R_H and report observed
+// mean against the mean of per-planet λ_p in the bucket — comparing to a
+// bucket midpoint would mis-anchor the prior since most planets cluster
+// at the low end of each band. Poisson SD ≈ √mean(λ) for the z-score.
+const starByIdForMoons = new Map(stars.map(s => [s.id, s]));
+const HILL_BUCKETS = [
+  { label: 'tiny (<0.005 AU)',     lo: 0,      hi: 0.005    },
+  { label: 'small (0.005-0.05)',   lo: 0.005,  hi: 0.05     },
+  { label: 'mid (0.05-0.2)',       lo: 0.05,   hi: 0.2      },
+  { label: 'large (0.2-0.5)',      lo: 0.2,    hi: 0.5      },
+  { label: 'huge (>=0.5)',         lo: 0.5,    hi: Infinity },
+];
+console.log('=== Moons per planet, by Hill-sphere bucket ===');
+console.log('  bucket                | planets |  obs.mean  obs.sd     prior.λ̄   prior.sd    z            %with-moons    at-cap');
+console.log('  ----------------------+---------+----------  ------     --------  --------    --------     -----------    ------');
+const moonsByBucket = HILL_BUCKETS.map(b => ({ ...b, counts: [], lambdas: [] }));
 for (const p of procgenPlanets) {
-  const t = planetTypeOf(p);
-  if (!moonsByType[t]) moonsByType[t] = [];
-  moonsByType[t].push(p.moons.length);
+  const star = starByIdForMoons.get(p.hostId);
+  if (!star || star.mass == null) continue;
+  if (p.massEarth == null || p.semiMajorAu == null) continue;
+  const hill = hillRadiusAu(p.semiMajorAu, p.massEarth, star.mass);
+  if (hill == null) continue;
+  const bucket = moonsByBucket.find(b => hill >= b.lo && hill < b.hi);
+  if (bucket) {
+    bucket.counts.push(p.moons.length);
+    bucket.lambdas.push(hill * MOON_CAPACITY_SCALE);
+  }
 }
-for (const t of PLANET_TYPES) {
-  const arr = moonsByType[t] || [];
+for (const b of moonsByBucket) {
+  const arr = b.counts;
   const obs = meanStd(arr);
-  const p = MOON_COUNT_BY_TYPE[t];
   const withMoons = arr.filter(n => n > 0).length;
-  // Poisson(λ) has Var = λ, so prior SD = √mean. Capped at max=spec.max
-  // pulls the upper tail in slightly; close enough for the z-score.
-  const priorSd = Math.sqrt(p.mean);
+  const atCap = arr.filter(n => n >= MOON_COUNT_MAX).length;
+  const meanLambda = b.lambdas.length ? b.lambdas.reduce((s, x) => s + x, 0) / b.lambdas.length : 0;
+  const priorSd = Math.sqrt(meanLambda);
   console.log(
-    '  ' + pad(t, 11) +
+    '  ' + pad(b.label, 21) +
     ' |' + pad(arr.length, 8, true) +
     ' |  ' + pad(obs.mean.toFixed(2), 6, true) +
     '   ' + pad(obs.sd.toFixed(2), 4, true) +
-    '       ' + pad(p.mean.toFixed(2), 5, true) +
+    '       ' + pad(meanLambda.toFixed(2), 5, true) +
     '       ' + pad(priorSd.toFixed(2), 4, true) +
-    fmtZ(zMean(obs.mean, arr.length, p.mean, priorSd), arr.length) +
-    '   ' + pct(withMoons, arr.length),
+    fmtZ(zMean(obs.mean, arr.length, meanLambda, priorSd), arr.length) +
+    '   ' + pct(withMoons, arr.length) +
+    '    ' + pct(atCap, arr.length),
   );
 }
 console.log();

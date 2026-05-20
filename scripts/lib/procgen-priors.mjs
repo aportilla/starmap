@@ -233,47 +233,40 @@ export const PLANET_TYPES = ['hot_rocky', 'rocky', 'super_earth', 'sub_neptune',
 // exoplanet scatter at fixed mass runs ~0.10–0.15 dex.
 export const RADIUS_SCATTER_LOG = 0.10;
 
-// Moon count per planet type. Sampled as Poisson(mean) and clamped to
-// [0, max]. Poisson rather than truncated-normal because moon counts are
-// non-negative integers with variance ≈ mean — the natural shape for a
-// count process. A truncated-normal with mean near 0 would lift the
-// observed mean ~10-20% above the prior (clamped negative draws round
-// to 0, raising the post-clamp mean); see audit-procgen.mjs.
+// Moon-count capacity scale — multiplied by the host's Hill radius (AU)
+// to set λ for a Poisson draw on the moon count. Linear scaling: a planet
+// with a 10× larger Hill sphere holds 10× more satellites. Captures the
+// dominant physical signal — Hill volume sets how much circumplanetary
+// disk + capturable planetesimals stay bound — without modeling the
+// individual capture/migration history per moon.
 //
-// Anchored to Sol: Jupiter (4 Galilean + many smaller; capped at 15
-// "interesting" moons since the rest are <50 km irregular fragments),
-// Earth (1), Mercury (0), Saturn (large + Titan + Enceladus).
+// Sol-anchored λ values at MOON_CAPACITY_SCALE = 12:
+//   Mercury (R_H ≈ 0.0015 AU): λ ≈ 0.02 → 0 moons (Mercury: 0)
+//   Earth   (R_H ≈ 0.01   AU): λ ≈ 0.12 → ~0–1 (Earth: 1)
+//   Mars    (R_H ≈ 0.007  AU): λ ≈ 0.09 → ~0 (Mars: 2 captured asteroids)
+//   Jupiter (R_H ≈ 0.354  AU): λ ≈ 4.2  → ~4 (Sol: 4 Galilean + tail)
+//   Saturn  (R_H ≈ 0.434  AU): λ ≈ 5.2  → ~5 (Sol: 6+ major)
+//   Uranus  (R_H ≈ 0.469  AU): λ ≈ 5.6  → ~6 (Sol: 5 major)
+//   Neptune (R_H ≈ 0.771  AU): λ ≈ 9.2  → ~9 (Sol: Triton + tail)
 //
-// Hot-zone planets get fewer moons — tides strip them within ~Roche
-// limit timescales. Outer gas giants accumulate moons from their disk +
-// captured planetesimals.
-const MOON_COUNT_BY_TYPE_REALISTIC = {
-  hot_rocky:   { mean: 0,   max: 1  },  // Poisson(0) is degenerate-zero — Mercury/Venus
-  rocky:       { mean: 0.5, max: 3  },  // Earth=1, Mars=2 (tiny), Venus=0
-  super_earth: { mean: 1,   max: 4  },
-  sub_neptune: { mean: 2,   max: 6  },
-  neptune:     { mean: 4,   max: 10 },  // Uranus has 5 major
-  jupiter:     { mean: 7,   max: 15 },  // Sol Jupiter ~4 Galilean
-};
+// Sits ~3× below the unconstrained physical anchor (Galilean CPD models
+// predict λ ≈ 12–20 for a Sol-Jupiter analog if Hill volume alone gated
+// count). The lower scale keeps the system-diagram's back/front moon-pool
+// budget readable — a Neptune-class with 15 moons would arc-clutter the
+// rim into illegibility. Outlier rolls past MOON_COUNT_MAX are clipped.
+//
+// Hot Jupiters (R_H ≈ 0.003 AU at 0.05 AU): λ ≈ 0.04 → 0 moons, matching
+// observation. Migrated giants lose their satellites naturally through
+// the shrunk Hill sphere; no separate migration-strip pass needed.
+export const MOON_CAPACITY_SCALE = 12;
 
-// Gameplay tune: less moony across the board. The realistic block makes
-// gas giants moon-heavy enough that they dominate both the system-diagram
-// dome visually and the satellite-as-colony budget. Pulling means down
-// alongside the cap keeps a real Poisson shape (rather than a hard pile-up
-// at the cap) — typical jupiter shifts from ~7 moons to ~3 with a visible
-// max of 5 everywhere. hot_rocky is already ≤ 1; omitted.
-const MOON_COUNT_BY_TYPE_TUNE = {
-  rocky:       { mean: 0.3, max: 2 },
-  super_earth: { mean: 0.7, max: 3 },
-  sub_neptune: { mean: 1.5, max: 4 },
-  neptune:     { mean: 2.5, max: 5 },
-  jupiter:     { mean: 3,   max: 5 },
-};
-
-export const MOON_COUNT_BY_TYPE = mergeTunes(
-  MOON_COUNT_BY_TYPE_REALISTIC,
-  MOON_COUNT_BY_TYPE_TUNE,
-);
+// Hard ceiling on per-planet moon count. Poisson(λ) has an unbounded
+// upper tail; for λ = 9 (Neptune-class) the 99th-percentile draw is ~17.
+// Cap at 8 to protect the system-diagram dome layout from outlier rolls
+// — anything past 8 moons would overlap visibly on the planet rim split
+// at typical disc sizes. The post-cap distribution still spans 0..8 with
+// gas giants dominating the top — variety preserved.
+export const MOON_COUNT_MAX = 8;
 
 // Moon mass distribution — truncated log-normal in M⊕, sampled per moon.
 // Centered on Europa-class (10⁻³ M⊕) so the bulk matches Sol; sd=1.5 in
@@ -653,7 +646,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v13';
+export const PROCGEN_VERSION = 'v14';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands

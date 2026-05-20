@@ -971,7 +971,7 @@ async function main() {
         NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),
         CH4: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.CH4),
       };
-      backfillMoons.push(...generateMoons(planet, planetType, hostFormationAu, frostLinesAu));
+      backfillMoons.push(...generateMoons(planet, host, hostFormationAu, frostLinesAu));
     }
     // Ring backfill mirrors the moon backfill: the catalog is silent on
     // rings (transit + RV detection methods don't surface them), so we
