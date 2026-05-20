@@ -646,7 +646,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v14';
+export const PROCGEN_VERSION = 'v15';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands
@@ -852,144 +852,97 @@ export const SHEPHERD_PLANET_TYPES = new Set(['sub_neptune', 'neptune', 'jupiter
 // Rings — per-planet ring systems (0 or 1)
 // ---------------------------------------------------------------------------
 
-// Per-planet-type probability of having a ring system, and the
-// conditional class weights when one exists. Dust rings are deliberately
-// not modeled — the weights only cover the dramatic 'ice' (Saturn-style)
-// and 'debris' (Uranus/Neptune-style, but more striking than Sol's faint
-// versions) varieties that have visual + gameplay payoff.
+// Per-planet probability of having a ring system, derived from the
+// Roche disruption cross-section. Rings form when satellites or
+// captured planetesimals migrate inside the Roche limit (~2.5 × R_p
+// for ice-density debris) and shatter; the larger the disruption
+// zone, the higher the probability the planet has been hosting fresh
+// ring material within the ring-dispersal timescale.
 //
-// REALISTIC = physical-presence rates. Every outer giant in Sol has rings
-// (Saturn iconic, Jupiter/Uranus/Neptune faint), and Schlichting & Chang
-// 2011 estimate most giants outside ~5 AU should carry shepherded ring
-// material. Realistic super-earth + rocky ring detections (J1407b, Saturn-
-// class around super-earth-mass) anchor the lower end. These rates assume
-// "any ring system at all, irrespective of how visible it is."
-const RING_OCCURRENCE_BY_TYPE_REALISTIC = {
-  hot_rocky:   { p: 0.005 },  // tidally disrupted; rare
-  rocky:       { p: 0.01  },
-  super_earth: { p: 0.05  },
-  sub_neptune: { p: 0.30  },
-  neptune:     { p: 0.70  },
-  jupiter:     { p: 0.80  },  // Sol giants = 4/4
-};
-
-// Gameplay tune: rings are filtered by perception, not added by gameplay
-// preference. Most physical ring systems are sub-pixel at our zoom and
-// would only register as visual noise, so the tune REDUCES the realistic
-// physical rate down to "rings the player can actually see and read as
-// rings." Direction flipped from most tune blocks — usually a tune
-// pushes AWAY from realistic toward game-feel; here, the realistic rate
-// is more aspirational than perceptually useful, and the tune brings us
-// back to "what the renderer can carry at this scale."
+//   P_ring = R_planetEarth² × RING_DISRUPTION_RATE
 //
-// Exception: super_earth gets bumped UP toward physical-presence (0.05 →
-// 0.07) rather than filtered down. A ringed Earth-mass world is one of
-// the most iconic "settle here, look at the sky" beats in SF, and at the
-// previous 0.025 game rate we had zero ringed temperate Earth-analogs in
-// the entire galaxy. At 0.07 the galaxy gets ~95 ringed super-earths,
-// some fraction of which land in the temperate band — recurring enough
-// to feel like a real planet-class rather than a paper rarity.
-const RING_OCCURRENCE_BY_TYPE_TUNE = {
-  hot_rocky:   { p: 0.002 },
-  rocky:       { p: 0.005 },
-  super_earth: { p: 0.07  },
-  sub_neptune: { p: 0.06  },
-  neptune:     { p: 0.20  },
-  jupiter:     { p: 0.30  },
-};
-
-export const RING_OCCURRENCE_BY_TYPE = mergeTunes(
-  RING_OCCURRENCE_BY_TYPE_REALISTIC,
-  RING_OCCURRENCE_BY_TYPE_TUNE,
-);
+// Cross-section scales as R_p² (area). Density and mass are NOT
+// factored in — we treat the Roche/R_p ratio as ~constant across
+// compositions since ice debris is the dominant feed (gas giants' icy
+// satellites migrating in, super-Earths' captured KBO analogs). Sheer
+// planet radius is the load-bearing signal.
+//
+// Sol-anchored at Jupiter ≈ 0.30 — matches the prior visual-budget
+// rate. Realistic physical-presence rate is ~80%, but most real rings
+// are sub-pixel at our zoom and would only register as visual noise,
+// so this scale stays at the perceptible-rate level rather than the
+// physical-presence one.
+//
+// Sol calibration at RING_DISRUPTION_RATE = 0.00239:
+//   Jupiter     (R = 11.21 R⊕): P ≈ 0.300
+//   Saturn      (R =  9.45 R⊕): P ≈ 0.213
+//   Uranus      (R =  4.00 R⊕): P ≈ 0.038
+//   Neptune     (R =  3.88 R⊕): P ≈ 0.036
+//   Super-Earth (R ≈  1.80 R⊕): P ≈ 0.008
+//   Earth       (R =  1.00 R⊕): P ≈ 0.0024
+//   Mercury     (R =  0.38 R⊕): P ≈ 0.00035
+//
+// The R² curve concentrates rings on gas giants more sharply than the
+// prior per-type tune did: super-Earth rate drops from ~7% to ~1%.
+// At the procgen scale (4000+ super-earth-class planets per build),
+// this still produces ~40 ringed super-earths galaxy-wide — enough
+// for the "settle here, look at the sky" iconic SF beat to remain a
+// recurring outcome rather than a paper one. Revisit if gameplay
+// needs more visible ringed terrestrials.
+export const RING_DISRUPTION_RATE = 0.00239;
 
 // Ring extent in multiples of the host planet's radius. Inner edge sits
 // above the Roche limit (~1.1–1.5 R_p depending on density); outer edge
 // inside the synchronous-orbit boundary (Saturn's F ring ≈ 2.3 R_S, well
 // inside synchronous). One distribution spans both bright icy rings and
 // faint dusty ones — composition lives in the resource grid (see
-// RING_RESOURCE_PRIORS_BY_TYPE), not in a separate class branch.
+// RING_RESOURCE_ICY / RING_RESOURCE_ROCKY below), not in a separate
+// class branch.
 export const RING_EXTENT = {
   inner: { mean: 1.40, sd: 0.15, min: 1.05, max: 2.0 },
   outer: { mean: 2.20, sd: 0.20, min: 1.5,  max: 3.0 },
 };
 
 // ---------------------------------------------------------------------------
-// Ring resources — six 0..10 scalars per host planet type
+// Ring resources — six 0..10 scalars per ring; gated by formation zone
 // ---------------------------------------------------------------------------
 
-// Rings carry the same six-resource grid as planets, moons, and belts.
-// Composition is the only physical attribute beyond extent — the
-// renderer derives ring brightness/color from the resource mix
-// (resVolatiles dominant → bright Saturn-class ice; resSilicates/Metals
-// dominant → dark Uranus/Neptune-class dust), so the priors here also
-// drive visual character.
+// Rings inherit composition from the circumplanetary-disk material at
+// formation — primarily water ice past the H2O frost line, primarily
+// silicate dust and refractory debris inside it. Two priors gated by
+// whether the host's formationAu sat past the H2O snow line; no per-
+// planet-type dispatch.
 //
-// Anchors per host planet type:
-//   jupiter:     Saturn (resVolatiles ≈ 8/10 → bright icy) is the iconic
-//                case; Jupiter's main ring (silicate dust → low volatiles)
-//                is the alternate. Mean leans icy with a heavy rocky tail.
-//   neptune:     Both Sol ice giants have dark dusty rings (Uranus ε,
-//                Neptune Adams) — but their ring particles are still
-//                carbonaceous-ice mixes. Mean is mid-to-icy.
-//   sub_neptune: No Sol anchor; sits between jupiter and super_earth.
-//                Slight icy lean from formation in the volatile-rich outer
-//                disk.
-//   super_earth: J1407b-class hypothetical. Tidally-disrupted icy moon
-//                or captured cometary debris → mid; tidally-disrupted
-//                rocky moon → dusty. Mean balanced.
-//   rocky / hot_rocky: Very rare ring (occurrence <1%); when it happens
-//                it's debris from a tidally-disrupted asteroidal capture
-//                or impact ejecta, so heavily rocky / low volatiles.
-export const RING_RESOURCE_PRIORS_BY_TYPE = {
-  jupiter: {
-    resMetals:        { mean: 1, sd: 1, min: 0, max: 10 },
-    resSilicates:     { mean: 2, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 7, sd: 2, min: 0, max: 10 },
-    resRareEarths:    { mean: 0, sd: 0, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
-  neptune: {
-    resMetals:        { mean: 2, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 3, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 6, sd: 2, min: 0, max: 10 },
-    resRareEarths:    { mean: 0, sd: 0, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
-  sub_neptune: {
-    resMetals:        { mean: 2, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 3, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 5, sd: 2, min: 0, max: 10 },
-    resRareEarths:    { mean: 0, sd: 0, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
-  super_earth: {
-    resMetals:        { mean: 3, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 4, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 3, sd: 2, min: 0, max: 10 },
-    resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
-  rocky: {
-    resMetals:        { mean: 4, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 5, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 1, sd: 1, min: 0, max: 10 },
-    resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
-  hot_rocky: {
-    resMetals:        { mean: 4, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 5, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 0, sd: 0, min: 0, max: 10 },
-    resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
-    resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-    resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
-  },
+// Saturn's main ring is the iconic 99% water-ice case (Sol H2O frost
+// ≈ 2.7 AU; Saturn formed at 9.5 AU). Uranus's narrow rings are
+// carbonaceous-darkened ice — still icy at the molecular level, just
+// surface-radiation-darkened (which the renderer handles via the
+// volatile-vs-silicate color/alpha lerp, no separate "dark ring"
+// composition needed). Jupiter's faint main ring is a rocky/silicate
+// outlier — captured here through the per-resource sd, not a separate
+// table.
+export const RING_RESOURCE_ICY = {
+  resMetals:        { mean: 1, sd: 1, min: 0, max: 10 },
+  resSilicates:     { mean: 2, sd: 2, min: 0, max: 10 },
+  resVolatiles:     { mean: 7, sd: 2, min: 0, max: 10 },
+  resRareEarths:    { mean: 0, sd: 0, min: 0, max: 10 },
+  resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
+  resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
+};
+
+// Inside-H2O-frost rings are rare events — tidally-disrupted
+// asteroidal capture or impact ejecta — so the composition skews
+// heavily rocky / low volatiles. Hot-zone (Mercury/Venus-class) rings
+// follow the same prior since the dominant disruption feed is
+// regolith-class debris regardless of stellar insolation; the
+// silicate-vs-metal split emerges from the per-resource sd.
+export const RING_RESOURCE_ROCKY = {
+  resMetals:        { mean: 4, sd: 2, min: 0, max: 10 },
+  resSilicates:     { mean: 5, sd: 2, min: 0, max: 10 },
+  resVolatiles:     { mean: 1, sd: 1, min: 0, max: 10 },
+  resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
+  resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
+  resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
 };
 
 // ---------------------------------------------------------------------------

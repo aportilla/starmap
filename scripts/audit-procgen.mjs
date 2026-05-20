@@ -31,7 +31,7 @@ import {
   PLANET_COUNT_BY_CLASS,
   MAX_PLANETS_PER_CLUSTER,
   PLANET_TYPES,
-  RING_OCCURRENCE_BY_TYPE,
+  RING_DISRUPTION_RATE,
   MOON_CAPACITY_SCALE,
   MOON_COUNT_MAX,
   BELT_OCCURRENCE_BY_CLASS,
@@ -346,37 +346,57 @@ for (const [lo, hi, label] of S_BANDS) {
 }
 console.log();
 
-// --- 4. Ring occurrence by planet type --------------------------------------
+// --- 4. Ring occurrence by host radius --------------------------------------
 
-console.log('=== Rings, by host planet type ===');
-console.log('  type        | planets |  rings    obs.rate    prior.p      z         volatiles  rocky');
-console.log('  ------------+---------+-------    --------    -------      --------  ---------  -----');
-const ringsByType = {};  // type → { total, sumVolatiles, sumRocky }
+// Ring occurrence is P_ring = R_p² × RING_DISRUPTION_RATE per planet
+// (Phase E). Bucket procgen planets by radius and report observed rate
+// against the in-bucket mean of P_p — the bucket midpoint would
+// mis-anchor since planets cluster at the low end of each band.
+const RADIUS_BUCKETS = [
+  { label: 'sub-Mercury (<0.5)',   lo: 0,    hi: 0.5  },
+  { label: 'Mercury-Earth (0.5-1.5)', lo: 0.5,  hi: 1.5  },
+  { label: 'super-Earth (1.5-2.5)',   lo: 1.5,  hi: 2.5  },
+  { label: 'sub-Neptune (2.5-4)',     lo: 2.5,  hi: 4    },
+  { label: 'Neptune (4-8)',           lo: 4,    hi: 8    },
+  { label: 'Jupiter (8-15)',          lo: 8,    hi: 15   },
+  { label: 'super-Jupiter (>=15)',    lo: 15,   hi: Infinity },
+];
+console.log('=== Rings, by host radius bucket ===');
+console.log('  bucket                  | planets |  rings    obs.rate    prior.p̄    z          volatiles  rocky');
+console.log('  ------------------------+---------+-------    --------    -------    --------   ---------  -----');
+const ringsByBucket = RADIUS_BUCKETS.map(b => ({ ...b, planets: [], rings: [] }));
+for (const p of procgenPlanets) {
+  if (p.radiusEarth == null) continue;
+  const bucket = ringsByBucket.find(b => p.radiusEarth >= b.lo && p.radiusEarth < b.hi);
+  if (bucket) bucket.planets.push(p);
+}
 for (const b of bodies) {
   if (b.kind !== 'ring') continue;
   const host = bodies[b.hostBodyIdx];
   if (!host) continue;
   if (CURATED_HOSTS.has(host.hostId)) continue;
-  const t = planetTypeOf(host);
-  if (!ringsByType[t]) ringsByType[t] = { total: 0, sumVolatiles: 0, sumRocky: 0 };
-  ringsByType[t].total += 1;
-  ringsByType[t].sumVolatiles += (b.resVolatiles ?? 0);
-  ringsByType[t].sumRocky     += (b.resMetals ?? 0) + (b.resSilicates ?? 0) + (b.resRareEarths ?? 0);
+  if (host.radiusEarth == null) continue;
+  const bucket = ringsByBucket.find(bb => host.radiusEarth >= bb.lo && host.radiusEarth < bb.hi);
+  if (bucket) bucket.rings.push(b);
 }
-for (const t of PLANET_TYPES) {
-  const planets = typeCount[t] || 0;
-  const rc = ringsByType[t] || { total: 0, sumVolatiles: 0, sumRocky: 0 };
-  const p = RING_OCCURRENCE_BY_TYPE[t];
-  const obsRate = planets ? rc.total / planets : 0;
-  const avgVol = rc.total ? rc.sumVolatiles / rc.total : 0;
-  const avgRocky = rc.total ? rc.sumRocky / rc.total : 0;
+for (const b of ringsByBucket) {
+  const planets = b.planets.length;
+  const ringCount = b.rings.length;
+  const obsRate = planets ? ringCount / planets : 0;
+  const meanP = planets
+    ? b.planets.reduce((s, p) => s + p.radiusEarth * p.radiusEarth * RING_DISRUPTION_RATE, 0) / planets
+    : 0;
+  const sumVol = b.rings.reduce((s, r) => s + (r.resVolatiles ?? 0), 0);
+  const sumRocky = b.rings.reduce((s, r) => s + (r.resMetals ?? 0) + (r.resSilicates ?? 0) + (r.resRareEarths ?? 0), 0);
+  const avgVol = ringCount ? sumVol / ringCount : 0;
+  const avgRocky = ringCount ? sumRocky / ringCount : 0;
   console.log(
-    '  ' + pad(t, 11) +
+    '  ' + pad(b.label, 23) +
     ' |' + pad(planets, 8, true) +
-    ' |' + pad(rc.total, 7, true) +
+    ' |' + pad(ringCount, 7, true) +
     '   ' + pad((obsRate * 100).toFixed(2) + '%', 8, true) +
-    '   ' + pad((p.p * 100).toFixed(2) + '%', 7, true) +
-    fmtZ(zBinom(rc.total, planets, p.p), Math.min(planets * p.p, planets * (1 - p.p))) +
+    '   ' + pad((meanP * 100).toFixed(2) + '%', 7, true) +
+    fmtZ(zBinom(ringCount, planets, meanP), Math.min(planets * meanP, planets * (1 - meanP))) +
     '   ' + pad(avgVol.toFixed(1), 7, true) +
     '   ' + pad(avgRocky.toFixed(1), 5, true),
   );

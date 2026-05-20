@@ -955,22 +955,22 @@ async function main() {
     const S = aForS != null ? insolation(host.mass, aForS) : null;
     // planetType is dispatched directly on (mass, radius, S) — no longer
     // routes through worldClass since class is derived late in the Filler.
+    // Phase F deletes the field; for now the audit's planet-type-mix table
+    // still consumes it.
     const planetType = planetTypeFor(planet.massEarth, r, S);
-    // Persist the derived type on the catalog planet so downstream consumers
-    // (audit script, future gameplay code) see the same value the backfill
-    // used. Curated-system planets skipped above stay planetType: null.
     planet.planetType = planetType;
+    // Moons + rings both inherit the host planet's formation zone — moons
+    // for bulk composition, rings for water-ice vs rocky-debris feed.
+    // Catalog planets don't carry formationAu (architect-only); fall back
+    // to the host's current semiMajorAu as the in-situ formation proxy.
+    // Frost lines are deterministic from host mass.
+    const hostFormationAu = planet.formationAu ?? aForS;
+    const frostLinesAu = {
+      H2O: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.H2O),
+      NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),
+      CH4: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.CH4),
+    };
     if (!catalogMoonHosts.has(planet.id)) {
-      // Moons inherit the host planet's formation zone for bulk
-      // composition. Catalog planets don't carry formationAu (architect-
-      // only); fall back to the host's current semiMajorAu as the in-situ
-      // formation proxy. Frost lines are deterministic from host mass.
-      const hostFormationAu = planet.formationAu ?? aForS;
-      const frostLinesAu = {
-        H2O: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.H2O),
-        NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),
-        CH4: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.CH4),
-      };
       backfillMoons.push(...generateMoons(planet, host, hostFormationAu, frostLinesAu));
     }
     // Ring backfill mirrors the moon backfill: the catalog is silent on
@@ -978,7 +978,7 @@ async function main() {
     // sample one per planet using the same per-(planet, salt) seeding
     // the architect uses for in-line rings around procgen planets.
     if (!catalogRingHosts.has(planet.id)) {
-      const ring = generateRing(planet, planetType);
+      const ring = generateRing(planet, hostFormationAu, frostLinesAu);
       if (ring) backfillRings.push(ring);
     }
   }

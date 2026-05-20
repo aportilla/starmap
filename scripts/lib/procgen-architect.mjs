@@ -51,9 +51,10 @@ import {
   BELT_GIANT_ADJACENCY,
   GIANTLESS_BELT_PENALTY,
   SHEPHERD_PLANET_TYPES,
-  RING_OCCURRENCE_BY_TYPE,
+  RING_DISRUPTION_RATE,
   RING_EXTENT,
-  RING_RESOURCE_PRIORS_BY_TYPE,
+  RING_RESOURCE_ICY,
+  RING_RESOURCE_ROCKY,
 } from './procgen-priors.mjs';
 
 // =============================================================================
@@ -459,11 +460,18 @@ export function generateBelts(star, placedPlanets = []) {
 // backfill can run rings over catalog planets that arrived without one
 // (same posture as moon backfill — the bias model assumes the catalog
 // is silent on rings, not authoritative).
-export function generateRing(planet, planetType) {
-  const spec = RING_OCCURRENCE_BY_TYPE[planetType];
-  if (!spec) return null;
+//
+// Occurrence probability scales as R_p² × RING_DISRUPTION_RATE — the
+// Roche-zone cross-section. Composition gates on whether the host
+// formed past the H2O frost line: icy CPD feed → water-ice rings;
+// inside the line → rocky/silicate debris rings. Falls back to rocky
+// when frostLinesAu isn't available (backfill paths without disk
+// context).
+export function generateRing(planet, hostFormationAu = null, frostLinesAu = null) {
+  if (planet.radiusEarth == null || planet.radiusEarth <= 0) return null;
+  const pRing = planet.radiusEarth * planet.radiusEarth * RING_DISRUPTION_RATE;
   const rollPrng = ringPrng(planet.id, 'occur');
-  if (rollPrng() >= spec.p) return null;
+  if (rollPrng() >= pRing) return null;
 
   const innerPrng = ringPrng(planet.id, 'inner');
   const outerPrng = ringPrng(planet.id, 'outer');
@@ -473,22 +481,22 @@ export function generateRing(planet, planetType) {
   // re-rolling, preserves determinism).
   if (outer < inner) { const t = inner; inner = outer; outer = t; }
 
-  // Composition lives in the resource grid. The renderer reads
-  // resVolatiles vs. rocky resources to lerp ring brightness/color
-  // between bright icy (Saturn-class) and dark dusty (Uranus/Neptune-
-  // class), so this draw also drives visual character.
-  const resPriors = RING_RESOURCE_PRIORS_BY_TYPE[planetType];
+  // Composition gated on host formation zone. A hot Jupiter that formed
+  // past H2O frost retains its icy ring inheritance despite the current
+  // hot orbit — same Phase D convention as bulkWaterFraction.
+  const formAu = hostFormationAu ?? planet.formationAu ?? planet.semiMajorAu;
+  const h2oAu = frostLinesAu?.H2O ?? Infinity;
+  const isIcy = formAu != null && formAu > h2oAu;
+  const resPriors = isIcy ? RING_RESOURCE_ICY : RING_RESOURCE_ROCKY;
   const resources = {};
-  if (resPriors) {
-    for (const field of Object.keys(resPriors)) {
-      const fSpec = resPriors[field];
-      if (fSpec.max === 0 || (fSpec.mean === 0 && fSpec.sd === 0)) {
-        resources[field] = 0;
-        continue;
-      }
-      const rp = ringPrng(planet.id, `res:${field}`);
-      resources[field] = Math.round(sampleTruncated(rp, fSpec));
+  for (const field of Object.keys(resPriors)) {
+    const fSpec = resPriors[field];
+    if (fSpec.max === 0 || (fSpec.mean === 0 && fSpec.sd === 0)) {
+      resources[field] = 0;
+      continue;
     }
+    const rp = ringPrng(planet.id, `res:${field}`);
+    resources[field] = Math.round(sampleTruncated(rp, fSpec));
   }
 
   const formal = `${planet.formalName} Ring`;
@@ -698,7 +706,7 @@ function attachMoonsAndRing(planet, star, diskCtx) {
   const hostFormationAu = planet.formationAu ?? planet.semiMajorAu;
   const frostLinesAu = diskCtx ? diskCtx.frostLines : null;
   const out = [...generateMoons(planet, star, hostFormationAu, frostLinesAu)];
-  const ring = generateRing(planet, planet.planetType);
+  const ring = generateRing(planet, hostFormationAu, frostLinesAu);
   if (ring) out.push(ring);
   return out;
 }

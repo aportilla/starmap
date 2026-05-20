@@ -15,7 +15,7 @@ Status: Phases A–D landed. Phases E–F not started.
 | **C — Formation zone + migration** | ✅ landed | `formationAu` primary attribute; Type II migration with inner-sweep collision handling |
 | **D — Multi-snow-line composition** | ✅ landed | Four-zone formation gate (`zoneForFormationAu`); `bulkVolatileFraction` persisted as primary field; audit reports per-zone geometric means against priors |
 | **E.1 — Moons from Hill-sphere capacity** | ✅ landed | `hillRadiusAu` helper; `generateMoons` is Poisson(R_H × `MOON_CAPACITY_SCALE`), no planetType dispatch; visual hard cap `MOON_COUNT_MAX = 8`; audit buckets by R_H |
-| **E.2 — Rings from Roche-zone disruption** | not started | |
+| **E.2 — Rings from Roche-zone disruption** | ✅ landed | `generateRing` is Bernoulli(R_p² × `RING_DISRUPTION_RATE`); two composition priors (`RING_RESOURCE_ICY` / `RING_RESOURCE_ROCKY`) gated on formationAu vs H2O frost line; audit buckets by R_p |
 | **F — Delete PlanetType + cleanup** | not started | |
 
 ### Calibration deviations from doc anchors (informational)
@@ -27,12 +27,13 @@ The doc lists target anchor values for each phase. Landing-time tuning produced 
 - **Phase C — `MIGRATION_RATE` set to 0.6 vs the doc's ~10%**. The architect-eligible pool of gas giants is structurally small (~5 per build) because most procgen large bodies come via the overlay path, which is excluded from migration (catalog observations would have already detected any hot Jupiter around an observed system). High per-roll rate lifts hot-Jupiter visibility without distorting the underlying physics. Revisit once the eligible pool grows.
 - **Phase D — `bulkVolatileFraction` persisted as a primary field** (not derived-only). Decision favored render-time consumers: surface chromophore, atmosphere regime, biosphere gates can read the field directly without recomputing the zone from `formationAu` + frost lines on every consumer. CSV-level stability also means Sol curation (Earth 0.005, Uranus 0.30, etc.) doesn't drift between builds.
 - **Phase E.1 — `MOON_CAPACITY_SCALE = 12` calibrated to "major moons" not full satellite counts**. Anchored so Sol-Jupiter (R_H ≈ 0.35 AU) yields λ ≈ 4 (matches the 4 Galileans), not the ~95 confirmed Jupiter satellites. Visual-budget driven: the system-diagram dome lays moons on back/front pools around the planet rim, and >8 moons clutter the silhouette into unreadability. Side effect: 94% of procgen planets land in the close-in "tiny" Hill bucket (R_H < 0.005 AU) where λ < 0.06 → near-zero moons. This is physically correct (close-in planets lose moons to stellar tides — Mercury/Venus = 0) but represents a large drop from the prior tune's ~4000 procgen moons down to ~260. Earth-Moon analogs land at ~11% per Earth-analog draw (consistent with the Theia-impact origin theory: rare oligarchic-merger event). Outer gas giants concentrate the moon supply, with `MOON_COUNT_MAX = 8` clipping the saturated upper tail. Revisit the scale if gameplay needs more colonizable satellites.
+- **Phase E.2 — `RING_DISRUPTION_RATE = 0.00239` calibrated to the prior visual-budget tune, not the doc's realistic anchor**. Doc target was 80% rings on gas giants; we land at ~20–30% (matches the previous `RING_OCCURRENCE_BY_TYPE_TUNE` rate). Most real ring systems are sub-pixel at our zoom and would only register as visual noise, so the calibration stays at the perceptible-rate level. The R² scaling concentrates rings on gas giants more sharply than the prior per-type tune did: super-Earth ring rate drops from ~7% to ~1% (still ~40 ringed super-earths galaxy-wide at procgen scale — enough for the iconic SF "ringed Earth-analog" beat to remain recurring). Ring composition gates on host formationAu vs H2O frost line — icy/rocky split is binary at the prior level, with per-resource sd within each prior providing variety.
 
 ### Pickup notes for a fresh session
 
 Start by reading this section + the "Phasing" section below. Phase A/B/C/D deliverables are in:
 - `scripts/lib/astrophysics.mjs` — disk-physics helpers (`frostLineS`, `frostLineAU`, `solidSurfaceDensity`, `isolationMass`, `hillRadiusAu`)
-- `scripts/lib/procgen-priors.mjs` — all priors (disk physics, accretion, envelope, migration, four-zone bulk composition, `MOON_CAPACITY_SCALE` + `MOON_COUNT_MAX`); `PROCGEN_VERSION = 'v14'`; `zoneForFormationAu` helper
+- `scripts/lib/procgen-priors.mjs` — all priors (disk physics, accretion, envelope, migration, four-zone bulk composition, `MOON_CAPACITY_SCALE` + `MOON_COUNT_MAX`, `RING_DISRUPTION_RATE` + `RING_RESOURCE_ICY`/`RING_RESOURCE_ROCKY`); `PROCGEN_VERSION = 'v15'`; `zoneForFormationAu` helper
 - `scripts/lib/procgen-architect.mjs` — `buildStarDiskContext`, `buildPlanetCore`, `attachMoonsAndRing`, `migratePass`, `sampleBulk{Water,Metal,Volatile}Fraction`
 - `scripts/lib/procgen.mjs` — `bulk{Water,Metal,Volatile}FractionFor`, filler four-zone fill with per-star `frostLinesAu`
 - `src/data/stars.ts` — `Body.formationAu`, `Body.bulkVolatileFraction`
@@ -40,7 +41,7 @@ Start by reading this section + the "Phasing" section below. Phase A/B/C/D deliv
 - `scripts/check-disk-physics.mjs` — Phase A anchor regression gate
 - `scripts/audit-procgen.mjs` — Mass histogram + gas-giant-by-S-band + four-zone bulk-composition audit (`auditBulkComposition`)
 
-To resume Phase E.2: rings still dispatch on planetType (`RING_OCCURRENCE_BY_TYPE`, `RING_RESOURCE_PRIORS_BY_TYPE`). Replace with Roche-zone disruption probability (mass + density-driven) and host-bulk-composition-derived ring resource grid (icy host → icy ring). Once landed, Phase F deletes `PlanetType` and the remaining `*_BY_TYPE` tables (purely cleanup).
+To resume Phase F: `PlanetType` and the remaining `*_BY_TYPE` tables are now consumer-free for ring/moon generation. Surviving callers are the audit script's planet-type-mix table, `SHEPHERD_PLANET_TYPES` for belt anchoring, and `planet.planetType` persisted on each catalog/architect planet (only consumed by the audit). Phase F drops the field + type union + `planetTypeFor`, replaces `SHEPHERD_PLANET_TYPES` with a mass threshold (`SHEPHERD_MIN_MASS_EARTH`), and reworks the audit's planet-type-mix table to bucket by mass-radius bands.
 
 ---
 
