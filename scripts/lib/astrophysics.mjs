@@ -80,6 +80,81 @@ export function meanAgeForClass(cls) {
   }
 }
 
+// Frost-line insolation in Earth flux units. Below this S (closer to the
+// star, hotter) the volatile stays gaseous; above this S (farther, cooler)
+// it condenses out of the disk and joins the solid surface density.
+//
+// Derived from radiative equilibrium for a fast rotator with no internal
+// heat: T^4 = S × S₀ / (4σ). Formation-era disk grains are effectively
+// black so albedo is omitted (A ≈ 0); the bare formula reproduces the
+// conventional 2.7 AU water frost line for the Sun (T_H2O = 170 K → S ≈ 0.14).
+//
+// S₀ = 1361 W/m² (solar constant), σ = 5.670374e-8 W/m²/K⁴ (Stefan-Boltzmann).
+export function frostLineS(volatileTempK) {
+  if (volatileTempK == null || volatileTempK <= 0) return null;
+  return Math.pow(volatileTempK, 4) * 4 * 5.670374e-8 / 1361;
+}
+
+// Frost-line distance in AU for a given star and volatile. Uses
+// L_star × insolation_at_a = constant, so a_frost = sqrt(L_star_sun / S_frost).
+// Tight around M dwarfs (low L → small a), wide around F/A stars — the
+// asymmetry that lets M-dwarf systems host icy worlds inside 1 AU.
+export function frostLineAU(starMassSun, volatileTempK) {
+  const L = luminositySun(starMassSun);
+  if (L == null) return null;
+  const S = frostLineS(volatileTempK);
+  if (S == null || S <= 0) return null;
+  return Math.sqrt(L / S);
+}
+
+// Solid surface density Σ_solid in g/cm² at orbital distance a around a
+// star of mass starMassSun. Minimum-mass-solar-nebula profile stepped up
+// past each snow line:
+//
+//   Σ_base = normalization × starMassSun × a_au^(-1.5)
+//   × boosts.H2O if a > frostLinesAu.H2O
+//   × boosts.NH3 if a > frostLinesAu.NH3
+//   × boosts.CH4 if a > frostLinesAu.CH4
+//
+// `normalization` is Σ at 1 AU around the Sun in g/cm². frostLinesAu is
+// { H2O, NH3, CH4 } in AU; boosts is { H2O, NH3, CH4 } unitless.
+// Deep outer system asymptotes downward — Kuiper-belt mass deficit emerges
+// from the a^(-1.5) decline outpacing the cumulative snow-line boosts.
+export function solidSurfaceDensity(starMassSun, aAu, frostLinesAu, normalization, boosts) {
+  if (starMassSun == null || starMassSun <= 0 || aAu == null || aAu <= 0) return null;
+  let sigma = normalization * starMassSun * Math.pow(aAu, -1.5);
+  if (aAu > frostLinesAu.H2O) sigma *= boosts.H2O;
+  if (aAu > frostLinesAu.NH3) sigma *= boosts.NH3;
+  if (aAu > frostLinesAu.CH4) sigma *= boosts.CH4;
+  return sigma;
+}
+
+// Classical Lissauer-1987 isolation mass — the mass a protoplanet collects
+// from its feeding zone before runaway stalls:
+//
+//   M_iso = (8π × a² × Σ_solid)^(3/2) / (3 × M_star)^(1/2)
+//
+// Drives the continuous mass pipeline (Phase B+). Anchors (Sun, post-calibration):
+//   1 AU:  ≈ 0.05 M⊕ (Mars-mass inner planets)
+//   5 AU:  ≈ 5–10 M⊕ (gas-giant-core capable, past H2O frost line)
+//   20 AU: ≈ 3 M⊕    (ice-giant-core scale)
+//   30+ AU: drops off — Kuiper-belt mass deficit
+//
+// aAu in AU, starMassSun in solar masses, surfaceDensity in g/cm².
+// Returns M_iso in Earth masses; null on missing inputs.
+export function isolationMass(aAu, starMassSun, surfaceDensity) {
+  if (aAu == null || aAu <= 0 || starMassSun == null || starMassSun <= 0) return null;
+  if (surfaceDensity == null || surfaceDensity <= 0) return null;
+  const AU_CM = 1.495978707e13;
+  const M_SUN_G = 1.98892e33;
+  const M_EARTH_G = 5.9722e27;
+  const a_cm = aAu * AU_CM;
+  const M_star_g = starMassSun * M_SUN_G;
+  const numerator = Math.pow(8 * Math.PI * a_cm * a_cm * surfaceDensity, 1.5);
+  const denominator = Math.sqrt(3 * M_star_g);
+  return (numerator / denominator) / M_EARTH_G;
+}
+
 // Dimensionless proxy for tidal-locking timescale, normalized so Earth = 1.
 // The physical timescale is τ_lock ∝ a^6 / M_star^2 (the planet-side factors
 // are weaker and don't vary much across our taxonomy). Earth at 1 AU around

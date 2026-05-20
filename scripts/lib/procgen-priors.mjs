@@ -414,6 +414,112 @@ export const MOON_MASS_LOG_EARTH = { mean: -3, sd: 1.5, min: -5, max: 0.3 };
 export const MOON_MAX_HOST_MASS_RATIO = 0.03;
 
 // ---------------------------------------------------------------------------
+// Disk physics — protoplanetary-disk parameters for the continuous mass
+// pipeline. Helpers in astrophysics.mjs (frostLineS, frostLineAU,
+// solidSurfaceDensity, isolationMass) consume these. No callers yet — the
+// architect wires up in Phase B; this is the tuning surface.
+// ---------------------------------------------------------------------------
+
+// Volatile condensation temperatures in K. Each defines a snow line — the
+// orbital distance past which the volatile freezes out of the disk and
+// joins the solid surface density. Three matter for the catalog:
+//   H2O — ~170 K: enables Galilean-type icy moons and gas-giant cores
+//   NH3 — ~75 K:  Triton/Pluto-zone composition (ammonia + water mix)
+//   CH4 — ~40 K:  Eris-class deep-cold (methane-dominant)
+// See frostLineS(T) / frostLineAU(starMass, T) in astrophysics.mjs for the
+// radiative-equilibrium conversion to insolation / AU.
+export const SNOW_LINE_TEMPERATURES = { H2O: 170, NH3: 75, CH4: 40 };
+
+// Solid surface density boost past each snow line (multiplicative). When
+// a volatile freezes onto pre-existing dust grains and forms its own
+// condensate, the effective Σ_solid jumps. Each boost stacks on top of
+// any inner snow lines already crossed.
+//
+// H2O boost is well above the classical Hayashi value (~3×). The classical
+// step-up captures the gas-phase-to-ice condensation alone; modern disk
+// models add pebble drift concentrating mass at the snow line, which
+// inflates the effective Σ jump. We use a single permanent step rather
+// than a peaked profile, calibrated so isolationMass(5 AU, M_sun) crosses
+// CRITICAL_CORE_MASS_EARTH and gas-giant cores can form past the H2O line.
+//
+// Known artifact: the classical Lissauer M_iso formula with this profile
+// makes outer-disk isolation mass keep climbing (M_iso ∝ a^0.75); the
+// Architect (Phase B+) should cap with an outer-disk truncation or pebble-
+// drift correction. See PROCGEN-ARCHITECT-REFACTOR.md.
+export const SNOW_LINE_BOOSTS = { H2O: 12.0, NH3: 1.5, CH4: 1.2 };
+
+// Σ_solid at 1 AU around the Sun, in g/cm². Anchors the MMSN profile
+// Σ(a) = NORM × M_star_sun × a_au^(-1.5). Classical Hayashi MMSN is
+// ~7 g/cm² at 1 AU; modern revisions sit 1.5–10× higher. Calibrated so
+// isolationMass(1 AU, M_sun) ≈ 0.05 M⊕ (Mars-mass inner-Sol anchor).
+export const MMSN_NORMALIZATION = 14;
+
+// Disk gas lifetime in Myr per stellar class. Real disks live 1–10 Myr;
+// M dwarfs hold gas longer (slower UV photo-evaporation), massive stars
+// disperse faster (own + neighborhood ionization). Architect samples once
+// per star via sampleTruncated(prng, DISK_GAS_LIFETIME_MYR[cls]) and
+// caches the value for downstream gas-envelope decisions.
+export const DISK_GAS_LIFETIME_MYR = {
+  O:  { mean: 1, sd: 1, min: 0.5, max: 3  },
+  B:  { mean: 2, sd: 1, min: 0.5, max: 5  },
+  A:  { mean: 3, sd: 1, min: 1,   max: 6  },
+  F:  { mean: 3, sd: 2, min: 1,   max: 8  },
+  G:  { mean: 3, sd: 2, min: 1,   max: 10 },
+  K:  { mean: 4, sd: 2, min: 1,   max: 10 },
+  M:  { mean: 6, sd: 3, min: 1,   max: 15 },
+  WD: { mean: 3, sd: 2, min: 1,   max: 10 },
+  BD: { mean: 4, sd: 2, min: 1,   max: 10 },
+};
+
+// Accretion efficiency: multiplier on isolation mass. Zoned because the
+// dominant growth mechanism differs by formation zone:
+//
+//   inner (inside H2O frost line) — terrestrial mergers dominate.
+//     Embryos are densely packed (Σ × small a means many small bodies);
+//     oligarchic growth merges them into Mercury/Venus/Earth-class
+//     bodies. Earth's formation is the canonical case: ~20× feeding-
+//     zone mergers (Theia-class impacts). Heavy tail captures the
+//     occasional super-Earth.
+//   outer (past H2O frost line) — gas-envelope capture dominates, not
+//     terrestrial mergers. Cores grow modestly (~M_iso × 2) but then
+//     ENVELOPE_FRACTION fires when CRITICAL_CORE_MASS_EARTH is crossed
+//     and the disk still has gas. Final mass comes from envelope, not
+//     core mergers.
+//
+// Sampled via sampleLogTruncated. Sol calibration (NORM=14):
+//   1 AU Sun (inner): mass median ≈ 0.75 M⊕ (Venus), tail to ~2.5 M⊕
+//   5 AU Sun (outer): core median ≈ 14 M⊕ (Uranus-core), envelope
+//     fires → typical total ~85 M⊕ (Saturn-class)
+export const ACCRETION_EFFICIENCY = {
+  inner: { mean: 20, sd: 10, min: 1,   max: 80, log: true },
+  outer: { mean: 3,  sd: 2,  min: 0.3, max: 15, log: true },
+};
+
+// Core mass above which gas accretion can run away (assuming the disk
+// still has gas). Below the critical mass, envelope contraction is too
+// slow to capture significant gas before disk dispersal. Setting too
+// low overproduces gas giants; too high underproduces them.
+export const CRITICAL_CORE_MASS_EARTH = 10;
+
+// Envelope mass as a ratio to core mass once runaway accretion fires.
+// Median envelope ratio matches Solar System cold giants:
+//   Uranus: ratio ~0.5    (~10 M⊕ core, ~4.5 M⊕ envelope)
+//   Neptune: ratio ~0.7
+//   Saturn: ratio ~8.5    (~10 M⊕ core, ~85 M⊕ envelope)
+//   Jupiter: ratio ~31    (~10 M⊕ core, ~310 M⊕ envelope)
+// Log-normal with median ~5 captures the Neptune-Saturn middle as
+// typical, with Jupiter-class and super-Jupiters in the tail. Max
+// caps at 50× to stay well below the brown-dwarf threshold (13 M_jup
+// ≈ 4100 M⊕); a 35-M⊕ core hits ~1750 M⊕ at the cap, ~5 M_jup.
+export const ENVELOPE_FRACTION = { mean: 5, sd: 10, min: 0.3, max: 50, log: true };
+
+// Time in Myr between critical-core-mass and runaway gas accretion. If
+// the disk's gas component disperses inside this window, the body ends
+// as a "failed giant" — massive bare core, no envelope (Uranus/Neptune-
+// like or chthonian-precursor).
+export const TIME_TO_RUNAWAY_MYR = 0.5;
+
+// ---------------------------------------------------------------------------
 // Bulk composition (read by the Architect, persisted on the body)
 // ---------------------------------------------------------------------------
 

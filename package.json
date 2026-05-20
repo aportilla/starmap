@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "check": "node scripts/check.mjs",
     "audit:procgen": "node scripts/audit-procgen.mjs",
+    "check:disk-physics": "node scripts/check-disk-physics.mjs",
     "inspect:body": "node scripts/inspect-body.mjs",
     "inspect:csv": "node scripts/inspect-csv.mjs"
   },
