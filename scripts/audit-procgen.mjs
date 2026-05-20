@@ -25,12 +25,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planetTypeFor } from './lib/procgen.mjs';
 import { insolation, frostLineAU, hillRadiusAu } from './lib/astrophysics.mjs';
 import {
   PLANET_COUNT_BY_CLASS,
   MAX_PLANETS_PER_CLUSTER,
-  PLANET_TYPES,
   RING_DISRUPTION_RATE,
   MOON_CAPACITY_SCALE,
   MOON_COUNT_MAX,
@@ -75,19 +73,6 @@ function insolationFor(planet) {
   const star = stars[planet.hostStarIdx];
   if (!star || star.mass == null) return null;
   return insolation(star.mass, planet.semiMajorAu);
-}
-
-// Prefer the architect's persisted decision over re-derivation: the
-// worldClass→planetType mapping in planetTypeFor is many-to-one and would
-// re-bucket a super_earth at mass=2 (legitimately sampled by the architect
-// with 30% ice-ring weight) as 'rocky' (0% ice-ring weight), making the
-// audit disagree with the sampler on its own output. Fall back to the
-// derived form only for curated-system planets where neither the architect
-// nor the backfill ran.
-function planetTypeOf(planet) {
-  if (planet.planetType) return planet.planetType;
-  const wc = planet.worldClass || 'rocky';
-  return planetTypeFor(wc, planet.massEarth, insolationFor(planet));
 }
 
 function pct(n, d, decimals = 2) {
@@ -274,18 +259,33 @@ const procgenPlanets = bodies.filter(
   b => b.kind === 'planet' && !CURATED_HOSTS.has(b.hostId),
 );
 
-console.log('=== Planet-type mix (procgen-eligible planets) ===');
-const typeCount = {};
-for (const p of procgenPlanets) {
-  const t = planetTypeOf(p);
-  typeCount[t] = (typeCount[t] || 0) + 1;
-}
+// Categorical mix by (mass, radius, insolation) bands — a named view
+// over the continuous mass pipeline. Labels are descriptive only; no
+// downstream code depends on them.
 const totalProcgen = procgenPlanets.length;
-for (const t of PLANET_TYPES) {
-  const n = typeCount[t] || 0;
-  console.log('  ' + pad(t, 13) + pad(n, 6, true) + '   ' + pct(n, totalProcgen));
+console.log('=== Planet-class mix (procgen-eligible planets, descriptive) ===');
+function describePlanet(p) {
+  const r = p.radiusEarth;
+  const m = p.massEarth;
+  const S = insolationFor(p);
+  if (r != null && r >= 8) return 'jupiter (R≥8)';
+  if (r != null && r >= 4) return 'neptune (R 4-8)';
+  if (r != null && r >= 2) return 'sub-neptune (R 2-4)';
+  if (S != null && S > 100) return 'hot-rocky (S>100)';
+  if (m != null && m >= 3) return 'super-earth (m≥3)';
+  return 'rocky';
 }
-console.log('  ' + pad('total', 13) + pad(totalProcgen, 6, true));
+const planetClassCount = {};
+for (const p of procgenPlanets) {
+  const c = describePlanet(p);
+  planetClassCount[c] = (planetClassCount[c] || 0) + 1;
+}
+const CLASS_ORDER = ['hot-rocky (S>100)', 'rocky', 'super-earth (m≥3)', 'sub-neptune (R 2-4)', 'neptune (R 4-8)', 'jupiter (R≥8)'];
+for (const c of CLASS_ORDER) {
+  const n = planetClassCount[c] || 0;
+  console.log('  ' + pad(c, 22) + pad(n, 6, true) + '   ' + pct(n, totalProcgen));
+}
+console.log('  ' + pad('total', 22) + pad(totalProcgen, 6, true));
 console.log();
 
 // --- 3b. Mass histogram + gas-giant gate (Phase B regression view) --------

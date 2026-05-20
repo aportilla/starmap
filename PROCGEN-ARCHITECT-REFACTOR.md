@@ -2,7 +2,7 @@
 
 Working plan for replacing the Architect's `PlanetType` taxonomy with continuous physics-driven generators. Builds on the worldClass refactor (`PROCGEN-FUNDAMENTALS-REFACTOR.md`) which decoupled `worldClass` from physics generation; this doc extends the same principle to the architect side.
 
-Status: Phases A–D landed. Phases E–F not started.
+Status: All phases (A–F) landed. `PlanetType` and its dispatch tables are fully removed; the architect now runs end-to-end on continuous physics (disk → mass → migration → composition → satellites).
 
 ---
 
@@ -16,7 +16,7 @@ Status: Phases A–D landed. Phases E–F not started.
 | **D — Multi-snow-line composition** | ✅ landed | Four-zone formation gate (`zoneForFormationAu`); `bulkVolatileFraction` persisted as primary field; audit reports per-zone geometric means against priors |
 | **E.1 — Moons from Hill-sphere capacity** | ✅ landed | `hillRadiusAu` helper; `generateMoons` is Poisson(R_H × `MOON_CAPACITY_SCALE`), no planetType dispatch; visual hard cap `MOON_COUNT_MAX = 8`; audit buckets by R_H |
 | **E.2 — Rings from Roche-zone disruption** | ✅ landed | `generateRing` is Bernoulli(R_p² × `RING_DISRUPTION_RATE`); two composition priors (`RING_RESOURCE_ICY` / `RING_RESOURCE_ROCKY`) gated on formationAu vs H2O frost line; audit buckets by R_p |
-| **F — Delete PlanetType + cleanup** | not started | |
+| **F — Delete PlanetType + cleanup** | ✅ landed | `PlanetType` type union, `Body.planetType` field, `planetTypeFor`, `PLANET_TYPES`, `SHEPHERD_PLANET_TYPES` all deleted; `SHEPHERD_MIN_MASS_EARTH = 7` replaces type-set belt-shepherd gate; audit's planet-class table now descriptive-only (no downstream consumers) |
 
 ### Calibration deviations from doc anchors (informational)
 

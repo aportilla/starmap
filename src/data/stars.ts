@@ -103,17 +103,6 @@ export type BiosphereTier =
 export type BodyKind = 'planet' | 'moon' | 'belt' | 'ring';
 export type BodySource = 'catalog' | 'procgen';
 
-// Procgen mass/radius taxonomy used by the Architect when sampling a
-// planet's physical spec and ring/moon priors. Persisted on the body so
-// downstream consumers don't have to reverse-engineer it from the
-// many-to-one `worldClass` mapping (a 2 M⊕ super_earth and a 2 M⊕ rocky
-// can both land at worldClass='desert' but carry different priors).
-// Null for non-planet kinds and for curated-system planets where the
-// Architect/backfill didn't run.
-export type PlanetType =
-  | 'hot_rocky' | 'rocky' | 'super_earth'
-  | 'sub_neptune' | 'neptune' | 'jupiter';
-
 // One planet or moon. Catalog-sourced rows come from
 // scripts/scrape-planets-from-stellarcatalog.mjs; hand-seeded Sol bodies and
 // (later) procgen output share the same shape. `kind` discriminates whether
@@ -222,8 +211,6 @@ export interface Body {
   // smaller largestBodyKm to reflect their dust-cascade character)
   // and on planet/moon/ring kinds.
   readonly shepherdBodyIdx: number | null;
-  // Architect's mass/radius taxonomy. See `PlanetType` for semantics.
-  readonly planetType: PlanetType | null;
   // Surface character. All null for belt / ring kinds (no surface).
   readonly worldClass: WorldClass | null;
   readonly avgSurfaceTempK: number | null;

@@ -14,7 +14,7 @@
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson } from './prng.mjs';
 import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';
-import { radiusFromMass, planetTypeFor } from './procgen.mjs';
+import { radiusFromMass } from './procgen.mjs';
 import {
   PROCGEN_VERSION,
   PLANET_COUNT_BY_CLASS,
@@ -50,7 +50,7 @@ import {
   BELT_LARGEST_BODY_KM,
   BELT_GIANT_ADJACENCY,
   GIANTLESS_BELT_PENALTY,
-  SHEPHERD_PLANET_TYPES,
+  SHEPHERD_MIN_MASS_EARTH,
   RING_DISRUPTION_RATE,
   RING_EXTENT,
   RING_RESOURCE_ICY,
@@ -187,7 +187,6 @@ function makeBody(props) {
   const base = {
     hostStarIdx: null,
     hostBodyIdx: null,
-    planetType: null,
     worldClass: null,
     formationAu: null,
     bulkWaterFraction: null,
@@ -241,7 +240,7 @@ function makeBody(props) {
 // Capacity scales with Hill volume: a Jupiter-class at 5 AU gets ~4
 // moons, an Earth-class at 1 AU gets ~0, a hot Jupiter at 0.05 AU gets ~0.
 // The migration-strip behavior emerges naturally from the shrunk Hill
-// sphere — no per-planet planetType dispatch.
+// sphere.
 export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu = null) {
   if (planet.massEarth == null || planet.semiMajorAu == null) return [];
   if (!star || star.mass == null) return [];
@@ -338,13 +337,13 @@ function describeBeltComposition(resources) {
 }
 
 // Identify the giant(s) in a placed-planet list (innermost + outermost).
-// SHEPHERD_PLANET_TYPES gates membership; sub_neptune mass is enough to
-// anchor a belt's resonances even without a Jupiter-equivalent. Returns
-// null fields when no giants exist, signaling generateBelts to apply the
-// giantless penalty path.
+// Mass gates membership at SHEPHERD_MIN_MASS_EARTH; sub-Neptune mass is
+// enough to anchor a belt's resonances even without a Jupiter-equivalent.
+// Returns null fields when no giants exist, signaling generateBelts to
+// apply the giantless penalty path.
 function findGiants(placedPlanets) {
   const giants = placedPlanets
-    .filter(p => p.kind === 'planet' && p.planetType && SHEPHERD_PLANET_TYPES.has(p.planetType) && p.semiMajorAu != null)
+    .filter(p => p.kind === 'planet' && p.massEarth != null && p.massEarth >= SHEPHERD_MIN_MASS_EARTH && p.semiMajorAu != null)
     .sort((a, b) => a.semiMajorAu - b.semiMajorAu);
   return {
     innermost: giants[0] ?? null,
@@ -654,10 +653,6 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
   const meanRadius = radiusFromMass(massEarth) ?? 1.0;
   const noisyRadius = meanRadius * Math.exp(sampleNormal(radiusPrng, 0, RADIUS_SCATTER_LOG));
   const radiusEarth = Math.max(0.1, Math.min(30, noisyRadius));
-  // Legacy 6-bucket label, re-derived from the now-continuous mass +
-  // radius + insolation. Phase F deletes the field; for now moons +
-  // rings + audit still consume it.
-  const planetType = planetTypeFor(massEarth, radiusEarth, S);
 
   const eccPrng = slotPrng(star.id, slotIdx, saltPrefix + 'eccentricity');
   const incPrng = slotPrng(star.id, slotIdx, saltPrefix + 'inclination');
@@ -682,7 +677,6 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
     formalName: `${star.name} ${letter}`,
     name: `${star.name} ${letter}`,
     source: 'procgen',
-    planetType,
     semiMajorAu: Number(formationAu.toFixed(4)),
     formationAu: Number(formationAu.toFixed(4)),
     eccentricity: Number(sampleMixture(eccPrng, ECCENTRICITY).toFixed(4)),

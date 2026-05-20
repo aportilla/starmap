@@ -249,23 +249,6 @@ export function worldClassFor(body, S) {
   return 'rocky';
 }
 
-// Architect planet type for moon/ring backfill. Dispatches on physical
-// inputs directly (mass, radius, S) — no longer goes through worldClass,
-// since worldClass is derived too late in the cascade for the backfill.
-// This is the dispatch handle for MOON_COUNT_BY_TYPE and
-// RING_OCCURRENCE_BY_TYPE.
-export function planetTypeFor(massEarth, radiusEarth, S) {
-  if (radiusEarth != null) {
-    if (radiusEarth >= WORLD_CLASS_THRESHOLDS.jupiterRadius) return 'jupiter';
-    if (radiusEarth >= WORLD_CLASS_THRESHOLDS.neptuneRadius) return 'neptune';
-    if (radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return 'sub_neptune';
-  }
-  // terrestrial bucket
-  if (S != null && S > 100) return 'hot_rocky';
-  if (massEarth != null && massEarth > 3) return 'super_earth';
-  return 'rocky';
-}
-
 // =============================================================================
 // Surface character (temperature, pressure)
 // =============================================================================

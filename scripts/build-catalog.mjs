@@ -16,10 +16,10 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
-import { fillBodies, radiusFromMass, planetTypeFor } from './lib/procgen.mjs';
+import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES } from './lib/procgen-priors.mjs';
-import { insolation, frostLineAU } from './lib/astrophysics.mjs';
+import { frostLineAU } from './lib/astrophysics.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -671,7 +671,6 @@ function parseCsvBodies(text, label) {
       source,
       hostStarIdx: null,
       hostBodyIdx: null,
-      planetType: null,
       worldClass,
       shepherdId,
       shepherdBodyIdx: null,
@@ -942,29 +941,27 @@ async function main() {
     if (planet.massEarth == null) continue;  // no anchor → moon Kepler would NaN
     const host = starById.get(planet.hostId);
     if (!host) continue;
-    const r = planet.radiusEarth ?? radiusFromMass(planet.massEarth);
-    if (r == null) continue;
-    // RV-discovery catalog rows often carry periodDays but no semiMajorAu —
-    // the Filler will Kepler-derive it later, but the moon backfill runs
-    // before the Filler, so derive on the fly here to get a usable
-    // insolation for moon zone gating.
-    let aForS = planet.semiMajorAu;
-    if (aForS == null && planet.periodDays != null && host.mass > 0) {
-      aForS = Math.pow(Math.pow(planet.periodDays / 365.25, 2) * host.mass, 1 / 3);
+    // Catalog rows sometimes ship without radius. Backfill mass→radius
+    // here so generateRing's R_p² roll has a number to work with — the
+    // Filler will set the same value later, this just hoists it earlier.
+    if (planet.radiusEarth == null) {
+      const r = radiusFromMass(planet.massEarth);
+      if (r == null) continue;
+      planet.radiusEarth = r;
     }
-    const S = aForS != null ? insolation(host.mass, aForS) : null;
-    // planetType is dispatched directly on (mass, radius, S) — no longer
-    // routes through worldClass since class is derived late in the Filler.
-    // Phase F deletes the field; for now the audit's planet-type-mix table
-    // still consumes it.
-    const planetType = planetTypeFor(planet.massEarth, r, S);
-    planet.planetType = planetType;
+    // RV-discovery catalog rows often carry periodDays but no semiMajorAu —
+    // the Filler will Kepler-derive it later, but the backfill runs first,
+    // so derive on the fly here to get a usable formation-zone proxy.
+    let aBackfill = planet.semiMajorAu;
+    if (aBackfill == null && planet.periodDays != null && host.mass > 0) {
+      aBackfill = Math.pow(Math.pow(planet.periodDays / 365.25, 2) * host.mass, 1 / 3);
+    }
     // Moons + rings both inherit the host planet's formation zone — moons
     // for bulk composition, rings for water-ice vs rocky-debris feed.
     // Catalog planets don't carry formationAu (architect-only); fall back
     // to the host's current semiMajorAu as the in-situ formation proxy.
     // Frost lines are deterministic from host mass.
-    const hostFormationAu = planet.formationAu ?? aForS;
+    const hostFormationAu = planet.formationAu ?? aBackfill;
     const frostLinesAu = {
       H2O: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.H2O),
       NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),

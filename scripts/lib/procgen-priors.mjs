@@ -218,13 +218,6 @@ export const HABITABLE_ZONE_AU = {
 // Per-planet sampling
 // ---------------------------------------------------------------------------
 
-// Legacy 6-bucket label set — emitted by planetTypeFor(mass, radius, S)
-// from the continuous mass pipeline. No longer a sampling axis; consumed
-// by audit-procgen for histogram grouping and by moon/ring backfill code
-// that hasn't yet been ported to physics-keyed dispatch (Phase E).
-// Phase F deletes this entirely.
-export const PLANET_TYPES = ['hot_rocky', 'rocky', 'super_earth', 'sub_neptune', 'neptune', 'jupiter'];
-
 // Log-scatter (multiplicative) on the Otegi mass-radius relation. A
 // single value because the continuous pipeline already produces mass
 // variety from accretion-efficiency + envelope-ratio rolls; the radius
@@ -646,7 +639,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v15';
+export const PROCGEN_VERSION = 'v16';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands
@@ -810,7 +803,7 @@ export const BELT_LARGEST_BODY_KM = {
 };
 
 // Giant adjacency placement. Belts placed adjacent to a shepherding
-// giant (planetType ∈ {sub_neptune, neptune, jupiter}) inherit stable
+// giant (mass ≥ SHEPHERD_MIN_MASS_EARTH) inherit stable
 // resonance-anchored orbits — Sol Main Belt sits at Jupiter's resonance
 // boundary, the Kuiper Belt at Neptune's. Without a giant nearby,
 // belts fall back to BELT_PLACEMENT's system-edge-scaled band; the
@@ -841,12 +834,13 @@ export const GIANTLESS_BELT_PENALTY = {
   cold: 0.40,
 };
 
-// Planet types that count as "giant" for belt shepherding. Sub-neptunes
-// included because at ~10 M⊕ they're heavy enough to dominate resonances
-// in the way a true Jupiter does — Sol's ice giants Uranus and Neptune
-// (analogous to sub-neptune/neptune classes here) shepherd the Kuiper
-// Belt without needing a Jupiter-mass body.
-export const SHEPHERD_PLANET_TYPES = new Set(['sub_neptune', 'neptune', 'jupiter']);
+// Mass threshold for "giant enough to shepherd a belt". Sub-Neptune-class
+// bodies (~7 M⊕ and up) are heavy enough to dominate orbital resonances
+// the way Sol's Jupiter does for the Main Belt and Neptune does for the
+// Kuiper Belt. The threshold is mass-based rather than type-keyed so
+// migrated giants stripped of their envelopes (chthonian-class survivors)
+// still anchor belts if they retain enough core mass.
+export const SHEPHERD_MIN_MASS_EARTH = 7;
 
 // ---------------------------------------------------------------------------
 // Rings — per-planet ring systems (0 or 1)
@@ -1184,8 +1178,8 @@ export const SURFACE_AGE_FROM_TECTONIC = {
 //
 // Anchors: Earth 24h, Mars 24.6h, Jupiter 9.9h, Saturn 10.7h, Uranus 17h,
 // Neptune 16h. Venus's 5832h retrograde spin is the long-tail outlier —
-// reachable through the sd but not the mode. Architect's PlanetType could
-// later modulate this (gas giants spin faster from angular momentum
+// reachable through the sd but not the mode. Mass-keyed modulation could
+// later refine this (gas giants spin faster from angular momentum
 // conservation during collapse), but a universal log-normal is the
 // minimal class-free shape.
 export const ROTATION_INIT_HOURS = { mean: 24, sd: 30, min: 8, max: 200 };
