@@ -248,7 +248,10 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
   if (hillAu == null || hillAu <= 0) return [];
   const lambda = hillAu * MOON_CAPACITY_SCALE;
   const countPrng = moonPrng(planet.id, -1, 'count');
-  const N = Math.min(MOON_COUNT_MAX, samplePoisson(countPrng, lambda));
+  // Sample the full Poisson draw — no cap here. The gameplay-range
+  // filter applies via uniform-random prune below (see MOON_COUNT_MAX_TUNE
+  // in procgen-priors.mjs for the load-bearing rationale).
+  const N = samplePoisson(countPrng, lambda);
   if (N === 0) return [];
 
   const moons = [];
@@ -308,7 +311,36 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
       bulkVolatileFraction: sampleBulkVolatileFraction(bulkVolatilePrng, hostFormationAu, frostLinesAu),
     }));
   }
-  return moons;
+
+  // Gameplay-range filter: uniform-random prune to MOON_COUNT_MAX, then
+  // re-letter survivors so display names stay contiguous (I, II, III, …)
+  // and IDs slug-pack (m1, m2, …). Survivors keep their physically-
+  // sampled mass / orbit / composition — only display identity changes.
+  const kept = pruneMoonsToK(moons, MOON_COUNT_MAX, planet.id);
+  for (let i = 0; i < kept.length; i++) {
+    const slug = `m${i + 1}`;
+    const display = ROMAN[i] ?? `M${i + 1}`;
+    kept[i].id = `${planet.id}-${slug}`;
+    kept[i].name = `${planet.formalName} ${display}`;
+    kept[i].formalName = `${planet.formalName} ${display}`;
+  }
+  return kept;
+}
+
+// Fisher-Yates partial shuffle to pick K moons uniformly at random,
+// returned in semi-major-axis order. Deterministic via a per-planet
+// PRNG so the same host reduces to the same kept set across builds.
+// Mirrors pruneToK for planets — see the comment there.
+function pruneMoonsToK(moons, K, planetId) {
+  if (moons.length <= K) return moons;
+  if (K <= 0) return [];
+  const prng = moonPrng(planetId, -2, 'prune');
+  const arr = moons.slice();
+  for (let i = arr.length - 1; i >= arr.length - K; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(-K).sort((a, b) => a.semiMajorAu - b.semiMajorAu);
 }
 
 // =============================================================================

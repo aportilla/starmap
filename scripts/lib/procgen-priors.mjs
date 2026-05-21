@@ -270,21 +270,43 @@ export const RADIUS_SCATTER_LOG = 0.10;
 // Sits ~3× below the unconstrained physical anchor (Galilean CPD models
 // predict λ ≈ 12–20 for a Sol-Jupiter analog if Hill volume alone gated
 // count). The lower scale keeps the system-diagram's back/front moon-pool
-// budget readable — a Neptune-class with 15 moons would arc-clutter the
-// rim into illegibility. Outlier rolls past MOON_COUNT_MAX are clipped.
+// budget readable. Outlier rolls past MOON_COUNT_MAX are pruned uniformly
+// at random (see MOON_COUNT_MAX_TUNE below).
 //
 // Hot Jupiters (R_H ≈ 0.003 AU at 0.05 AU): λ ≈ 0.04 → 0 moons, matching
 // observation. Migrated giants lose their satellites naturally through
 // the shrunk Hill sphere; no separate migration-strip pass needed.
 export const MOON_CAPACITY_SCALE = 12;
 
-// Hard ceiling on per-planet moon count. Poisson(λ) has an unbounded
-// upper tail; for λ = 9 (Neptune-class) the 99th-percentile draw is ~17.
-// Cap at 8 to protect the system-diagram dome layout from outlier rolls
-// — anything past 8 moons would overlap visibly on the planet rim split
-// at typical disc sizes. The post-cap distribution still spans 0..8 with
-// gas giants dominating the top — variety preserved.
-export const MOON_COUNT_MAX = 8;
+// Defensive ceiling against the unbounded Poisson upper tail. For λ = 9
+// (Neptune-class) the 99th-percentile draw is ~17 — well past any
+// physical Sol anchor. The realistic peer caps at 8, which still
+// preserves the gas-giant-dominates-the-top variety the unconstrained
+// distribution produces. This is the value the architect would use
+// under pure realism; the gameplay tune below tightens it further.
+const MOON_COUNT_MAX_REALISTIC = 8;
+
+// Gameplay tune: tighten the per-planet moon cap from the realistic
+// 8 down to 5. The architect samples the full Poisson(λ) count, builds
+// every candidate moon under the realistic mass + bulk-composition
+// priors, then uniformly-randomly prunes the survivor set to this cap
+// (Fisher-Yates partial shuffle, deterministic via a per-planet PRNG).
+//
+// Random pruning is load-bearing: moon mass and bulk composition are
+// independently sampled today, but any future scheme that ties
+// composition to orbital position (mIdx) would silently bias the type
+// distribution if we just clipped from the outer slots. Uniform random
+// preserves moon-type frequency (Europa-class / Ganymede-class /
+// Titan-class shares) exactly — only absolute count drops. Mirrors
+// the planet-prune-to-K mechanism in procgen-architect.mjs.
+//
+// Player-visible effect: Saturn- and Neptune-class moon arcs stay
+// readable on the system-diagram rim split — no more 6-to-8-moon arcs
+// overlapping into illegibility — and the per-cluster colonization
+// decision space stays tractable.
+const MOON_COUNT_MAX_TUNE = 5;
+
+export const MOON_COUNT_MAX = MOON_COUNT_MAX_TUNE;
 
 // Moon mass distribution — truncated log-normal in M⊕, sampled per moon.
 // Centered on Europa-class (10⁻³ M⊕) so the bulk matches Sol; sd=1.5 in
