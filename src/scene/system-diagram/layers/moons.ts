@@ -233,10 +233,9 @@ function distributeMoonAngles(
 function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const N = slots.length;
   const positions = new Float32Array(N * 3);
-  // Packed render metadata: stride 4 = [size, mode, seed, tilt]. See
-  // planets.ts for the rationale.
+  // Packed render metadata: stride 4 = [size, hasSurface, seed, tilt].
+  // See planets.ts for the rationale.
   const renderMeta = new Float32Array(N * 4);
-  // Hover flag per moon; flipped to 1 by MoonsLayer.setHovered.
   const hoveredAttr = new Float32Array(N);
   // Procedural-texture inputs — same shape as PlanetsLayer. Every
   // palette entry is lifted toward white by MOON_BRIGHTEN so the moon's
@@ -245,15 +244,14 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const palette1  = new Float32Array(N * 3);
   const palette2  = new Float32Array(N * 3);
   const weights   = new Float32Array(N * 3);
-  // Packed coverage scalars: stride 4 = [waterFrac, iceFrac,
-  // biomeCoverage, hazeTint].
-  const coverageScalars = new Float32Array(N * 4);
-  const biomeColors = new Float32Array(N * 3);
+  const cloudPalette0 = new Float32Array(N * 3);
+  const cloudPalette1 = new Float32Array(N * 3);
+  const cloudPalette2 = new Float32Array(N * 3);
+  const cloudWeights  = new Float32Array(N * 3);
+  const surfaceScalars = new Float32Array(N * 4);
+  const atmoScalars    = new Float32Array(N * 4);
+  const biomeColors = new Float32Array(N * 4);
   const hazeColors  = new Float32Array(N * 3);
-  // Packed per-fragment scalars: stride 4 = [rimWidthPx, cloudDensity,
-  // surfaceAge, globalness]. Two atmospheric, two surface; bundled to
-  // stay under the GPU's gl_MaxVertexAttribs cap.
-  const atmoStrokes = new Float32Array(N * 4);
   slots.forEach((slot, i) => {
     const b = BODIES[slot.bodyIdx];
     const disc = buildDiscPalette(b, slot.discPx, c => lerpTowardWhite(c, MOON_BRIGHTEN));
@@ -269,37 +267,54 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
     weights[i * 3 + 0] = disc.weights[0];
     weights[i * 3 + 1] = disc.weights[1];
     weights[i * 3 + 2] = disc.weights[2];
+    cloudPalette0[i * 3 + 0] = disc.cloudPalette[0];
+    cloudPalette0[i * 3 + 1] = disc.cloudPalette[1];
+    cloudPalette0[i * 3 + 2] = disc.cloudPalette[2];
+    cloudPalette1[i * 3 + 0] = disc.cloudPalette[3];
+    cloudPalette1[i * 3 + 1] = disc.cloudPalette[4];
+    cloudPalette1[i * 3 + 2] = disc.cloudPalette[5];
+    cloudPalette2[i * 3 + 0] = disc.cloudPalette[6];
+    cloudPalette2[i * 3 + 1] = disc.cloudPalette[7];
+    cloudPalette2[i * 3 + 2] = disc.cloudPalette[8];
+    cloudWeights[i * 3 + 0] = disc.cloudWeights[0];
+    cloudWeights[i * 3 + 1] = disc.cloudWeights[1];
+    cloudWeights[i * 3 + 2] = disc.cloudWeights[2];
     renderMeta[i * 4 + 0] = slot.discPx;
-    renderMeta[i * 4 + 1] = disc.mode;
+    renderMeta[i * 4 + 1] = disc.hasSurface ? 1 : 0;
     renderMeta[i * 4 + 2] = disc.seed;
     renderMeta[i * 4 + 3] = disc.tilt;
-    coverageScalars[i * 4 + 0] = disc.waterFrac;
-    coverageScalars[i * 4 + 1] = disc.iceFrac;
-    coverageScalars[i * 4 + 2] = disc.biomeCoverage;
-    coverageScalars[i * 4 + 3] = disc.hazeTint;
-    biomeColors[i * 3 + 0] = disc.biomeColor[0];
-    biomeColors[i * 3 + 1] = disc.biomeColor[1];
-    biomeColors[i * 3 + 2] = disc.biomeColor[2];
+    surfaceScalars[i * 4 + 0] = disc.waterFrac;
+    surfaceScalars[i * 4 + 1] = disc.iceFrac;
+    surfaceScalars[i * 4 + 2] = disc.surfaceAge;
+    surfaceScalars[i * 4 + 3] = disc.globalness;
+    atmoScalars[i * 4 + 0] = disc.cloudCoverage;
+    atmoScalars[i * 4 + 1] = disc.cloudStructure;
+    atmoScalars[i * 4 + 2] = disc.hazeOpacity;
+    atmoScalars[i * 4 + 3] = disc.rimWidthPx;
+    biomeColors[i * 4 + 0] = disc.biomeColor[0];
+    biomeColors[i * 4 + 1] = disc.biomeColor[1];
+    biomeColors[i * 4 + 2] = disc.biomeColor[2];
+    biomeColors[i * 4 + 3] = disc.biomeCoverage;
     hazeColors[i * 3 + 0] = disc.hazeColor[0];
     hazeColors[i * 3 + 1] = disc.hazeColor[1];
     hazeColors[i * 3 + 2] = disc.hazeColor[2];
-    atmoStrokes[i * 4 + 0] = disc.rimWidthPx;
-    atmoStrokes[i * 4 + 1] = disc.cloudDensity;
-    atmoStrokes[i * 4 + 2] = disc.surfaceAge;
-    atmoStrokes[i * 4 + 3] = disc.globalness;
   });
   const geometry = new BufferGeometry();
-  geometry.setAttribute('position',     new BufferAttribute(positions, 3));
-  geometry.setAttribute('aRenderMeta',  new BufferAttribute(renderMeta, 4));
-  geometry.setAttribute('aHovered',     new BufferAttribute(hoveredAttr, 1));
-  geometry.setAttribute('aPalette0',    new BufferAttribute(palette0, 3));
-  geometry.setAttribute('aPalette1',    new BufferAttribute(palette1, 3));
-  geometry.setAttribute('aPalette2',    new BufferAttribute(palette2, 3));
-  geometry.setAttribute('aWeights',     new BufferAttribute(weights, 3));
-  geometry.setAttribute('aCoverageScalars', new BufferAttribute(coverageScalars, 4));
-  geometry.setAttribute('aBiomeColor',  new BufferAttribute(biomeColors, 3));
-  geometry.setAttribute('aHazeColor',   new BufferAttribute(hazeColors, 3));
-  geometry.setAttribute('aAtmoStrokes', new BufferAttribute(atmoStrokes, 4));
+  geometry.setAttribute('position',        new BufferAttribute(positions, 3));
+  geometry.setAttribute('aRenderMeta',     new BufferAttribute(renderMeta, 4));
+  geometry.setAttribute('aHovered',        new BufferAttribute(hoveredAttr, 1));
+  geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 3));
+  geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 3));
+  geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 3));
+  geometry.setAttribute('aWeights',        new BufferAttribute(weights, 3));
+  geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 3));
+  geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 3));
+  geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 3));
+  geometry.setAttribute('aCloudWeights',   new BufferAttribute(cloudWeights, 3));
+  geometry.setAttribute('aSurfaceScalars', new BufferAttribute(surfaceScalars, 4));
+  geometry.setAttribute('aAtmoScalars',    new BufferAttribute(atmoScalars, 4));
+  geometry.setAttribute('aBiomeColor',     new BufferAttribute(biomeColors, 4));
+  geometry.setAttribute('aHazeColor',      new BufferAttribute(hazeColors, 3));
   const material = makePlanetMaterial(1.0);
   const points = new Points(geometry, material);
   points.renderOrder = renderOrder;

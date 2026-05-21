@@ -42,32 +42,34 @@ export class PlanetsLayer {
 
     const P = this.planetIndices.length;
     const positions = new Float32Array(P * 3);
-    // Packed render metadata: stride 4 = [size, mode, seed, tilt]. See
-    // makePlanetMaterial for the layout — bundled into one buffer so the
-    // total attribute count stays under the GPU's gl_MaxVertexAttribs cap
-    // (8 on some integrated GPUs / WebGL1 contexts).
+    // Packed render metadata: stride 4 = [size, hasSurface, seed, tilt].
+    // hasSurface is 0/1 — the shader short-circuits the surface paint
+    // block on gas/ice giants when this is 0.
     const renderMeta = new Float32Array(P * 4);
-    // aHovered carries the per-vertex hover flag (0 or 1) consumed by
-    // the fragment shader's outline branch. Kept separate because
-    // setHovered writes one entry at a time — bundling it with the
-    // static render metadata would still work (BufferAttribute.setX/Y/Z/W)
-    // but separating it keeps the hover write path obvious.
     const hovered   = new Float32Array(P);
-    // Procedural-texture inputs — see disc-palette.ts and makePlanetMaterial.
+    // Surface resource palette + weights — three RGB entries the surface
+    // block picks from per worley cell.
     const palette0  = new Float32Array(P * 3);
     const palette1  = new Float32Array(P * 3);
     const palette2  = new Float32Array(P * 3);
     const weights   = new Float32Array(P * 3);
-    // Packed coverage scalars: stride 4 = [waterFrac, iceFrac,
-    // biomeCoverage, hazeTint].
-    const coverageScalars = new Float32Array(P * 4);
-    const biomeColors    = new Float32Array(P * 3);
-    const hazeColors  = new Float32Array(P * 3);
-    // Packed per-fragment scalars: stride 4 = [rimWidthPx, cloudDensity,
-    // surfaceAge, globalness]. Two atmospheric, two surface; bundled
-    // together to keep the attribute count under the GPU's
-    // gl_MaxVertexAttribs cap.
-    const atmoStrokes = new Float32Array(P * 4);
+    // Cloud-layer palette + weights — banded clouds pick per latitude
+    // strip; patchy clouds use slot 0 as a single condensate color.
+    const cloudPalette0 = new Float32Array(P * 3);
+    const cloudPalette1 = new Float32Array(P * 3);
+    const cloudPalette2 = new Float32Array(P * 3);
+    const cloudWeights  = new Float32Array(P * 3);
+    // Surface scalars: [waterFrac, iceFrac, surfaceAge, globalness].
+    const surfaceScalars = new Float32Array(P * 4);
+    // Atmospheric scalars: [cloudCoverage, cloudStructure, hazeOpacity,
+    // rimWidthPx]. Drives all three atmosphere layers (cloud, haze, rim).
+    const atmoScalars = new Float32Array(P * 4);
+    // Biome color packed as vec4: xyz = pigment, w = coverage density.
+    const biomeColors = new Float32Array(P * 4);
+    // Single rim/haze color — used by both the uniform haze tint and
+    // the disc rim halo. Picked by the regime in disc-palette.ts so
+    // both render paths agree.
+    const hazeColors = new Float32Array(P * 3);
     this.planetIndices.forEach((bIdx, i) => {
       const b = BODIES[bIdx];
       const discPx = this.planetDiscPx[i];
@@ -84,39 +86,54 @@ export class PlanetsLayer {
       weights[i * 3 + 0] = disc.weights[0];
       weights[i * 3 + 1] = disc.weights[1];
       weights[i * 3 + 2] = disc.weights[2];
-      // aRenderMeta layout: [size, mode, seed, tilt]. uDiscScale = 1.0
-      // so the shader's floor(size * 1.0 + 0.5) is a no-op pass-through.
+      cloudPalette0[i * 3 + 0] = disc.cloudPalette[0];
+      cloudPalette0[i * 3 + 1] = disc.cloudPalette[1];
+      cloudPalette0[i * 3 + 2] = disc.cloudPalette[2];
+      cloudPalette1[i * 3 + 0] = disc.cloudPalette[3];
+      cloudPalette1[i * 3 + 1] = disc.cloudPalette[4];
+      cloudPalette1[i * 3 + 2] = disc.cloudPalette[5];
+      cloudPalette2[i * 3 + 0] = disc.cloudPalette[6];
+      cloudPalette2[i * 3 + 1] = disc.cloudPalette[7];
+      cloudPalette2[i * 3 + 2] = disc.cloudPalette[8];
+      cloudWeights[i * 3 + 0] = disc.cloudWeights[0];
+      cloudWeights[i * 3 + 1] = disc.cloudWeights[1];
+      cloudWeights[i * 3 + 2] = disc.cloudWeights[2];
       renderMeta[i * 4 + 0] = discPx;
-      renderMeta[i * 4 + 1] = disc.mode;
+      renderMeta[i * 4 + 1] = disc.hasSurface ? 1 : 0;
       renderMeta[i * 4 + 2] = disc.seed;
       renderMeta[i * 4 + 3] = disc.tilt;
-      coverageScalars[i * 4 + 0] = disc.waterFrac;
-      coverageScalars[i * 4 + 1] = disc.iceFrac;
-      coverageScalars[i * 4 + 2] = disc.biomeCoverage;
-      coverageScalars[i * 4 + 3] = disc.hazeTint;
-      biomeColors[i * 3 + 0] = disc.biomeColor[0];
-      biomeColors[i * 3 + 1] = disc.biomeColor[1];
-      biomeColors[i * 3 + 2] = disc.biomeColor[2];
+      surfaceScalars[i * 4 + 0] = disc.waterFrac;
+      surfaceScalars[i * 4 + 1] = disc.iceFrac;
+      surfaceScalars[i * 4 + 2] = disc.surfaceAge;
+      surfaceScalars[i * 4 + 3] = disc.globalness;
+      atmoScalars[i * 4 + 0] = disc.cloudCoverage;
+      atmoScalars[i * 4 + 1] = disc.cloudStructure;
+      atmoScalars[i * 4 + 2] = disc.hazeOpacity;
+      atmoScalars[i * 4 + 3] = disc.rimWidthPx;
+      biomeColors[i * 4 + 0] = disc.biomeColor[0];
+      biomeColors[i * 4 + 1] = disc.biomeColor[1];
+      biomeColors[i * 4 + 2] = disc.biomeColor[2];
+      biomeColors[i * 4 + 3] = disc.biomeCoverage;
       hazeColors[i * 3 + 0] = disc.hazeColor[0];
       hazeColors[i * 3 + 1] = disc.hazeColor[1];
       hazeColors[i * 3 + 2] = disc.hazeColor[2];
-      atmoStrokes[i * 4 + 0] = disc.rimWidthPx;
-      atmoStrokes[i * 4 + 1] = disc.cloudDensity;
-      atmoStrokes[i * 4 + 2] = disc.surfaceAge;
-      atmoStrokes[i * 4 + 3] = disc.globalness;
     });
     this.geometry = new BufferGeometry();
-    this.geometry.setAttribute('position',     new BufferAttribute(positions, 3));
-    this.geometry.setAttribute('aRenderMeta',  new BufferAttribute(renderMeta, 4));
-    this.geometry.setAttribute('aHovered',     new BufferAttribute(hovered, 1));
-    this.geometry.setAttribute('aPalette0',    new BufferAttribute(palette0, 3));
-    this.geometry.setAttribute('aPalette1',    new BufferAttribute(palette1, 3));
-    this.geometry.setAttribute('aPalette2',    new BufferAttribute(palette2, 3));
-    this.geometry.setAttribute('aWeights',     new BufferAttribute(weights, 3));
-    this.geometry.setAttribute('aCoverageScalars', new BufferAttribute(coverageScalars, 4));
-    this.geometry.setAttribute('aBiomeColor',  new BufferAttribute(biomeColors, 3));
-    this.geometry.setAttribute('aHazeColor',   new BufferAttribute(hazeColors, 3));
-    this.geometry.setAttribute('aAtmoStrokes', new BufferAttribute(atmoStrokes, 4));
+    this.geometry.setAttribute('position',        new BufferAttribute(positions, 3));
+    this.geometry.setAttribute('aRenderMeta',     new BufferAttribute(renderMeta, 4));
+    this.geometry.setAttribute('aHovered',        new BufferAttribute(hovered, 1));
+    this.geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 3));
+    this.geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 3));
+    this.geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 3));
+    this.geometry.setAttribute('aWeights',        new BufferAttribute(weights, 3));
+    this.geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 3));
+    this.geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 3));
+    this.geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 3));
+    this.geometry.setAttribute('aCloudWeights',   new BufferAttribute(cloudWeights, 3));
+    this.geometry.setAttribute('aSurfaceScalars', new BufferAttribute(surfaceScalars, 4));
+    this.geometry.setAttribute('aAtmoScalars',    new BufferAttribute(atmoScalars, 4));
+    this.geometry.setAttribute('aBiomeColor',     new BufferAttribute(biomeColors, 4));
+    this.geometry.setAttribute('aHazeColor',      new BufferAttribute(hazeColors, 3));
     this.material = makePlanetMaterial(1.0);
     this.points = new Points(this.geometry, this.material);
     this.points.renderOrder = RENDER_ORDER_PLANET;
