@@ -26,9 +26,14 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 //          equator-aligned frame, paints aCloudPalette0 on cells whose
 //          per-cell hash < cloudCoverage. Earth's broken trade-wind
 //          decks.
-//        - cloudStructure ≥ 0.5: latitude-band strips that pick from
-//          aCloudPalette/aCloudWeights by per-band hash, painted at
-//          alpha = cloudCoverage (typically 1.0). Jupiter / Venus.
+//        - cloudStructure ≥ 0.5: two-layer worley stack in sphere-
+//          projected (lon, lat), cells stretched east-west so the
+//          natural Voronoi tessellation forms strips along the rotation
+//          axis. Per-cell color is picked from the cell's latitude
+//          component only — cells in the same lat track share a color,
+//          so the bands read parallel to the equator. Painted at
+//          alpha = cloudCoverage. Jupiter / Saturn / Uranus / Neptune /
+//          Venus.
 //   3. **Haze** (when aAtmoScalars.z > 0) — uniform per-fragment lerp
 //      toward aHazeColor by hazeOpacity. The aerosol overlay (Titan
 //      tholin, Venus sulfate, Mars dust).
@@ -194,27 +199,6 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vRimWidthPx;
       varying vec3  vHazeColor;
 
-      // Banded-mode density: bands per radius pixel. Tuned so a
-      // Uranus-class disc (~43 px radius) gets ~30 bands; Jupiter
-      // (~60 px radius) lands at ~42, smallest banded body (20 px
-      // radius) at ~14. Per-disc band count is derived from vRadius at
-      // fragment time — keeps band height in screen pixels roughly
-      // constant across disc sizes so tiny moons don't render bands as
-      // single-pixel barber stripes and gas giants don't read as
-      // 8-strip cartoons.
-      //
-      // MAX_BAND_COUNT is the loop cap GLSL ES requires as a constant;
-      // an early break uses the actual per-disc bandCount inside.
-      const float BAND_DENSITY = 0.7;
-      const int MAX_BAND_COUNT = 50;
-
-      // Boundary-warp constants. WARP_CHUNK_PX = integer-px width of
-      // one along-band warp step (3 px → coarse pixel-art stair-step
-      // wobble rather than per-pixel hash noise). Warp amplitude is
-      // derived per-disc from band size below so the wobble stays
-      // visible without leaping narrow bands at any disc radius.
-      const float WARP_CHUNK_PX = 3.0;
-
       // Perspective foreshortening for banded mode — the disc is treated
       // as the projection of a sphere whose rotation axis is tipped
       // forward (toward the viewer) by arcsin(POLE_SIN). POLE_SIN is
@@ -236,6 +220,24 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // larger), but resolves to readable cream / tan / dark-tan
       // strips on a near-monochrome one.
       const float BAND_LIGHTNESS_JITTER = 0.06;
+
+      // Banded-mode worley pitches in env-px. Two layers, both
+      // anisotropic east-west (LON > LAT) so Voronoi cells form
+      // horizontal strips. Primary layer is the dominant visible band
+      // paint; detail layer overlays smaller stripes at partial
+      // coverage for sub-band texture.
+      //
+      // LON1=24 puts ~7-8 cells along the equator on a Jupiter-class
+      // 60-px disc; LAT1=5 gives ~12 lat tracks pole-to-pole. ~5:1
+      // aniso. Wider aniso ratios produced sliverlike fragments that
+      // didn't read as bands; 5:1 hits the "cells look like band
+      // segments" sweet spot. Detail layer at half the LON pitch and
+      // ~2 px LAT pitch adds sub-band stripes at 50% cell coverage.
+      const float BAND1_LON_PX = 24.0;
+      const float BAND1_LAT_PX = 5.0;
+      const float BAND2_LON_PX = 12.0;
+      const float BAND2_LAT_PX = 2.0;
+      const float DETAIL_COVERAGE = 0.5;
 
       // Surface-mode worley cell pitch — equivalent screen-pixels at
       // disc center. Cells live in sphere-space (lon, lat) scaled by
@@ -858,14 +860,18 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
 
         // ── Cloud layer ──
         // Two geometries, chosen per body by vCloudStructure:
-        //   < 0.5 (patchy): anisotropic worley cells in the equator-
-        //     aligned frame. Per-cell hash < vCloudCoverage paints the
-        //     condensate color (vCloudPalette0). Earth's trade-wind
-        //     cumulus, Mars's sparse cirrus.
-        //   ≥ 0.5 (banded): sphere-projected latitude strips picking
-        //     from vCloudPalette (gas-mix derived). Painted at
-        //     alpha = vCloudCoverage (typically 1.0 for full deck).
-        //     Jupiter / Venus / ice giants.
+        //   < 0.5 (patchy): anisotropic worley cells in the sphere-
+        //     projected (lon, lat) frame. Per-cell hash < vCloudCoverage
+        //     paints the condensate color (vCloudPalette0). Earth's
+        //     trade-wind cumulus, Mars's sparse cirrus.
+        //   ≥ 0.5 (banded): two-layer worley stack in the same (lon,
+        //     lat) frame, cells stretched east-west so the natural
+        //     Voronoi tessellation forms strips along the rotation
+        //     axis. Per-cell color hashed off the cell's lat component
+        //     only → cells in one lat track share a color, so bands
+        //     read parallel to the equator. Painted at alpha =
+        //     vCloudCoverage. Jupiter / Saturn / Uranus / Neptune /
+        //     Venus.
         if (vCloudCoverage > 0.0) {
           vec3 cloudCol = vec3(0.0);
           float cloudAlpha = 0.0;
@@ -908,55 +914,81 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               cloudAlpha = 1.0;
             }
           } else {
-            // Banded clouds — sphere-projection + latitude-strip geometry.
-            // Driven by the cloud-layer palette and alpha-blended with
-            // whatever's underneath (surface for Venus, fallback for
-            // Jupiter/Saturn).
+            // Banded clouds — two anisotropic worley layers in the
+            // same sphere-projected (lon, lat) frame the surface and
+            // patchy-cloud paths use. Cells are stretched east-west so
+            // the natural Voronoi tessellation forms strips along the
+            // rotation axis. Per-cell color is hashed off the cell's
+            // LAT component only, so cells in the same latitude track
+            // resolve to the same palette pick — the bands read as
+            // parallel to the equator. Worley's natural jitter wobbles
+            // the lon boundaries between adjacent bands, no separate
+            // warp pass needed.
             //
-            // Uses the un-inset projection — banded latitude arcs need
-            // to reach the true pole, while surface/patchy-cloud worley
-            // uses the SPHERE_VISIBLE_FRAC-inset variant from the hoisted
-            // block above to bound limb foreshortening.
-            float nx = lxs / vRadius;
-            float ny = lys / vRadius;
-            float nz = sqrt(max(0.0, 1.0 - nx * nx - ny * ny));
-            float latSin = ny * POLE_COS + nz * POLE_SIN;
+            // Two layers compose, the detail layer over-painting the
+            // primary on cells whose existence hash falls under
+            // DETAIL_COVERAGE — the rest pass the primary through.
 
-            int bandCount = int(clamp(floor(vRadius * BAND_DENSITY + 0.5), 6.0, float(MAX_BAND_COUNT)));
-            float bandCountF = float(bandCount);
-
-            // Boundary warp scaled to band height. Local bandLat (rather
-            // than reusing the hoisted lat) because banded works on the
-            // un-inset projection and applies the warp in sine-of-latitude
-            // space, not asin'd radians.
-            float warpAmpPx = vRadius / bandCountF * 0.75;
-            float chunkX = floor(lxs / WARP_CHUNK_PX);
-            float warp = (hash11(chunkX + vSeed * 31.0) - 0.5) * 2.0 * warpAmpPx / vRadius;
-            float bandLat = clamp(latSin + warp, -1.0, 1.0);
-
-            // Non-uniform band edges.
-            float totalW = 0.0;
-            for (int i = 0; i < MAX_BAND_COUNT; i++) {
-              if (i >= bandCount) break;
-              totalW += 0.5 + 1.5 * hash11(float(i) + vSeed * 7.0);
+            // Primary band layer.
+            vec2 p1 = vec2(lon, lat) * vRadius / vec2(BAND1_LON_PX, BAND1_LAT_PX);
+            vec2 cellId1  = floor(p1);
+            vec2 cellFrac1 = p1 - cellId1;
+            vec2 winnerCell1 = cellId1;
+            float minD1 = 1e9;
+            for (int dx = -1; dx <= 1; dx++) {
+              for (int dy = -1; dy <= 1; dy++) {
+                vec2 off = vec2(float(dx), float(dy));
+                vec2 nCell = cellId1 + off;
+                vec2 jitter = vec2(
+                  hash21(nCell + vec2(vSeed * 1103.0, vSeed * 1117.0)),
+                  hash21(nCell + vec2(vSeed * 1129.0, vSeed * 1151.0))
+                );
+                vec2 nCenter = off + jitter;
+                vec2 diff = nCenter - cellFrac1;
+                float d2 = dot(diff, diff);
+                if (d2 < minD1) {
+                  minD1 = d2;
+                  winnerCell1 = nCell;
+                }
+              }
             }
-            float pos = (bandLat + 1.0) * 0.5 * totalW;
-            float accum = 0.0;
-            float bandIdx = 0.0;
-            for (int i = 0; i < MAX_BAND_COUNT; i++) {
-              if (i >= bandCount) break;
-              accum += 0.5 + 1.5 * hash11(float(i) + vSeed * 7.0);
-              if (pos >= accum) bandIdx = float(i + 1);
+            float h1 = hash11(winnerCell1.y + vSeed * 41.0);
+            vec3 col1 = pickFromPalette(h1, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudWeights);
+            float lj1 = (hash11(winnerCell1.y + vSeed * 67.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
+            cloudCol = clamp(col1 + vec3(lj1), 0.0, 1.0);
+
+            // Detail layer — smaller pitch, partial coverage. Cells
+            // whose existence hash > DETAIL_COVERAGE pass the primary
+            // through; the rest paint their own lat-coherent pick over.
+            vec2 p2 = vec2(lon, lat) * vRadius / vec2(BAND2_LON_PX, BAND2_LAT_PX);
+            vec2 cellId2  = floor(p2);
+            vec2 cellFrac2 = p2 - cellId2;
+            vec2 winnerCell2 = cellId2;
+            float minD2 = 1e9;
+            for (int dx = -1; dx <= 1; dx++) {
+              for (int dy = -1; dy <= 1; dy++) {
+                vec2 off = vec2(float(dx), float(dy));
+                vec2 nCell = cellId2 + off;
+                vec2 jitter = vec2(
+                  hash21(nCell + vec2(vSeed * 1163.0, vSeed * 1171.0)),
+                  hash21(nCell + vec2(vSeed * 1181.0, vSeed * 1193.0))
+                );
+                vec2 nCenter = off + jitter;
+                vec2 diff = nCenter - cellFrac2;
+                float d2 = dot(diff, diff);
+                if (d2 < minD2) {
+                  minD2 = d2;
+                  winnerCell2 = nCell;
+                }
+              }
             }
-            bandIdx = min(bandIdx, bandCountF - 1.0);
-
-            // Per-band palette pick from the cloud palette.
-            float h = hash11(bandIdx + vSeed * 41.0);
-            cloudCol = pickFromPalette(h, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudWeights);
-
-            // Per-band lightness perturbation.
-            float lightJ = (hash11(bandIdx + vSeed * 67.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
-            cloudCol = clamp(cloudCol + vec3(lightJ), 0.0, 1.0);
+            float existH = hash21(winnerCell2 + vec2(vSeed * 1201.0, vSeed * 1213.0));
+            if (existH < DETAIL_COVERAGE) {
+              float h2 = hash11(winnerCell2.y + vSeed * 79.0);
+              vec3 col2 = pickFromPalette(h2, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudWeights);
+              float lj2 = (hash11(winnerCell2.y + vSeed * 83.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
+              cloudCol = clamp(col2 + vec3(lj2), 0.0, 1.0);
+            }
 
             cloudAlpha = vCloudCoverage;
           }
