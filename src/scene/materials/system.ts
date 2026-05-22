@@ -303,11 +303,13 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       const float BIOME_LAT_MAX  = 0.85;
       const float BIOME_LAT_RAMP = 0.15;
 
-      // Patchy-cloud worley cell pitch in pixels. CLOUD_LON_PX >
-      // CLOUD_LAT_PX gives cells stretched east-west (zonal-flow
-      // direction) so silhouettes read as wind-swept streaks rather
-      // than axis-aligned grid squares. Earth at ~60 px disc gets ~5
-      // cells across the equator and ~12 across latitudes.
+      // Patchy-cloud worley cell pitch — equivalent disc-pixel pitch at
+      // disc center. Cells live in sphere-projected (lon, lat) space the
+      // same way SURFACE_PATCH_PX cells do, so cloud cells and surface
+      // cells compress toward the limb together rather than the clouds
+      // floating in a flat plane over a globe. CLOUD_LON_PX > CLOUD_LAT_PX
+      // gives east-west stretch (zonal-flow direction) so silhouettes
+      // read as wind-swept streaks rather than axis-aligned grid squares.
       const float CLOUD_LON_PX = 12.0;
       const float CLOUD_LAT_PX = 5.0;
 
@@ -485,44 +487,51 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           return;
         }
 
+        // Sphere projection — reconstruct the forward-hemisphere surface
+        // normal at this fragment and dot it with the band-aligned pole
+        // (tipped forward by arcsin(POLE_SIN), same foreshortening the
+        // rings and banded mode use). latSinS is the sine of latitude on
+        // the visible sphere; polar caps hug |latSinS| ≈ 1. Tilt rotation
+        // matches banded mode so a ringed terrestrial's caps and ring
+        // share one vantage.
+        //
+        // Hoisted above the surface gate because two consumers need it:
+        // the surface block (worley cells in lon/lat) and the patchy
+        // cloud block (worley cells in the same frame, so clouds and
+        // continents compress toward the limb together). Banded clouds
+        // keep their own un-inset projection because their latitude
+        // arcs need to reach the true pole.
+        //
+        // Frame derivation: in the band-aligned tilted frame the pole
+        // points along P = (0, POLE_COS, POLE_SIN) and the prime
+        // meridian (lon = 0 at the equator, facing the viewer) along
+        // F = (0, -POLE_SIN, POLE_COS); east is +x. For a surface
+        // normal n = (nxs, nys, nzs):
+        //   sin(lat) = dot(n, P) = nys*POLE_COS + nzs*POLE_SIN
+        //   cos(lat) cos(lon) = dot(n, F) = nzs*POLE_COS - nys*POLE_SIN
+        //   cos(lat) sin(lon) = dot(n, E) = nxs
+        // so lat = asin(latSinS) and lon = atan2(nxs, lonF). atan2 is
+        // well-defined across the visible hemisphere; the only
+        // singularity (visible pole) is a sub-pixel region masked by
+        // the ice cap for any body with iceFrac > 0.
+        float cT = cos(vTilt);
+        float sT = sin(vTilt);
+        float lxs =  d.x * cT + d.y * sT;
+        float lys = -d.x * sT + d.y * cT;
+        // Inset the projection by SPHERE_VISIBLE_FRAC so the disc edge
+        // maps inside the hemisphere rather than to the true limb —
+        // bounds cell foreshortening so they stop pinching to sub-pixel
+        // widths near the rim. See the constant block.
+        float nxs = (lxs / vRadius) * SPHERE_VISIBLE_FRAC;
+        float nys = (lys / vRadius) * SPHERE_VISIBLE_FRAC;
+        float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
+        float latSinS = nys * POLE_COS + nzs * POLE_SIN;
+        float lat     = asin(latSinS);
+        float lonF    = nzs * POLE_COS - nys * POLE_SIN;
+        float lon     = atan(nxs, lonF);
+
         vec3 col;
         if (vHasSurface > 0.5) {
-          // Sphere projection — reconstruct the forward-hemisphere
-          // surface normal at this fragment and dot it with the
-          // band-aligned pole (tipped forward by arcsin(POLE_SIN), same
-          // foreshortening the rings and banded mode use). latSinS is
-          // the sine of latitude on the visible sphere; polar caps
-          // hug |latSinS| ≈ 1. Tilt rotation matches banded mode so
-          // a ringed terrestrial's caps and ring share one vantage.
-          //
-          // Frame derivation: in the band-aligned tilted frame the pole
-          // points along P = (0, POLE_COS, POLE_SIN) and the prime
-          // meridian (lon = 0 at the equator, facing the viewer) along
-          // F = (0, -POLE_SIN, POLE_COS); east is +x. For a surface
-          // normal n = (nxs, nys, nzs):
-          //   sin(lat) = dot(n, P) = nys*POLE_COS + nzs*POLE_SIN
-          //   cos(lat) cos(lon) = dot(n, F) = nzs*POLE_COS - nys*POLE_SIN
-          //   cos(lat) sin(lon) = dot(n, E) = nxs
-          // so lat = asin(latSinS) and lon = atan2(nxs, lonF). atan2 is
-          // well-defined across the visible hemisphere; the only
-          // singularity (visible pole) is a sub-pixel region masked by
-          // the ice cap for any body with iceFrac > 0.
-          float cT = cos(vTilt);
-          float sT = sin(vTilt);
-          float lxs =  d.x * cT + d.y * sT;
-          float lys = -d.x * sT + d.y * cT;
-          // Inset the projection by SPHERE_VISIBLE_FRAC so the disc
-          // edge maps inside the hemisphere rather than to the true
-          // limb — bounds cell foreshortening so they stop pinching
-          // to sub-pixel widths near the rim. See the constant block.
-          float nxs = (lxs / vRadius) * SPHERE_VISIBLE_FRAC;
-          float nys = (lys / vRadius) * SPHERE_VISIBLE_FRAC;
-          float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
-          float latSinS = nys * POLE_COS + nzs * POLE_SIN;
-          float lat     = asin(latSinS);
-          float lonF    = nzs * POLE_COS - nys * POLE_SIN;
-          float lon     = atan(nxs, lonF);
-
           // Latitude for cap / biome tests uses the un-inset projection
           // so the visible disc rim covers the true sphere pole. The
           // worley pass above wants the inset to bound cell foreshortening
@@ -862,15 +871,16 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           float cloudAlpha = 0.0;
 
           if (vCloudStructure < 0.5) {
-            // Patchy clouds — anisotropic worley. Cells stretched east-
-            // west give wind-swept silhouettes rather than axis-aligned
-            // squares. Salts (991/997 + 1013/1019 + 1031/1033) distinct
-            // from every other hash pass.
-            float cCT = cos(vTilt);
-            float cST = sin(vTilt);
-            float clx =  d.x * cCT + d.y * cST;
-            float cly = -d.x * cST + d.y * cCT;
-            vec2 cloudPos = vec2(clx / CLOUD_LON_PX, cly / CLOUD_LAT_PX);
+            // Patchy clouds — sphere-projected anisotropic worley in the
+            // same (lon, lat) frame as the surface beneath, so cloud
+            // cells compress toward the limb together with continents
+            // rather than floating flat over a globe. Cell pitch scales
+            // by vRadius / CLOUD_LON_PX so disc-center cells stay at the
+            // equivalent pixel size across disc sizes. CLOUD_LON_PX >
+            // CLOUD_LAT_PX gives east-west stretch (zonal-flow direction).
+            // Salts (991/997 + 1013/1019 + 1031/1033) distinct from every
+            // other hash pass.
+            vec2 cloudPos = vec2(lon, lat) * vRadius / vec2(CLOUD_LON_PX, CLOUD_LAT_PX);
             vec2 cloudCellId = floor(cloudPos);
             vec2 cloudFrac   = cloudPos - cloudCellId;
             float minCloudD2 = 1e9;
@@ -898,30 +908,31 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               cloudAlpha = 1.0;
             }
           } else {
-            // Banded clouds — same sphere-projection + latitude-strip
-            // geometry the gas giants used to render under the old
-            // mode-flip. Now driven by the cloud-layer palette and
-            // alpha-blended with whatever's underneath (surface for
-            // Venus, fallback for Jupiter/Saturn — identical visual on
-            // pure no-surface giants because the surface block didn't
-            // run).
-            float cT = cos(vTilt);
-            float sT = sin(vTilt);
-            float lx =  d.x * cT + d.y * sT;
-            float ly = -d.x * sT + d.y * cT;
-            float nx = lx / vRadius;
-            float ny = ly / vRadius;
+            // Banded clouds — sphere-projection + latitude-strip geometry.
+            // Driven by the cloud-layer palette and alpha-blended with
+            // whatever's underneath (surface for Venus, fallback for
+            // Jupiter/Saturn).
+            //
+            // Uses the un-inset projection — banded latitude arcs need
+            // to reach the true pole, while surface/patchy-cloud worley
+            // uses the SPHERE_VISIBLE_FRAC-inset variant from the hoisted
+            // block above to bound limb foreshortening.
+            float nx = lxs / vRadius;
+            float ny = lys / vRadius;
             float nz = sqrt(max(0.0, 1.0 - nx * nx - ny * ny));
             float latSin = ny * POLE_COS + nz * POLE_SIN;
 
             int bandCount = int(clamp(floor(vRadius * BAND_DENSITY + 0.5), 6.0, float(MAX_BAND_COUNT)));
             float bandCountF = float(bandCount);
 
-            // Boundary warp scaled to band height.
+            // Boundary warp scaled to band height. Local bandLat (rather
+            // than reusing the hoisted lat) because banded works on the
+            // un-inset projection and applies the warp in sine-of-latitude
+            // space, not asin'd radians.
             float warpAmpPx = vRadius / bandCountF * 0.75;
-            float chunkX = floor(lx / WARP_CHUNK_PX);
+            float chunkX = floor(lxs / WARP_CHUNK_PX);
             float warp = (hash11(chunkX + vSeed * 31.0) - 0.5) * 2.0 * warpAmpPx / vRadius;
-            float lat = clamp(latSin + warp, -1.0, 1.0);
+            float bandLat = clamp(latSin + warp, -1.0, 1.0);
 
             // Non-uniform band edges.
             float totalW = 0.0;
@@ -929,7 +940,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               if (i >= bandCount) break;
               totalW += 0.5 + 1.5 * hash11(float(i) + vSeed * 7.0);
             }
-            float pos = (lat + 1.0) * 0.5 * totalW;
+            float pos = (bandLat + 1.0) * 0.5 * totalW;
             float accum = 0.0;
             float bandIdx = 0.0;
             for (int i = 0; i < MAX_BAND_COUNT; i++) {
