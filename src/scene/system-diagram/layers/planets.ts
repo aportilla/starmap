@@ -52,12 +52,20 @@ export class PlanetsLayer {
     const palette1  = new Float32Array(P * 3);
     const palette2  = new Float32Array(P * 3);
     const weights   = new Float32Array(P * 3);
-    // Cloud-layer palette + weights — banded clouds pick per latitude
-    // strip; patchy clouds use slot 0 as a single condensate color.
-    const cloudPalette0 = new Float32Array(P * 3);
-    const cloudPalette1 = new Float32Array(P * 3);
-    const cloudPalette2 = new Float32Array(P * 3);
-    const cloudWeights  = new Float32Array(P * 3);
+    // Cloud-layer palette + weights. Banded clouds pick from 4 slots
+    // per worley cell: slot 0 = base blend (atm + cloud + haze) at
+    // ~50% picker weight, slots 1-3 = top accent species sharing the
+    // remaining weight. Patchy clouds use slot 0 as a single
+    // condensate color with weights [1,0,0,0].
+    //
+    // The 4 colors are packed into 3 vec4 attributes to stay under
+    // gl_MaxVertexAttribs on tighter GPUs: aCloudPalette0/1/2 carry
+    // (slot.r, slot.g, slot.b, slot3.{r,g,b}) — slot 3's RGB is stitched
+    // together from the .w components in the vertex shader.
+    const cloudPalette0 = new Float32Array(P * 4);
+    const cloudPalette1 = new Float32Array(P * 4);
+    const cloudPalette2 = new Float32Array(P * 4);
+    const cloudWeights  = new Float32Array(P * 4);
     // Surface scalars: [waterFrac, iceFrac, surfaceAge, globalness].
     const surfaceScalars = new Float32Array(P * 4);
     // Atmospheric scalars: [cloudCoverage, cloudStructure, hazeOpacity,
@@ -85,18 +93,22 @@ export class PlanetsLayer {
       weights[i * 3 + 0] = disc.weights[0];
       weights[i * 3 + 1] = disc.weights[1];
       weights[i * 3 + 2] = disc.weights[2];
-      cloudPalette0[i * 3 + 0] = disc.cloudPalette[0];
-      cloudPalette0[i * 3 + 1] = disc.cloudPalette[1];
-      cloudPalette0[i * 3 + 2] = disc.cloudPalette[2];
-      cloudPalette1[i * 3 + 0] = disc.cloudPalette[3];
-      cloudPalette1[i * 3 + 1] = disc.cloudPalette[4];
-      cloudPalette1[i * 3 + 2] = disc.cloudPalette[5];
-      cloudPalette2[i * 3 + 0] = disc.cloudPalette[6];
-      cloudPalette2[i * 3 + 1] = disc.cloudPalette[7];
-      cloudPalette2[i * 3 + 2] = disc.cloudPalette[8];
-      cloudWeights[i * 3 + 0] = disc.cloudWeights[0];
-      cloudWeights[i * 3 + 1] = disc.cloudWeights[1];
-      cloudWeights[i * 3 + 2] = disc.cloudWeights[2];
+      cloudPalette0[i * 4 + 0] = disc.cloudPalette[0];
+      cloudPalette0[i * 4 + 1] = disc.cloudPalette[1];
+      cloudPalette0[i * 4 + 2] = disc.cloudPalette[2];
+      cloudPalette0[i * 4 + 3] = disc.cloudPalette[9];   // slot3.r
+      cloudPalette1[i * 4 + 0] = disc.cloudPalette[3];
+      cloudPalette1[i * 4 + 1] = disc.cloudPalette[4];
+      cloudPalette1[i * 4 + 2] = disc.cloudPalette[5];
+      cloudPalette1[i * 4 + 3] = disc.cloudPalette[10];  // slot3.g
+      cloudPalette2[i * 4 + 0] = disc.cloudPalette[6];
+      cloudPalette2[i * 4 + 1] = disc.cloudPalette[7];
+      cloudPalette2[i * 4 + 2] = disc.cloudPalette[8];
+      cloudPalette2[i * 4 + 3] = disc.cloudPalette[11];  // slot3.b
+      cloudWeights[i * 4 + 0] = disc.cloudWeights[0];
+      cloudWeights[i * 4 + 1] = disc.cloudWeights[1];
+      cloudWeights[i * 4 + 2] = disc.cloudWeights[2];
+      cloudWeights[i * 4 + 3] = disc.cloudWeights[3];
       renderMeta[i * 4 + 0] = discPx;
       renderMeta[i * 4 + 1] = disc.hasSurface ? 1 : 0;
       renderMeta[i * 4 + 2] = disc.seed;
@@ -125,10 +137,10 @@ export class PlanetsLayer {
     this.geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 3));
     this.geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 3));
     this.geometry.setAttribute('aWeights',        new BufferAttribute(weights, 3));
-    this.geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 3));
-    this.geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 3));
-    this.geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 3));
-    this.geometry.setAttribute('aCloudWeights',   new BufferAttribute(cloudWeights, 3));
+    this.geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 4));
+    this.geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 4));
+    this.geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 4));
+    this.geometry.setAttribute('aCloudWeights',   new BufferAttribute(cloudWeights, 4));
     this.geometry.setAttribute('aSurfaceScalars', new BufferAttribute(surfaceScalars, 4));
     this.geometry.setAttribute('aAtmoScalars',    new BufferAttribute(atmoScalars, 4));
     this.geometry.setAttribute('aBiomeColor',     new BufferAttribute(biomeColors, 4));

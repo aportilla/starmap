@@ -71,13 +71,21 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       attribute vec3  aPalette1;
       attribute vec3  aPalette2;
       attribute vec3  aWeights;
-      // Cloud-layer palette + weights. Banded clouds pick per latitude
-      // strip from these three colors; patchy clouds use slot 0 as a
-      // single condensate color (weights collapse to [1, 0, 0]).
-      attribute vec3  aCloudPalette0;
-      attribute vec3  aCloudPalette1;
-      attribute vec3  aCloudPalette2;
-      attribute vec3  aCloudWeights;
+      // Cloud-layer palette + weights. Banded clouds pick per worley
+      // cell from 4 slots: slot 0 = perceptual base blend (atm + cloud
+      // + haze) at ~50% picker weight, slots 1-3 = accent species
+      // sharing the remaining weight. Patchy clouds use slot 0 as a
+      // single condensate color (weights collapse to [1, 0, 0, 0]).
+      //
+      // The 4 colors are packed into 3 vec4 attributes to stay under
+      // gl_MaxVertexAttribs on tighter GPUs. Each slot 0/1/2 attribute
+      // carries (its.r, its.g, its.b, slot3.{r,g,b}) — slot 3 is
+      // reassembled in the vertex shader as
+      // vec3(aCloudPalette0.w, aCloudPalette1.w, aCloudPalette2.w).
+      attribute vec4  aCloudPalette0;
+      attribute vec4  aCloudPalette1;
+      attribute vec4  aCloudPalette2;
+      attribute vec4  aCloudWeights;
       // Surface scalars: x = waterFrac, y = iceFrac, z = surfaceAge,
       // w = globalness.
       attribute vec4  aSurfaceScalars;
@@ -105,7 +113,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying vec3  vCloudPalette0;
       varying vec3  vCloudPalette1;
       varying vec3  vCloudPalette2;
-      varying vec3  vCloudWeights;
+      varying vec3  vCloudPalette3;
+      varying vec4  vCloudWeights;
       varying float vHasSurface;
       varying float vSeed;
       varying float vTilt;
@@ -128,9 +137,10 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vPalette1 = aPalette1;
         vPalette2 = aPalette2;
         vWeights  = aWeights;
-        vCloudPalette0 = aCloudPalette0;
-        vCloudPalette1 = aCloudPalette1;
-        vCloudPalette2 = aCloudPalette2;
+        vCloudPalette0 = aCloudPalette0.xyz;
+        vCloudPalette1 = aCloudPalette1.xyz;
+        vCloudPalette2 = aCloudPalette2.xyz;
+        vCloudPalette3 = vec3(aCloudPalette0.w, aCloudPalette1.w, aCloudPalette2.w);
         vCloudWeights  = aCloudWeights;
         vHasSurface = aRenderMeta.y;
         vSeed       = aRenderMeta.z;
@@ -183,7 +193,8 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying vec3  vCloudPalette0;
       varying vec3  vCloudPalette1;
       varying vec3  vCloudPalette2;
-      varying vec3  vCloudWeights;
+      varying vec3  vCloudPalette3;
+      varying vec4  vCloudWeights;
       varying float vHasSurface;
       varying float vSeed;
       varying float vTilt;
@@ -453,10 +464,9 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // Defensive fallback: weights summing to zero → p0 (palette0 is
       // always plumbed with the dominant signal).
       //
-      // Two callers: surface block passes the resource palette + a
-      // 1.5b region-masked weight; cloud-banded passes the gas-mix
-      // cloud palette + cloud weights. Both routes share this helper
-      // so the picker stays consistent.
+      // Used by the surface block (resource palette + region-masked
+      // weights). The cloud-banded path uses pickFromCloudPalette
+      // (4 slots) instead.
       vec3 pickFromPalette(float h, vec3 p0, vec3 p1, vec3 p2, vec3 weights) {
         float w = weights.x + weights.y + weights.z;
         if (w <= 0.0) return p0;
@@ -464,6 +474,21 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         if (t < weights.x) return p0;
         if (t < weights.x + weights.y) return p1;
         return p2;
+      }
+
+      // 4-slot variant for the cloud-banded path: slot 0 carries the
+      // perceptual base blend (atm + cloud + haze) at fixed
+      // BASE_BLEND_WEIGHT, slots 1-3 carry top accent species sharing
+      // the remaining weight. Picker is otherwise identical to
+      // pickFromPalette — frequency-weighted, not blended.
+      vec3 pickFromCloudPalette(float h, vec3 p0, vec3 p1, vec3 p2, vec3 p3, vec4 weights) {
+        float w = weights.x + weights.y + weights.z + weights.w;
+        if (w <= 0.0) return p0;
+        float t = h * w;
+        if (t < weights.x) return p0;
+        if (t < weights.x + weights.y) return p1;
+        if (t < weights.x + weights.y + weights.z) return p2;
+        return p3;
       }
 
       void main() {
@@ -953,7 +978,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               }
             }
             float h1 = hash11(winnerCell1.y + vSeed * 41.0);
-            vec3 col1 = pickFromPalette(h1, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudWeights);
+            vec3 col1 = pickFromCloudPalette(h1, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudPalette3, vCloudWeights);
             float lj1 = (hash11(winnerCell1.y + vSeed * 67.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
             cloudCol = clamp(col1 + vec3(lj1), 0.0, 1.0);
 
@@ -985,7 +1010,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             float existH = hash21(winnerCell2 + vec2(vSeed * 1201.0, vSeed * 1213.0));
             if (existH < DETAIL_COVERAGE) {
               float h2 = hash11(winnerCell2.y + vSeed * 79.0);
-              vec3 col2 = pickFromPalette(h2, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudWeights);
+              vec3 col2 = pickFromCloudPalette(h2, vCloudPalette0, vCloudPalette1, vCloudPalette2, vCloudPalette3, vCloudWeights);
               float lj2 = (hash11(winnerCell2.y + vSeed * 83.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
               cloudCol = clamp(col2 + vec3(lj2), 0.0, 1.0);
             }
@@ -997,10 +1022,21 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         }
 
         // ── Haze layer ──
-        // Uniform per-fragment lerp toward the aerosol color. Always
-        // runs over both surface and cloud. Titan ≈ 0.85, Venus ≈ 0.7,
-        // Mars dust ≈ 0.15, Earth = 0 (no-op).
-        if (vHazeOpacity > 0.0) col = mix(col, vHazeColor, vHazeOpacity);
+        // Surface bodies: uniform per-fragment lerp toward the aerosol
+        // color. Models a well-mixed aerosol blanket (Titan tholin
+        // ≈ 0.85, Venus sulfate ≈ 0.7, Mars dust ≈ 0.15, Earth = 0).
+        //
+        // No-surface bodies (gas / ice giants) skip the uniform
+        // overlay. Their "haze" species — Jovian NH4SH, hot-Jupiter
+        // silicate — is actually banded chromophore chemistry with
+        // structure, not a uniform aerosol. It already feeds the
+        // cloud-band palette as an accent (so the species shows up in
+        // specific bands) and drives the rim color; running an
+        // additional uniform mix would crush every band toward the
+        // aerosol color and erase the structure.
+        if (vHazeOpacity > 0.0 && vHasSurface > 0.5) {
+          col = mix(col, vHazeColor, vHazeOpacity);
+        }
 
         // Phase 1.3a/b INWARD fade — atmospheric haze visible inside
         // the disc near the limb, simulating column thickening under

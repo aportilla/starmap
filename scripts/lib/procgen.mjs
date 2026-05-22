@@ -880,14 +880,20 @@ function atmFracOf(body, gas) {
 // surface dust regime would lift both, blending toward whichever
 // dominates by strength).
 //
-// Calibration anchors (Sol bodies; values approximate what the prior
-// regime table emitted, recoverable to within ±0.1 opacity):
-//   Titan       T=94K,  P=1.5 bar, CH4 ≈ 5% atm   → CH4 tholin ~0.8
-//   Venus       T=735K, P=92 bar                  → H2SO4 sulfate ~0.65
-//   Mars        T=210K, P=0.006 bar, dry surface  → DUST ~0.2
-//   Earth       T=288K, P=1 bar, wet surface      → none
-//   Hot Jupiter T>1000K, gaseous                   → SILICATE ~0.3
-//   Jupiter/Saturn, Uranus/Neptune, Hycean         → none
+// Calibration anchors (Sol bodies):
+//   Titan       T=94K,  P=1.5 bar, N2+CH4 atm  → THOLIN ~0.8
+//   Jupiter     T=165K, gaseous, NH3 cloud     → NH4SH ~0.7
+//   Saturn      T=134K, gaseous, NH3 cloud     → NH4SH ~0.4
+//   Venus       T=735K, P=92 bar               → H2SO4 sulfate ~0.65
+//   Mars        T=210K, P=0.006 bar, dry       → DUST ~0.2
+//   Earth       T=288K, P=1 bar, wet surface   → none
+//   Hot Jupiter T>1000K, gaseous               → SILICATE ~0.3
+//   Uranus/Neptune (too cold for NH4SH), Hycean → none
+//
+// Procgen owns the chemistry. Each branch outputs an explicit reaction
+// product species — THOLIN (not CH4), NH4SH (not NH3) — so the
+// renderer paints exactly what the data says without inferring
+// chemistry from precursor names.
 function hazeContribution(gas, body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
@@ -895,20 +901,38 @@ function hazeContribution(gas, body) {
   const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
 
   switch (gas) {
-    case 'CH4': {
-      // Tholin photochemistry — CH4 photolysis under cold conditions
-      // produces a brown organic haze (Titan, Triton, Pluto-class). Needs
-      // CH4 in the atmosphere as a precursor and cold temperatures to
-      // sustain the aerosol against UV breakdown. Saturates at modest
-      // CH4 fractions — once CH4 is present at all, the haze is set by
-      // residence time, not by precursor abundance.
+    case 'THOLIN': {
+      // CnHmN photolysis polymers. Forms from N2 + CH4 + UV on cold
+      // terrestrial bodies with a thick-enough atm to retain the
+      // aerosol. Real Titan chemistry: ionospheric UV breaks N2 and
+      // CH4 into radicals that polymerize into orange-brown organic
+      // particles. Needs both precursors — methane alone (gas-giant
+      // upper atms) doesn't tholinize, which is why ice giants stay
+      // clear despite having CH4 in their column.
       if (isGaseous) return 0;
       if (T == null) return 0;
       const tempGate = 1 - smoothstep(80, 130, T);
       if (tempGate === 0) return 0;
       const ch4Frac = atmFracOf(body, 'CH4');
+      const n2Frac  = atmFracOf(body, 'N2');
       const ch4Gate = smoothstep(0.001, 0.01, ch4Frac);
-      return tempGate * ch4Gate;
+      const n2Gate  = smoothstep(0.1, 0.5, n2Frac);
+      return tempGate * ch4Gate * n2Gate;
+    }
+    case 'NH4SH': {
+      // Ammonium hydrosulfide cloud-top chemistry — Jovian belt brown.
+      // NH3 + H2S → NH4SH condensate at ~150-200K cloud-top
+      // temperatures. Gas-giant only; needs NH3 cloud chemistry as a
+      // proxy for the H2S precursor (real H2S isn't tracked, but
+      // gas-giant interiors with NH3 cloud decks also produce H2S at
+      // proportional abundance). Ice giants are too cold for NH4SH
+      // condensation — frozen out at lower altitudes than the photic
+      // depth — so no contribution there.
+      if (!isGaseous) return 0;
+      if (T == null) return 0;
+      if (body.cloudGas !== 'NH3') return 0;
+      const tempGate = smoothstep(80, 130, T) * (1 - smoothstep(190, 230, T));
+      return tempGate * 0.7;
     }
     case 'H2SO4': {
       // Sulfuric acid sulfate haze — thick CO2 atmospheres at high T
@@ -956,7 +980,7 @@ function hazeFor(body) {
   if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
     return { gas: null, opacity: null };
   }
-  const candidates = ['CH4', 'H2SO4', 'SILICATE', 'DUST'];
+  const candidates = ['THOLIN', 'NH4SH', 'H2SO4', 'SILICATE', 'DUST'];
   const contributions = [];
   for (const gas of candidates) {
     const strength = hazeContribution(gas, body);

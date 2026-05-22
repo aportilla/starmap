@@ -30,50 +30,24 @@
 
 import { Color } from 'three';
 import {
-  AtmGas, Body, CHROMOPHORE_COLOR, GAS_COLOR,
+  AtmGas, Body, CONDENSATE_COLOR, GAS_COLOR, GAS_POTENCY,
+  GAS_VISIBILITY_FILTER, NO_SURFACE_WORLD_CLASSES,
   SCATTERING_COLOR, SCATTERING_POTENCY,
   WORLD_CLASS_COLOR, WORLD_CLASS_TINT,
-  WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, dominantResources,
-  topGases,
+  WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, cloudBandPalette,
+  dominantResources,
 } from '../../data/stars';
 import { hash32 } from './geom/prng';
 import { bodyVisualTiltRad } from './geom/ring';
 import { PROCEDURAL_TEXTURE_MIN_PX } from './layout/constants';
 
-// How strongly banded-mode palette entries collapse toward their
-// weighted mean. 0 = full-contrast alternation (e.g. 3 blue bands +
-// 1 white band reads as alternating blue/white strips); 1 = single
-// flat color. 0.85 leans heavily toward a single dominant tone with
-// only subtle per-band hue shifts — the shader's many-band non-uniform
-// strip layout already produces strong perceived variation through
-// band-width jitter and boundary warp, so the palette can stay tight
-// without the disc reading as monochrome.
-const BAND_BLEND_TOWARD_MEAN = 0.85;
 
-// Condensate-phase color per cloud species. Gas-phase color in
-// GAS_COLOR is wrong for condensed clouds — CH4 gas is blue (Uranus/
-// Neptune absorption) but CH4 ICE is off-white frost. This lookup
-// gives the renderer the right "what does this cloud LOOK like as a
-// condensed patch" color. Used only for patchy clouds (single
-// condensate species); banded clouds derive their palette from the
-// full atm gas mix via topGases.
-const CLOUD_COLOR_FOR_GAS: Partial<Record<AtmGas, Color>> = {
-  H2O:      new Color(0xe4ecf0),  // white — water ice/droplets
-  CH4:      new Color(0xeae8de),  // pale frost — methane ice
-  N2:       new Color(0xeceae0),  // pale frost — nitrogen ice (Triton)
-  NH3:      new Color(0xeae6dc),  // off-white — ammonia ice
-  H2SO4:    new Color(0xd8c474),  // yellow-cream — sulfuric acid (Venus)
-  SILICATE: new Color(0x788098),  // refractive grey-blue
-  DUST:     new Color(0xa86040),  // ferric rust — dust suspended as cloud
-};
+// (Cloud condensate colors live in CONDENSATE_COLOR in stars.ts — a
+// shared table used by both cloudBandPalette and the patchy-cloud path here.)
 
-// World classes whose body has no accessible surface — gas/ice giants,
-// gas dwarfs, hycean (deep ocean under thick H2/He), helium giants.
-// hasSurface is plumbed to the shader to short-circuit the surface
-// paint pass on these bodies; the cloud layer is their canvas.
-const NO_SURFACE_WORLD_CLASSES: ReadonlySet<string> = new Set([
-  'gas_giant', 'gas_dwarf', 'ice_giant', 'hycean', 'helium',
-]);
+// (NO_SURFACE_WORLD_CLASSES lives in stars.ts — shared with
+// cloudBandPalette which needs it to apply the temperature-driven
+// base-blend weight on these classes.)
 
 // Pressure-driven outward rim width buckets — the number of integer
 // pixels the atmospheric halo extends INTO SPACE beyond the disc edge.
@@ -144,16 +118,19 @@ export interface DiscPalette {
                               number, number, number,
                               number, number, number];
   readonly weights: readonly [number, number, number];
-  // 3 RGB entries × 3 floats — the CLOUD layer palette. For banded
-  // clouds (cloudStructure ≥ 0.5), this is the gas-mix from topGases
-  // (so Jupiter's bands paint H2/He/NH3 condensate tones). For patchy
-  // clouds (cloudStructure < 0.5), slot 0 carries the single condensate
-  // color (H2O white, CH4 frost, etc.) and weights collapse to
-  // [1, 0, 0]. Zeros throughout when the body has no cloud layer.
+  // 4 RGB entries × 3 floats — the CLOUD layer palette. For banded
+  // clouds (cloudStructure ≥ 0.5), slot 0 carries the perceptual
+  // base blend (atm + cloud + haze) at fixed BASE_BLEND_WEIGHT and
+  // slots 1-3 carry the top accent species sharing the remaining
+  // weight (see cloudBandPalette in stars.ts). For patchy clouds
+  // (cloudStructure < 0.5), slot 0 carries the single condensate
+  // color and weights collapse to [1, 0, 0, 0]. Zeros throughout
+  // when the body has no cloud layer.
   readonly cloudPalette: readonly [number, number, number,
                                    number, number, number,
+                                   number, number, number,
                                    number, number, number];
-  readonly cloudWeights: readonly [number, number, number];
+  readonly cloudWeights: readonly [number, number, number, number];
   // True when the body has a paintable surface (terrestrial bracket
   // classes). False for gas/ice giants, gas dwarfs, hycean, helium —
   // the shader short-circuits the surface block and the cloud layer
@@ -223,16 +200,17 @@ export interface DiscPalette {
 // resource grid via dominantResources — same source the surface
 // texturing uses, so the dust matches the body's apparent surface.
 //
-// Fallback to the fixed CHROMOPHORE_COLOR['DUST'] entry when the body
-// has no resource signal (procgen drift / missing data).
+// Fallback rust color when DUST is the haze species but the body has
+// no resource signal (procgen drift / missing data). Matches the
+// canonical Mars-rust hue.
+const DUST_FALLBACK_COLOR = new Color(0xa86040);
+
 function dustHazeColor(body: Body): Color {
   // Top 3 dominant resources — matches the surface texturing's palette
   // depth. Using all six would dilute the body's dominant mineralogy
   // toward a muddy grey on balanced bodies; top-3 preserves the signal.
   const resources = dominantResources(body, 3);
-  if (resources.length === 0) {
-    return CHROMOPHORE_COLOR.DUST ?? new Color(0xa86040);
-  }
+  if (resources.length === 0) return DUST_FALLBACK_COLOR;
   let r = 0, g = 0, b = 0;
   for (const { color, weight } of resources) {
     r += color.r * weight;
@@ -242,18 +220,24 @@ function dustHazeColor(body: Body): Color {
   return new Color(r, g, b);
 }
 
-// Chromophore color for a haze species — what the visible aerosol
-// layer paints. Most species have a body-independent product color
-// (CH4 tholin brown, H2SO4 sulfate yellow, SILICATE grey). DUST is the
-// exception: surface-lifted mineral dust reflects the body's actual
+// Color of the haze LAYER for a given species. Procgen has already
+// resolved the chemistry (THOLIN for Titan, NH4SH for Jupiter, etc.) —
+// the renderer just looks up the species' visible color. DUST is the
+// one exception: surface-lifted mineral dust reflects the body's actual
 // mineralogy, so we route it through dustHazeColor for a per-body mix.
-function hazeChromophoreColor(gas: AtmGas, body: Body): Color | null {
+function hazeColor(gas: AtmGas, body: Body): Color | null {
   if (gas === 'DUST') return dustHazeColor(body);
-  return CHROMOPHORE_COLOR[gas] ?? GAS_COLOR[gas] ?? null;
+  return GAS_COLOR[gas] ?? null;
 }
 
+// Cloud condensate color — what cloud particles of the given species
+// look like. Most cloud species are condensable gases whose ice/frost
+// form differs visibly from their gas-phase color (CH4 ice frost vs
+// CH4 gas cyan); CONDENSATE_COLOR carries those. Species that ARE
+// already aerosols (H2SO4 droplets, SILICATE) fall back to GAS_COLOR
+// since their "gas" color is their visible appearance.
 function cloudCondensateColor(gas: AtmGas): Color {
-  return CLOUD_COLOR_FOR_GAS[gas] ?? GAS_COLOR[gas] ?? new Color(0xffffff);
+  return CONDENSATE_COLOR[gas] ?? GAS_COLOR[gas] ?? new Color(0xffffff);
 }
 
 // Clear-air rim color for surface bodies with a meaningful atmosphere
@@ -284,18 +268,45 @@ function scatteringRimColor(body: Body): Color | null {
   return new Color(r / totalW, g / totalW, b / totalW);
 }
 
-// Rim color for no-surface bodies (gas giants, ice giants, hycean,
-// helium). Returns the body's visually-dominant gas — same source
-// the cloud-band palette draws from — so the rim agrees with the
-// band color: H2 cream for Jupiter/Saturn (H2 wins by mass × low
-// potency), CH4 cyan-blue for Uranus/Neptune and Hycean (CH4 wins
-// by frac × potency 6), etc. The earlier lightest-gas heuristic
-// broke when a trace high-potency absorber (CH4 on a hydrogen-rich
-// world) dominated the visible signal but not the molecular-weight
-// stratification.
-function noSurfaceRimColor(body: Body): Color | null {
-  const gases = topGases(body);
-  return gases.length > 0 ? gases[0].color : null;
+// Atm-only column color — weighted blend across atm1/2/3 by
+// `frac × GAS_POTENCY`, with no contribution from cloud or haze
+// species.
+//
+// Models the limb's physical regime on no-surface bodies (gas/ice
+// giants, hycean, helium): at the limb the line of sight passes
+// through a long glancing-angle gas column where forward-scattering
+// accumulates. The visible color is the column tint of the gas
+// species (H2/He cream for Jupiter; CH4 cyan-leaning for Uranus) —
+// NOT the cloud-deck chemistry, which is altitude-localized and
+// doesn't appear at the limb.
+//
+// GAS_COLOR entries are already chosen pale enough that the result
+// reads as a natural "lighter at the limb" effect without an extra
+// brighten-toward-white step. The visibility filter is honored so
+// gas-giant CH4 (buried under the NH3 deck) doesn't paint the rim.
+function atmColumnColor(body: Body): Color | null {
+  const filtered: ReadonlySet<AtmGas> | undefined =
+    body.worldClass !== null ? GAS_VISIBILITY_FILTER[body.worldClass] : undefined;
+  const candidates: Array<[AtmGas | null, number | null]> = [
+    [body.atm1 as AtmGas | null, body.atm1Frac],
+    [body.atm2 as AtmGas | null, body.atm2Frac],
+    [body.atm3 as AtmGas | null, body.atm3Frac],
+  ];
+  let r = 0, g = 0, b = 0, totalW = 0;
+  for (const [gas, frac] of candidates) {
+    if (gas === null || frac === null) continue;
+    if (filtered?.has(gas)) continue;
+    const col = GAS_COLOR[gas];
+    if (!col) continue;
+    const w = frac * (GAS_POTENCY[gas] ?? 1);
+    if (w <= 0) continue;
+    r += col.r * w;
+    g += col.g * w;
+    b += col.b * w;
+    totalW += w;
+  }
+  if (totalW <= 0) return null;
+  return new Color(r / totalW, g / totalW, b / totalW);
 }
 
 function rimWidthPxForPressure(pressureBar: number | null, discPx: number): number {
@@ -330,29 +341,6 @@ function applyTint(c: Color, tint: { color: Color; amount: number } | undefined)
   );
 }
 
-// Collapse three palette entries toward their weight-proportional mean
-// by `blend`. Used by the banded cloud palette so 3 high-contrast
-// gases (e.g. blue/white/blue) blend to three close shades of the
-// dominant tone (light blue, slightly lighter, slightly darker) —
-// readable bands without alternating extreme stripes.
-function blendTowardMean(
-  c0: Color, c1: Color, c2: Color,
-  w0: number, w1: number, w2: number,
-  blend: number,
-): [Color, Color, Color] {
-  const total = w0 + w1 + w2;
-  if (total <= 0) return [c0, c1, c2];
-  const mr = (c0.r * w0 + c1.r * w1 + c2.r * w2) / total;
-  const mg = (c0.g * w0 + c1.g * w1 + c2.g * w2) / total;
-  const mb = (c0.b * w0 + c1.b * w1 + c2.b * w2) / total;
-  const lerp = (c: Color) => new Color(
-    c.r + (mr - c.r) * blend,
-    c.g + (mg - c.g) * blend,
-    c.b + (mb - c.b) * blend,
-  );
-  return [lerp(c0), lerp(c1), lerp(c2)];
-}
-
 // Build the per-body palette + scalars for one disc. discPx is the
 // final rendered diameter — sub-PROCEDURAL_TEXTURE_MIN_PX bodies force
 // flat fill (palette weights = [1, 0, 0]) so tiny moons don't render
@@ -385,40 +373,37 @@ export function buildDiscPalette(
     sW2 = res[2]?.weight ?? 0;
   }
 
-  // ── CLOUD PALETTE — gas-mix for banded, single condensate for patchy ──
+  // ── CLOUD PALETTE — base+accent for banded, single condensate for patchy ──
   const cloudGas = body.cloudGas as AtmGas | null;
   const rawCloudCoverage  = body.cloudCoverage ?? 0;
   const rawCloudStructure = body.cloudStructure ?? 0;
   let cC0 = new Color(0, 0, 0);
   let cC1 = new Color(0, 0, 0);
   let cC2 = new Color(0, 0, 0);
-  let cW0 = 0, cW1 = 0, cW2 = 0;
+  let cC3 = new Color(0, 0, 0);
+  let cW0 = 0, cW1 = 0, cW2 = 0, cW3 = 0;
   if (cloudGas !== null && rawCloudCoverage > 0) {
     if (rawCloudStructure >= 0.5) {
-      // Banded — paint from the gas mix. Pulls each gas color toward
-      // the visually-weighted mean so bands share a dominant tone with
-      // small per-band variation rather than full-contrast alternation.
-      const gases = topGases(body);
-      if (gases.length === 0) {
-        // No atm data — degenerate to the cloud condensate color.
-        const c = cloudCondensateColor(cloudGas);
-        cC0 = c; cC1 = c; cC2 = c;
-        cW0 = 1; cW1 = 0; cW2 = 0;
-      } else {
-        const g0 = gases[0].color;
-        const g1 = gases[1]?.color ?? gases[0].color;
-        const g2 = gases[2]?.color ?? gases[0].color;
-        cW0 = gases[0].weight;
-        cW1 = gases[1]?.weight ?? 0;
-        cW2 = gases[2]?.weight ?? 0;
-        [cC0, cC1, cC2] = blendTowardMean(g0, g1, g2, cW0, cW1, cW2, BAND_BLEND_TOWARD_MEAN);
-      }
+      // Banded — 4-slot base+accent palette stochastically picked per
+      // cell. Slot 0 = perceptual blend across atm + cloud + haze at
+      // ~50% picker weight; slots 1-3 = accent species at their
+      // natural saturation sharing the remaining weight. See
+      // cloudBandPalette in stars.ts for the model.
+      const cbp = cloudBandPalette(body);
+      cC0 = cbp.palette[0];
+      cC1 = cbp.palette[1];
+      cC2 = cbp.palette[2];
+      cC3 = cbp.palette[3];
+      cW0 = cbp.weights[0];
+      cW1 = cbp.weights[1];
+      cW2 = cbp.weights[2];
+      cW3 = cbp.weights[3];
     } else {
       // Patchy — single condensate color in slot 0. The shader paints
       // pCloudPalette0 on cells where the per-cell hash < cloudCoverage.
       const c = cloudCondensateColor(cloudGas);
-      cC0 = c; cC1 = c; cC2 = c;
-      cW0 = 1; cW1 = 0; cW2 = 0;
+      cC0 = c; cC1 = c; cC2 = c; cC3 = c;
+      cW0 = 1; cW1 = 0; cW2 = 0; cW3 = 0;
     }
   }
 
@@ -449,34 +434,46 @@ export function buildDiscPalette(
   const cloudStructure = tinyDisc ? 0 : rawCloudStructure;
   const hazeOpacity    = tinyDisc ? 0 : (body.hazeOpacity ?? 0);
 
-  // Rim color + width. Four regimes pick one color for both the
-  // outward halo and the inward fade:
-  //   1. Haze layer present → haze species color (per-body for DUST,
-  //      species chromophore for CH4 / H2SO4 / SILICATE).
-  //   2. No surface (gas/ice giant) → top-of-column gas color.
-  //   3. Surface with thick clear air → scattering blend across atm
-  //      gases (pale cyan-blue for N2/O2, deeper cyan for CH4-rich,
-  //      yellow for SO2-tinted, etc.).
+  // Rim + inward-fade color, picked by physical regime. Three
+  // regimes; the no-surface branch fires FIRST regardless of
+  // hazeGas because cloud-deck chromophores are altitude-localized
+  // and don't appear at the glancing-angle limb:
+  //
+  //   1. No-surface body (gas/ice giant, hycean, helium) →
+  //      atmColumnColor. Limb sees the H2/He gas column, paled by
+  //      forward scattering. Chromophore haze species (NH4SH on
+  //      Jupiter, etc.) deliberately excluded.
+  //   2. Surface body with haze blanket (Titan tholin, Venus
+  //      sulfate, Mars dust) → hazeColor. The aerosol genuinely is
+  //      a well-mixed overcoat the limb looks through.
+  //   3. Surface body with thick clear air (Earth) →
+  //      scatteringRimColor. Rayleigh blend across atm gases.
   //   4. Otherwise → no rim.
+  //
+  // The same `rimColorRgb` feeds both the outward halo and the
+  // inward column-thickening fade. The shader's uniform haze
+  // overlay reuses this color too on surface bodies; no-surface
+  // bodies skip the overlay entirely (the chromophore would crush
+  // the band layer).
   let rimColorRgb: readonly [number, number, number] = [0, 0, 0];
   let rimWidthPx = 0;
 
   const hazeGas = body.hazeGas as AtmGas | null;
-  if (!tinyDisc && hazeGas !== null && hazeOpacity > 0) {
-    const c = hazeChromophoreColor(hazeGas, body);
+  if (!tinyDisc && !hasSurface) {
+    const c = atmColumnColor(body);
+    if (c !== null) {
+      rimColorRgb = [c.r, c.g, c.b];
+      const maxByRadius = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
+      rimWidthPx = Math.min(NO_SURFACE_RIM_WIDTH_PX, maxByRadius);
+    }
+  } else if (!tinyDisc && hazeGas !== null && hazeOpacity > 0) {
+    const c = hazeColor(hazeGas, body);
     if (c !== null) {
       rimColorRgb = [c.r, c.g, c.b];
       rimWidthPx = body.surfacePressureBar !== null
         ? rimWidthPxForPressure(body.surfacePressureBar, discPx)
         : Math.min(NO_SURFACE_RIM_WIDTH_PX,
                    Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION)));
-    }
-  } else if (!tinyDisc && !hasSurface) {
-    const c = noSurfaceRimColor(body);
-    if (c !== null) {
-      rimColorRgb = [c.r, c.g, c.b];
-      const maxByRadius = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
-      rimWidthPx = Math.min(NO_SURFACE_RIM_WIDTH_PX, maxByRadius);
     }
   } else if (!tinyDisc && body.surfacePressureBar !== null
       && body.surfacePressureBar >= RIM_MIN_PRESSURE_BAR) {
@@ -485,17 +482,6 @@ export function buildDiscPalette(
       rimColorRgb = [c.r, c.g, c.b];
       rimWidthPx = 1;
     }
-  }
-
-  // The haze LAYER (uniform per-fragment lerp) needs its own color
-  // when present, even if a different rim regime fires (rare — only
-  // happens if hazeGas is null but the shader still wants a haze color
-  // to use for the layer; in our model hazeOpacity > 0 ↔ hazeGas
-  // != null, so this stays consistent).
-  let hazeLayerColorRgb: readonly [number, number, number] = rimColorRgb;
-  if (hazeGas !== null) {
-    const c = hazeChromophoreColor(hazeGas, body);
-    if (c !== null) hazeLayerColorRgb = [c.r, c.g, c.b];
   }
 
   // Per-class hue tint applies to surface palette entries; cloud
@@ -508,15 +494,17 @@ export function buildDiscPalette(
   const ct0 = cC0;
   const ct1 = cC1;
   const ct2 = cC2;
+  const ct3 = cC3;
 
-  // Pick the actual layer color — for the haze tint we want the haze
-  // species color (set above); for the rim we want the regime color.
-  // The shader receives ONE color attribute that does both jobs; when
-  // both fire (e.g. Titan: tholin layer + tholin rim) they agree by
-  // construction.
-  const sharedColor = hazeGas !== null && hazeOpacity > 0
-    ? hazeLayerColorRgb
-    : rimColorRgb;
+  // The shader receives ONE color attribute (`aHazeColor.xyz`) that
+  // serves three uses: the uniform haze overlay (surface bodies
+  // only, gated in the shader), the outward halo, and the inward
+  // limb fade. All three should agree per body — using the
+  // regime-picked `rimColorRgb` satisfies that. On Titan the regime
+  // resolves to tholin orange so the overlay + halo + fade all
+  // share one color by construction; on Jupiter the regime resolves
+  // to the H2/He column tint and the shader skips the overlay.
+  const sharedColor = rimColorRgb;
 
   return {
     palette: [
@@ -529,8 +517,9 @@ export function buildDiscPalette(
       ct0.r, ct0.g, ct0.b,
       ct1.r, ct1.g, ct1.b,
       ct2.r, ct2.g, ct2.b,
+      ct3.r, ct3.g, ct3.b,
     ] as const,
-    cloudWeights: [cW0, cW1, cW2] as const,
+    cloudWeights: [cW0, cW1, cW2, cW3] as const,
     hasSurface,
     seed,
     tilt: bodyVisualTiltRad(body),
