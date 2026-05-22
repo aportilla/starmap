@@ -609,6 +609,63 @@ export const GAS_MOLECULAR_WEIGHT: Record<AtmGas, number> = {
   DUST:     100,
 };
 
+// Per-gas clear-air scattering color — the visible tint of an
+// atmosphere viewed edge-on through a long column with no haze layer
+// to obscure it. Used by the disc rim's clear-air branch in
+// disc-palette.ts (formerly a fixed THEME_RAYLEIGH_COLOR token).
+//
+// Rayleigh-blue is the canonical case (N2/O2/Ar bulk atmospheres),
+// but CH4-absorbing columns tint cyan-blue (the Uranus/Neptune signal,
+// also relevant for any deep-atm window through a methane-rich
+// terrestrial), CO2-thick columns tint warmer, and SO2-tinted air
+// goes yellow-orange.
+//
+// Aerosol-only species (H2SO4, SILICATE, DUST) never appear in the
+// clear-air gas list — their entries are placeholders.
+export const SCATTERING_COLOR: Record<AtmGas, Color> = {
+  N2:  new Color(0x8cb4f0),  // pale sky cyan-blue — Rayleigh anchor (Earth)
+  O2:  new Color(0x70a0e8),  // cool sky blue
+  CO2: new Color(0x90a8c8),  // slightly warmer cyan
+  CH4: new Color(0x6090d8),  // cyan-blue — selective red absorber
+  H2O: new Color(0xc0d0e0),  // pale cool — water vapor scatters weakly
+  NH3: new Color(0xd8c890),  // pale cream
+  SO2: new Color(0xc8b478),  // yellow — sulfur-tinted air
+  Ar:  new Color(0xa8b0b8),  // neutral grey
+  CO:  new Color(0x9c8c7c),  // brown-grey
+  H2:  new Color(0xe8d8b8),  // pale cream — weak scattering
+  He:  new Color(0xece0c4),  // pale cream
+  // Aerosol-only species don't enter the clear-air scattering blend.
+  H2SO4:    new Color(0xc0c0c0),
+  SILICATE: new Color(0xa0a0a0),
+  DUST:     new Color(0xa86040),
+};
+
+// Per-gas weight in the clear-air scattering blend. Different from
+// GAS_POTENCY (which captures cloud-band visibility): scattering is
+// driven by Rayleigh efficiency + selective absorption, not condensate
+// chemistry. Bulk gases (N2/O2/CO2) dominate via fraction × Rayleigh
+// strength; selective absorbers (CH4, SO2) get amplified weights so
+// they color the column even at low fractions; H2/He/Ar are weak.
+//
+// Aerosol species have potency 0 — they never appear in the clear-air
+// blend (haze layer takes over before they could).
+export const SCATTERING_POTENCY: Record<AtmGas, number> = {
+  N2:  1.0,  // Rayleigh anchor
+  O2:  1.2,  // slightly stronger Rayleigh than N2
+  CO2: 0.8,  // weaker Rayleigh, warmer tint
+  Ar:  0.3,  // monatomic, weak scatterer
+  CH4: 4.0,  // strong red absorber — cyan signal dominates at low frac
+  SO2: 2.0,  // yellow-orange tint
+  H2O: 0.5,  // mostly clouds, weak gas-phase scattering
+  NH3: 0.5,
+  CO:  0.5,
+  H2:  0.3,  // nearly transparent
+  He:  0.3,
+  H2SO4:    0,
+  SILICATE: 0,
+  DUST:     0,
+};
+
 export const GAS_POTENCY: Record<AtmGas, number> = {
   // Transparent / weakly-scattering — present in the atmosphere but
   // contribute little to the apparent color even at high fractions.

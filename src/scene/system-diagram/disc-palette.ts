@@ -31,6 +31,7 @@
 import { Color } from 'three';
 import {
   AtmGas, Body, CHROMOPHORE_COLOR, GAS_COLOR,
+  SCATTERING_COLOR, SCATTERING_POTENCY,
   WORLD_CLASS_COLOR, WORLD_CLASS_TINT,
   WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, dominantResources,
   topGases,
@@ -100,15 +101,12 @@ const RIM_MAX_RADIUS_FRACTION = 0.15;
 // Titan.
 const NO_SURFACE_RIM_WIDTH_PX = 2;
 
-// Pressure threshold for the Rayleigh rim to activate on surface
-// bodies with no haze layer. Earth (1.013 bar) qualifies; Mars (0.006
-// bar) doesn't; Mercury/Moon (0) don't.
-const RAYLEIGH_PRESSURE_THRESHOLD = 0.1;
-
-// Fixed sky-cyan rim color. Not gas-derived — Rayleigh on N2/O2/CO2
-// all reads blue at our pixel resolution and the symbol "blue limb =
-// breathable-ish air" is worth more than gas-specific hue matching.
-const THEME_RAYLEIGH_COLOR: readonly [number, number, number] = [0.55, 0.75, 0.95];
+// Minimum atmospheric pressure for any rim to render at all. Below
+// this the column has too little gas to produce a visible scattering
+// signal. Above it, the clear-air rim color comes from a per-gas
+// scattering blend (no fixed sky-cyan token) so the rim reflects the
+// actual atmospheric composition.
+const RIM_MIN_PRESSURE_BAR = 0.1;
 
 // Phase 1.6 ice-geometry temperature thresholds. globalness lerps from
 // 0 (cap-latitude pattern) at ICE_TEMP_CAP_K down to 1 (global pattern)
@@ -217,12 +215,73 @@ export interface DiscPalette {
   readonly globalness: number;
 }
 
-function hazeChromophoreColor(gas: AtmGas): Color | null {
+// Per-body dust haze color. Lifted surface dust reflects the body's
+// surface mineralogy: Mars's ferric-oxide rust is one possibility, but
+// alien Mars-class bodies with different resource mixes lift different-
+// colored dust (iron-grey on metal-dominant, tan on silicate-dominant,
+// rose on rare-earth-rich, etc.). Weighted blend across the body's
+// resource grid via dominantResources — same source the surface
+// texturing uses, so the dust matches the body's apparent surface.
+//
+// Fallback to the fixed CHROMOPHORE_COLOR['DUST'] entry when the body
+// has no resource signal (procgen drift / missing data).
+function dustHazeColor(body: Body): Color {
+  // Top 3 dominant resources — matches the surface texturing's palette
+  // depth. Using all six would dilute the body's dominant mineralogy
+  // toward a muddy grey on balanced bodies; top-3 preserves the signal.
+  const resources = dominantResources(body, 3);
+  if (resources.length === 0) {
+    return CHROMOPHORE_COLOR.DUST ?? new Color(0xa86040);
+  }
+  let r = 0, g = 0, b = 0;
+  for (const { color, weight } of resources) {
+    r += color.r * weight;
+    g += color.g * weight;
+    b += color.b * weight;
+  }
+  return new Color(r, g, b);
+}
+
+// Chromophore color for a haze species — what the visible aerosol
+// layer paints. Most species have a body-independent product color
+// (CH4 tholin brown, H2SO4 sulfate yellow, SILICATE grey). DUST is the
+// exception: surface-lifted mineral dust reflects the body's actual
+// mineralogy, so we route it through dustHazeColor for a per-body mix.
+function hazeChromophoreColor(gas: AtmGas, body: Body): Color | null {
+  if (gas === 'DUST') return dustHazeColor(body);
   return CHROMOPHORE_COLOR[gas] ?? GAS_COLOR[gas] ?? null;
 }
 
 function cloudCondensateColor(gas: AtmGas): Color {
   return CLOUD_COLOR_FOR_GAS[gas] ?? GAS_COLOR[gas] ?? new Color(0xffffff);
+}
+
+// Clear-air rim color for surface bodies with a meaningful atmosphere
+// but no haze layer (Earth-class). Weighted blend across atm1/2/3 by
+// frac × SCATTERING_POTENCY: bulk N2/O2 produces sky cyan-blue
+// (Rayleigh anchor), CH4-rich columns tint deeper cyan, SO2 tints
+// yellow, etc. Returns null when the body has no atmosphere data or
+// every contributing gas has zero potency (aerosol-only species).
+function scatteringRimColor(body: Body): Color | null {
+  const candidates: Array<[AtmGas | null, number | null]> = [
+    [body.atm1 as AtmGas | null, body.atm1Frac],
+    [body.atm2 as AtmGas | null, body.atm2Frac],
+    [body.atm3 as AtmGas | null, body.atm3Frac],
+  ];
+  let r = 0, g = 0, b = 0, totalW = 0;
+  for (const [gas, frac] of candidates) {
+    if (gas === null || frac === null) continue;
+    const potency = SCATTERING_POTENCY[gas] ?? 0;
+    const col = SCATTERING_COLOR[gas];
+    if (potency <= 0 || !col) continue;
+    const w = frac * potency;
+    r += col.r * w;
+    g += col.g * w;
+    b += col.b * w;
+    totalW += w;
+  }
+  if (totalW <= 0) return null;
+  return new Color(r / totalW, g / totalW, b / totalW);
 }
 
 // Rim color for no-surface bodies (gas giants, ice giants, hycean,
@@ -400,18 +459,21 @@ export function buildDiscPalette(
   const cloudStructure = tinyDisc ? 0 : rawCloudStructure;
   const hazeOpacity    = tinyDisc ? 0 : (body.hazeOpacity ?? 0);
 
-  // Rim color + width. Three regimes pick one color for both the
+  // Rim color + width. Four regimes pick one color for both the
   // outward halo and the inward fade:
-  //   1. Haze layer present → haze species color.
+  //   1. Haze layer present → haze species color (per-body for DUST,
+  //      species chromophore for CH4 / H2SO4 / SILICATE).
   //   2. No surface (gas/ice giant) → top-of-column gas color.
-  //   3. Surface with Rayleigh-thick clear air → sky blue.
+  //   3. Surface with thick clear air → scattering blend across atm
+  //      gases (pale cyan-blue for N2/O2, deeper cyan for CH4-rich,
+  //      yellow for SO2-tinted, etc.).
   //   4. Otherwise → no rim.
   let rimColorRgb: readonly [number, number, number] = [0, 0, 0];
   let rimWidthPx = 0;
 
   const hazeGas = body.hazeGas as AtmGas | null;
   if (!tinyDisc && hazeGas !== null && hazeOpacity > 0) {
-    const c = hazeChromophoreColor(hazeGas);
+    const c = hazeChromophoreColor(hazeGas, body);
     if (c !== null) {
       rimColorRgb = [c.r, c.g, c.b];
       rimWidthPx = body.surfacePressureBar !== null
@@ -427,9 +489,12 @@ export function buildDiscPalette(
       rimWidthPx = Math.min(NO_SURFACE_RIM_WIDTH_PX, maxByRadius);
     }
   } else if (!tinyDisc && body.surfacePressureBar !== null
-      && body.surfacePressureBar >= RAYLEIGH_PRESSURE_THRESHOLD) {
-    rimColorRgb = THEME_RAYLEIGH_COLOR;
-    rimWidthPx = 1;
+      && body.surfacePressureBar >= RIM_MIN_PRESSURE_BAR) {
+    const c = scatteringRimColor(body);
+    if (c !== null) {
+      rimColorRgb = [c.r, c.g, c.b];
+      rimWidthPx = 1;
+    }
   }
 
   // The haze LAYER (uniform per-fragment lerp) needs its own color
@@ -439,7 +504,7 @@ export function buildDiscPalette(
   // != null, so this stays consistent).
   let hazeLayerColorRgb: readonly [number, number, number] = rimColorRgb;
   if (hazeGas !== null) {
-    const c = hazeChromophoreColor(hazeGas);
+    const c = hazeChromophoreColor(hazeGas, body);
     if (c !== null) hazeLayerColorRgb = [c.r, c.g, c.b];
   }
 
