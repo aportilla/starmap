@@ -1091,7 +1091,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             float stackCount = numBands - bandIdx;
             if (stackCount > 0.0) {
               float fadeA = 1.0 - pow(1.0 - INNER_BASE_ALPHA, stackCount);
-              col = mix(col, vLimbColor, fadeA);
+              col = mix(col, vHazeColor, fadeA);
             }
           }
         }
