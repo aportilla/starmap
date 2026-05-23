@@ -245,15 +245,28 @@ export interface Body {
   readonly cloudGas: string | null;
   readonly cloudCoverage: number | null;
   readonly cloudStructure: number | null;
-  // Haze layer — photochemical or lifted aerosol sitting above the cloud
-  // deck (or above the surface when no cloud deck exists). Always uniform
-  // at planetary scale (no condensation latent heat to drive structure).
-  // hazeGas names the aerosol species (CH4 → tholin, SO2 → sulfate,
-  // SILICATE, DUST). hazeOpacity is the uniform alpha [0..1] of the
-  // overlay — Titan ≈ 0.85, Venus ≈ 0.7, Mars dust ≈ 0.15. Null when
-  // no haze layer is present (Earth, gas giants, airless bodies).
+  // Haze layer — photochemical aerosol sitting above the cloud deck
+  // (or above the surface when no cloud deck exists). One slot — only the
+  // dominant photochemistry product appears. hazeGas names the species
+  // (CH4 → tholin, SO2 → sulfate, NH3+H2S → NH4SH, SILICATE). hazeOpacity
+  // is the uniform alpha [0..1] — Titan ≈ 0.85, Venus ≈ 0.7. Null when no
+  // photochemical haze is present (Earth, ice giants, airless bodies).
+  // Lifted mineral dust is tracked separately via `dustiness` — it's
+  // not a photochemistry product so it doesn't compete for this slot.
   readonly hazeGas: string | null;
   readonly hazeOpacity: number | null;
+  // Lifted mineral dust loading [0..1]. Always-on aerosol channel for
+  // terrestrial bodies where surface dust can be entrained into the
+  // atmosphere — dry surface (water suppresses), thin atmosphere (thick
+  // air is too dense for suspension), moderate temperature. Mars ≈ 0.15.
+  // The visible color is drawn from the body's resource mineralogy (iron-
+  // grey on metal-dominant, tan on silicate-dominant, rust on Mars-class),
+  // not a fixed pigment — dust IS surface material in suspension.
+  // Distinct from `hazeGas` because the four photochemistry-product
+  // species share one slot (mutually exclusive regimes), but dust can
+  // coexist with any of them — a hot dusty terrestrial could carry both
+  // sulfate haze chemistry and lifted dust.
+  readonly dustiness: number | null;
   // Resources — 0..10 indices, calibrated against Earth (5/6/7/5/4/0).
   readonly resMetals: number | null;
   readonly resSilicates: number | null;

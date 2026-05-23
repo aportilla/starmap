@@ -48,10 +48,22 @@ export class PlanetsLayer {
     const renderMeta = new Float32Array(P * 4);
     // Surface resource palette + weights — three RGB entries the surface
     // block picks from per worley cell.
-    const palette0  = new Float32Array(P * 3);
-    const palette1  = new Float32Array(P * 3);
-    const palette2  = new Float32Array(P * 3);
-    const weights   = new Float32Array(P * 3);
+    // Surface palette slots 0/1/2 (xyz) widened to vec4 to piggyback
+    // the merged rim color: palette0.w = rimColor.r, palette1.w = .g,
+    // palette2.w = .b. Stays under gl_MaxVertexAttribs without adding
+    // a new attribute slot. The vertex shader unpacks .w → vRimColor
+    // so the rim/halo/inward-fade can paint a different blend than the
+    // species-pure interior haze overlay (which still uses aHazeColor).
+    const palette0  = new Float32Array(P * 4);
+    const palette1  = new Float32Array(P * 4);
+    const palette2  = new Float32Array(P * 4);
+    // Surface palette weights (xyz, sum-to-1) + dustiness (w). The shader
+    // derives the dust-overlay color from the same xyz-weighted blend of
+    // palette0/1/2 that the surface texturing uses (`dustColorFor` and
+    // the surface pass share `dominantResources` as their input), so we
+    // don't need a separate dust-color attribute — just the dustiness
+    // scalar. Packing it here keeps total attribute count under the cap.
+    const weights   = new Float32Array(P * 4);
     // Cloud-layer palette + weights. Banded clouds pick from 4 slots
     // per worley cell: slot 0 = base blend (atm + cloud + haze) at
     // ~50% picker weight, slots 1-3 = top accent species sharing the
@@ -81,18 +93,22 @@ export class PlanetsLayer {
       const b = BODIES[bIdx];
       const discPx = this.planetDiscPx[i];
       const disc = buildDiscPalette(b, discPx);
-      palette0[i * 3 + 0] = disc.palette[0];
-      palette0[i * 3 + 1] = disc.palette[1];
-      palette0[i * 3 + 2] = disc.palette[2];
-      palette1[i * 3 + 0] = disc.palette[3];
-      palette1[i * 3 + 1] = disc.palette[4];
-      palette1[i * 3 + 2] = disc.palette[5];
-      palette2[i * 3 + 0] = disc.palette[6];
-      palette2[i * 3 + 1] = disc.palette[7];
-      palette2[i * 3 + 2] = disc.palette[8];
-      weights[i * 3 + 0] = disc.weights[0];
-      weights[i * 3 + 1] = disc.weights[1];
-      weights[i * 3 + 2] = disc.weights[2];
+      palette0[i * 4 + 0] = disc.palette[0];
+      palette0[i * 4 + 1] = disc.palette[1];
+      palette0[i * 4 + 2] = disc.palette[2];
+      palette0[i * 4 + 3] = disc.rimColor[0];
+      palette1[i * 4 + 0] = disc.palette[3];
+      palette1[i * 4 + 1] = disc.palette[4];
+      palette1[i * 4 + 2] = disc.palette[5];
+      palette1[i * 4 + 3] = disc.rimColor[1];
+      palette2[i * 4 + 0] = disc.palette[6];
+      palette2[i * 4 + 1] = disc.palette[7];
+      palette2[i * 4 + 2] = disc.palette[8];
+      palette2[i * 4 + 3] = disc.rimColor[2];
+      weights[i * 4 + 0] = disc.weights[0];
+      weights[i * 4 + 1] = disc.weights[1];
+      weights[i * 4 + 2] = disc.weights[2];
+      weights[i * 4 + 3] = disc.dustiness;
       cloudPalette0[i * 4 + 0] = disc.cloudPalette[0];
       cloudPalette0[i * 4 + 1] = disc.cloudPalette[1];
       cloudPalette0[i * 4 + 2] = disc.cloudPalette[2];
@@ -133,10 +149,10 @@ export class PlanetsLayer {
     this.geometry = new BufferGeometry();
     this.geometry.setAttribute('position',        new BufferAttribute(positions, 3));
     this.geometry.setAttribute('aRenderMeta',     new BufferAttribute(renderMeta, 4));
-    this.geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 3));
-    this.geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 3));
-    this.geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 3));
-    this.geometry.setAttribute('aWeights',        new BufferAttribute(weights, 3));
+    this.geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 4));
+    this.geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 4));
+    this.geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 4));
+    this.geometry.setAttribute('aWeights',        new BufferAttribute(weights, 4));
     this.geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 4));
     this.geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 4));
     this.geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 4));

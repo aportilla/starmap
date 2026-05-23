@@ -237,10 +237,15 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   // See planets.ts for the rationale.
   const renderMeta = new Float32Array(N * 4);
   // Procedural-texture inputs — same shape as PlanetsLayer.
-  const palette0  = new Float32Array(N * 3);
-  const palette1  = new Float32Array(N * 3);
-  const palette2  = new Float32Array(N * 3);
-  const weights   = new Float32Array(N * 3);
+  // Palette slots widened to vec4 to piggyback merged rim color in .w.
+  // See PlanetsLayer.
+  const palette0  = new Float32Array(N * 4);
+  const palette1  = new Float32Array(N * 4);
+  const palette2  = new Float32Array(N * 4);
+  // Weights (xyz) + dustiness (w). See PlanetsLayer for the rationale —
+  // shader derives dust color from the palette × xyz blend so dustiness
+  // is the only per-body dust value we need to send.
+  const weights   = new Float32Array(N * 4);
   // Cloud-layer palette + weights — 4 slots (base blend + 3 accents).
   // Packed into 3 vec4 attributes to stay under gl_MaxVertexAttribs:
   // slot 3 RGB rides in the .w channels of slots 0/1/2 and gets
@@ -258,18 +263,22 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   slots.forEach((slot, i) => {
     const b = BODIES[slot.bodyIdx];
     const disc = buildDiscPalette(b, slot.discPx);
-    palette0[i * 3 + 0] = disc.palette[0];
-    palette0[i * 3 + 1] = disc.palette[1];
-    palette0[i * 3 + 2] = disc.palette[2];
-    palette1[i * 3 + 0] = disc.palette[3];
-    palette1[i * 3 + 1] = disc.palette[4];
-    palette1[i * 3 + 2] = disc.palette[5];
-    palette2[i * 3 + 0] = disc.palette[6];
-    palette2[i * 3 + 1] = disc.palette[7];
-    palette2[i * 3 + 2] = disc.palette[8];
-    weights[i * 3 + 0] = disc.weights[0];
-    weights[i * 3 + 1] = disc.weights[1];
-    weights[i * 3 + 2] = disc.weights[2];
+    palette0[i * 4 + 0] = disc.palette[0];
+    palette0[i * 4 + 1] = disc.palette[1];
+    palette0[i * 4 + 2] = disc.palette[2];
+    palette0[i * 4 + 3] = disc.rimColor[0];
+    palette1[i * 4 + 0] = disc.palette[3];
+    palette1[i * 4 + 1] = disc.palette[4];
+    palette1[i * 4 + 2] = disc.palette[5];
+    palette1[i * 4 + 3] = disc.rimColor[1];
+    palette2[i * 4 + 0] = disc.palette[6];
+    palette2[i * 4 + 1] = disc.palette[7];
+    palette2[i * 4 + 2] = disc.palette[8];
+    palette2[i * 4 + 3] = disc.rimColor[2];
+    weights[i * 4 + 0] = disc.weights[0];
+    weights[i * 4 + 1] = disc.weights[1];
+    weights[i * 4 + 2] = disc.weights[2];
+    weights[i * 4 + 3] = disc.dustiness;
     cloudPalette0[i * 4 + 0] = disc.cloudPalette[0];
     cloudPalette0[i * 4 + 1] = disc.cloudPalette[1];
     cloudPalette0[i * 4 + 2] = disc.cloudPalette[2];
@@ -310,10 +319,10 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position',        new BufferAttribute(positions, 3));
   geometry.setAttribute('aRenderMeta',     new BufferAttribute(renderMeta, 4));
-  geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 3));
-  geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 3));
-  geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 3));
-  geometry.setAttribute('aWeights',        new BufferAttribute(weights, 3));
+  geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 4));
+  geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 4));
+  geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 4));
+  geometry.setAttribute('aWeights',        new BufferAttribute(weights, 4));
   geometry.setAttribute('aCloudPalette0',  new BufferAttribute(cloudPalette0, 4));
   geometry.setAttribute('aCloudPalette1',  new BufferAttribute(cloudPalette1, 4));
   geometry.setAttribute('aCloudPalette2',  new BufferAttribute(cloudPalette2, 4));

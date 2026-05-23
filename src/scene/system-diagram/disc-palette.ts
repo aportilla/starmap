@@ -201,14 +201,31 @@ export interface DiscPalette {
   // (surface + cloud). 0 = no haze (Earth, Jupiter, airless). Titan ≈
   // 0.85. Venus ≈ 0.7. Mars dust ≈ 0.15.
   readonly hazeOpacity: number;
-  // Color used by both the haze layer (uniform tint) and the disc
-  // rim (outward halo + inward fade). Chosen by physical regime: haze
-  // species color if a haze layer is present, else Rayleigh sky blue
-  // for thick-clear-air surface bodies, else top-of-column gas color
-  // for no-surface bodies (lightest gas for gas giants, dominant gas
-  // for ice giants).
+  // Photochemistry haze species color (THOLIN orange, NH4SH brown, H2SO4
+  // sulfate, SILICATE grey). Painted as the uniform interior overlay
+  // `mix(col, hazeColor, hazeOpacity)` on surface bodies — the well-mixed
+  // aerosol blanket Titan / Venus carry. Kept distinct from the rim color
+  // (below) so the interior reads as pure species pigment while the rim
+  // blends every visible contributor. Zero when no photochemistry haze
+  // fires on this body.
   readonly hazeColor: readonly [number, number, number];
+  // Merged rim color — weighted-average blend across every visible
+  // atmospheric contributor (cloud slot 0, photochemistry haze, clear-air
+  // scattering, lifted dust). Used by the outward halo and the inward
+  // limb fade. Dominated by whatever signal has the highest weight
+  // (tholin on Titan, chromophore-filtered H2/He column on Jupiter, cyan
+  // Rayleigh on Earth, mineralogy-rust on Mars).
+  readonly rimColor: readonly [number, number, number];
   readonly rimWidthPx: number;
+  // Lifted-dust interior overlay scalar. Drives a uniform `mix(col,
+  // dustColor, dustiness)` painted across the disc face on dusty
+  // terrestrials, independent of (and in sequence with) the photochemistry
+  // haze overlay. The dust color itself isn't shipped — the shader derives
+  // it as the same weighted blend of the surface palette × weights that
+  // `dustColorFor` would compute (both share `dominantResources(body, 3)`
+  // as their input). Zero on no-surface bodies, tiny discs, and bodies
+  // that don't pass the dust gates.
+  readonly dustiness: number;
   // Phase 1.4 surface age [0..1]. 1 = perpetually refreshed (Io's lava,
   // Enceladus's plumes); 0 = ancient unmodified (Mercury, Luna,
   // Callisto). Drives crater density and the ice-on-top-vs-buried mix.
@@ -221,23 +238,20 @@ export interface DiscPalette {
   readonly globalness: number;
 }
 
-// Per-body dust haze color. Lifted surface dust reflects the body's
-// surface mineralogy: Mars's ferric-oxide rust is one possibility, but
-// alien Mars-class bodies with different resource mixes lift different-
-// colored dust (iron-grey on metal-dominant, tan on silicate-dominant,
-// rose on rare-earth-rich, etc.). Weighted blend across the body's
-// resource grid via dominantResources — same source the surface
-// texturing uses, so the dust matches the body's apparent surface.
+// Per-body dust color. Lifted surface dust reflects the body's surface
+// mineralogy: Mars's ferric-oxide rust is one possibility, but alien
+// Mars-class bodies with different resource mixes lift different-colored
+// dust (iron-grey on metal-dominant, tan on silicate-dominant, rose on
+// rare-earth-rich). Weighted blend across the body's top-3 resource
+// colors — same source the surface texturing uses, so dust matches the
+// body's apparent surface.
 //
-// Fallback rust color when DUST is the haze species but the body has
-// no resource signal (procgen drift / missing data). Matches the
-// canonical Mars-rust hue.
+// Fallback rust color when dust is present but the body has no resource
+// signal (procgen drift / missing data). Matches the canonical Mars-rust
+// hue so a data-thin body still reads as "dusty world."
 const DUST_FALLBACK_COLOR = new Color(0xa86040);
 
-function dustHazeColor(body: Body): Color {
-  // Top 3 dominant resources — matches the surface texturing's palette
-  // depth. Using all six would dilute the body's dominant mineralogy
-  // toward a muddy grey on balanced bodies; top-3 preserves the signal.
+function dustColorFor(body: Body): Color {
   const resources = dominantResources(body, 3);
   if (resources.length === 0) return DUST_FALLBACK_COLOR;
   let r = 0, g = 0, b = 0;
@@ -249,13 +263,13 @@ function dustHazeColor(body: Body): Color {
   return new Color(r, g, b);
 }
 
-// Color of the haze LAYER for a given species. Procgen has already
-// resolved the chemistry (THOLIN for Titan, NH4SH for Jupiter, etc.) —
-// the renderer just looks up the species' visible color. DUST is the
-// one exception: surface-lifted mineral dust reflects the body's actual
-// mineralogy, so we route it through dustHazeColor for a per-body mix.
-function hazeColor(gas: AtmGas, body: Body): Color | null {
-  if (gas === 'DUST') return dustHazeColor(body);
+// Color of the photochemistry-haze layer for a given species. Procgen
+// has already resolved the chemistry (THOLIN for Titan, NH4SH for
+// Jupiter, etc.) — the renderer just looks up the species' visible
+// color. Mineral dust is NOT in this list — it's tracked as its own
+// `dustiness` channel because it's lifted surface material, not an
+// in-atmosphere chemistry product.
+function hazeColor(gas: AtmGas): Color | null {
   return GAS_COLOR[gas] ?? null;
 }
 
@@ -492,52 +506,89 @@ export function buildDiscPalette(
   const cloudStructure = tinyDisc ? 0 : rawCloudStructure;
   const hazeOpacity    = tinyDisc ? 0 : (body.hazeOpacity ?? 0);
 
-  // Rim + inward-fade color, picked by physical regime. Three
-  // regimes; the no-surface branch fires FIRST regardless of
-  // hazeGas because cloud-deck chromophores are altitude-localized
-  // and don't appear at the glancing-angle limb:
+  // Rim + inward-fade color — weighted-average merger across every
+  // visible atmospheric contributor:
   //
-  //   1. No-surface body (gas/ice giant, hycean, helium) →
-  //      atmColumnColor. Limb sees the H2/He gas column, paled by
-  //      forward scattering. Chromophore haze species (NH4SH on
-  //      Jupiter, etc.) deliberately excluded.
-  //   2. Surface body with haze blanket (Titan tholin, Venus
-  //      sulfate, Mars dust) → hazeColor. The aerosol genuinely is
-  //      a well-mixed overcoat the limb looks through.
-  //   3. Surface body with thick clear air (Earth) →
-  //      scatteringRimColor. Rayleigh blend across atm gases.
-  //   4. Otherwise → no rim.
+  //   - **cloud** at slot 0 of the cloud palette (already the perceptual
+  //     base blend for banded clouds, single condensate for patchy).
+  //     Weight = cloudCoverage.
+  //   - **photochemistry haze** species color (THOLIN / NH4SH / H2SO4 /
+  //     SILICATE). Weight = hazeOpacity. SKIPPED on no-surface bodies —
+  //     those species are altitude-localized cloud-deck chromophores
+  //     (Jovian NH4SH belts) that don't reach the glancing-angle limb;
+  //     painting them at the rim would contradict the physics.
+  //   - **clear-air scattering** — Rayleigh blend across atm gases for
+  //     surface bodies, forward-scatter gas-column blend for no-surface
+  //     bodies (atmColumnColor with chromophore filter). Weight scales
+  //     with column depth so Earth contributes more than Mars.
+  //   - **lifted dust** — body-resource-derived color. Weight =
+  //     dustiness. Always-on aerosol channel separate from the
+  //     mutually-exclusive haze quartet.
   //
-  // The same `rimColorRgb` feeds both the outward halo and the
-  // inward column-thickening fade. The shader's uniform haze
-  // overlay reuses this color too on surface bodies; no-surface
-  // bodies skip the overlay entirely (the chromophore would crush
-  // the band layer).
+  // No regime branching — every contributor that has weight > 0
+  // participates, weights sum, and the result normalizes. A body with
+  // both photochemistry haze and dust (a hot dusty terrestrial with
+  // sulfate chemistry, say) blends both signals at the limb.
+  //
+  // The same merged color feeds the outward halo and the inward fade;
+  // the shader's species-haze interior overlay still uses its own
+  // (un-merged) species color via the existing aHazeColor path is
+  // unchanged for that overlay's purposes — wait, no: the merged color
+  // is what we want everywhere visible. See the sharedColor note below.
+  const dustinessVal = (!tinyDisc && hasSurface) ? (body.dustiness ?? 0) : 0;
+  const dustCol = dustinessVal > 0 ? dustColorFor(body) : null;
+  const hazeGas = body.hazeGas as AtmGas | null;
   let rimColorRgb: readonly [number, number, number] = [0, 0, 0];
   let rimWidthPx = 0;
 
-  const hazeGas = body.hazeGas as AtmGas | null;
-  if (!tinyDisc && !hasSurface) {
-    const c = atmColumnColor(body);
-    if (c !== null) {
-      rimColorRgb = [c.r, c.g, c.b];
-      rimWidthPx = rimWidthForNoSurfaceAtmosphere(body, discPx);
+  if (!tinyDisc) {
+    let mr = 0, mg = 0, mb = 0, mw = 0;
+    const add = (c: { r: number; g: number; b: number }, w: number) => {
+      if (w <= 0) return;
+      mr += c.r * w; mg += c.g * w; mb += c.b * w; mw += w;
+    };
+
+    // Cloud contribution — slot 0 (perceptual blend for banded; single
+    // condensate for patchy). Already chromophore-muted via cloudBand-
+    // Palette's base-blend weighting, so safe to use on no-surface bodies.
+    if (rawCloudCoverage > 0 && (cC0.r + cC0.g + cC0.b) > 0) {
+      add(cC0, rawCloudCoverage);
     }
-  } else if (!tinyDisc && hazeGas !== null && hazeOpacity > 0) {
-    const c = hazeColor(hazeGas, body);
-    if (c !== null) {
-      rimColorRgb = [c.r, c.g, c.b];
-      rimWidthPx = body.surfacePressureBar !== null
+    // Photochemistry haze — surface bodies only (no-surface haze is
+    // altitude-localized chromophore that doesn't reach the limb).
+    if (hasSurface && hazeGas !== null && hazeOpacity > 0) {
+      const c = hazeColor(hazeGas);
+      if (c !== null) add(c, hazeOpacity);
+    }
+    // Clear-air scattering. Surface bodies use Rayleigh (scatteringRim-
+    // Color); no-surface bodies use forward-scatter column tint
+    // (atmColumnColor, which strips chromophores via GAS_VISIBILITY_
+    // FILTER). Weight on surface bodies scales with log10(P+1) so Mars's
+    // wisp contributes ~0 and Earth's 1-bar column contributes ~0.3; on
+    // no-surface bodies the column IS the rim physics, so weight = 1.
+    if (hasSurface) {
+      const p = body.surfacePressureBar;
+      if (p !== null && p >= RIM_MIN_PRESSURE_BAR) {
+        const c = scatteringRimColor(body);
+        if (c !== null) add(c, Math.log10(p + 1));
+      }
+    } else {
+      const c = atmColumnColor(body);
+      if (c !== null) add(c, 1);
+    }
+    // Lifted dust — surface bodies only, color drawn from resource grid.
+    if (dustCol !== null) add(dustCol, dustinessVal);
+
+    if (mw > 0) {
+      rimColorRgb = [mr / mw, mg / mw, mb / mw];
+      rimWidthPx = hasSurface
         ? rimWidthForSurfaceAtmosphere(body, discPx)
-        : Math.min(RIM_HAZE_FALLBACK_PX,
-                   Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION)));
-    }
-  } else if (!tinyDisc && body.surfacePressureBar !== null
-      && body.surfacePressureBar >= RIM_MIN_PRESSURE_BAR) {
-    const c = scatteringRimColor(body);
-    if (c !== null) {
-      rimColorRgb = [c.r, c.g, c.b];
-      rimWidthPx = 1;
+        : rimWidthForNoSurfaceAtmosphere(body, discPx);
+      // Surface-with-haze-but-no-pressure fallback (data-thin bodies).
+      if (hasSurface && rimWidthPx === 0 && hazeOpacity > 0) {
+        rimWidthPx = Math.min(RIM_HAZE_FALLBACK_PX,
+          Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION)));
+      }
     }
   }
 
@@ -553,15 +604,23 @@ export function buildDiscPalette(
   const ct2 = cC2;
   const ct3 = cC3;
 
-  // The shader receives ONE color attribute (`aHazeColor.xyz`) that
-  // serves three uses: the uniform haze overlay (surface bodies
-  // only, gated in the shader), the outward halo, and the inward
-  // limb fade. All three should agree per body — using the
-  // regime-picked `rimColorRgb` satisfies that. On Titan the regime
-  // resolves to tholin orange so the overlay + halo + fade all
-  // share one color by construction; on Jupiter the regime resolves
-  // to the H2/He column tint and the shader skips the overlay.
-  const sharedColor = rimColorRgb;
+  // Two distinct colors leave this stage:
+  //   - `speciesColor` paints the interior haze overlay on surface
+  //     bodies — Titan tholin orange, Venus sulfate yellow. Lookup-pure
+  //     (GAS_COLOR[hazeGas]) so the interior reads as vibrant species
+  //     pigment, not as a diluted blend.
+  //   - `rimColorRgb` paints the outward halo + inward limb fade —
+  //     the weighted-average merger across every contributor, computed
+  //     above. The two colors agree on simple-regime bodies (Titan's
+  //     merger is tholin-dominated at ~55% so the rim still reads
+  //     orange, just slightly muted by cloud + scattering) and diverge
+  //     where the merger has more signal (Earth's rim picks up cloud
+  //     white over the Rayleigh cyan).
+  let speciesColor: readonly [number, number, number] = [0, 0, 0];
+  if (!tinyDisc && hasSurface && hazeGas !== null && hazeOpacity > 0) {
+    const c = hazeColor(hazeGas);
+    if (c !== null) speciesColor = [c.r, c.g, c.b];
+  }
 
   return {
     palette: [
@@ -587,8 +646,10 @@ export function buildDiscPalette(
     cloudCoverage,
     cloudStructure,
     hazeOpacity,
-    hazeColor: sharedColor,
+    hazeColor: speciesColor,
+    rimColor: rimColorRgb,
     rimWidthPx,
+    dustiness: dustinessVal,
     surfaceAge,
     globalness,
   };

@@ -546,6 +546,7 @@ const BODY_NUMERIC_FIELDS = [
   ['cloud_coverage',         'cloudCoverage'],
   ['cloud_structure',        'cloudStructure'],
   ['haze_opacity',           'hazeOpacity'],
+  ['dustiness',              'dustiness'],
   ['res_metals',             'resMetals'],
   ['res_silicates',          'resSilicates'],
   ['res_volatiles',          'resVolatiles'],

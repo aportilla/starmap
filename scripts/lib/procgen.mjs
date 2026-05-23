@@ -949,24 +949,40 @@ function hazeContribution(gas, body) {
       if (T == null) return 0;
       return smoothstep(800, 1500, T) * 0.5;
     }
-    case 'DUST': {
-      // Mineral dust haze — Mars-class surface lift. Terrestrial only,
-      // dry surface (water suppresses dust), thin atmosphere (thick air
-      // is too dense for sustained suspension), moderate T (not frozen,
-      // not boiled). DUST never appears in atm1/2/3 — it's injected
-      // here by environmental gate alone.
-      if (isGaseous) return 0;
-      if (T == null || P == null) return 0;
-      if (P < ATMOSPHERE_MIN_PRESSURE_BAR || P > 1) return 0;
-      const waterFrac = body.waterFraction ?? 0;
-      const dryGate = 1 - smoothstep(0.0, 0.3, waterFrac);
-      const pressGate = 1 - smoothstep(0.001, 1, P);
-      const tempGate = smoothstep(150, 200, T) * (1 - smoothstep(300, 400, T));
-      return dryGate * pressGate * tempGate * 0.2;
-    }
     default:
       return 0;
   }
+}
+
+// Lifted mineral dust loading from body physics. Terrestrial only, dry
+// surface (water suppresses lift), thin atmosphere (thick air is too
+// dense for sustained suspension), moderate T (not frozen, not boiled).
+// Returns 0..1 — never null, since this is always-evaluable on a body
+// with the inputs we need (T, P, waterFraction). Sol anchor: Mars
+// (T=210K, P=0.006 bar, dry) → 0.15.
+//
+// Distinct from the `hazeFor` photochemistry quartet (THOLIN / NH4SH /
+// H2SO4 / SILICATE), which share one mutually-exclusive haze slot. Dust
+// is its own channel because it can coexist with any of them — a hot
+// dusty terrestrial could carry both sulfate-haze chemistry and lifted
+// dust simultaneously.
+function dustinessFor(body) {
+  const T = body.avgSurfaceTempK;
+  const P = body.surfacePressureBar;
+  const r = body.radiusEarth;
+  if (r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return 0;
+  if (T == null || P == null) return 0;
+  // Dust suspends in any non-zero atmosphere — no ATMOSPHERE_MIN_PRESSURE_BAR
+  // gate here. The photochemistry haze species need that floor (Rayleigh /
+  // photolysis chemistry vanishes below ~0.01 bar) but mineral grains
+  // entrain at any pressure including Mars's 0.006 bar. Upper cap at 1
+  // bar — thicker air becomes too dense to keep dust airborne.
+  if (P <= 0 || P > 1) return 0;
+  const waterFrac = body.waterFraction ?? 0;
+  const dryGate = 1 - smoothstep(0.0, 0.3, waterFrac);
+  const pressGate = 1 - smoothstep(0.001, 1, P);
+  const tempGate = smoothstep(150, 200, T) * (1 - smoothstep(300, 400, T));
+  return Number((dryGate * pressGate * tempGate * 0.2).toFixed(3));
 }
 
 // Haze layer — uniform aerosol species + opacity, derived directly from
@@ -980,7 +996,7 @@ function hazeFor(body) {
   if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
     return { gas: null, opacity: null };
   }
-  const candidates = ['THOLIN', 'NH4SH', 'H2SO4', 'SILICATE', 'DUST'];
+  const candidates = ['THOLIN', 'NH4SH', 'H2SO4', 'SILICATE'];
   const contributions = [];
   for (const gas of candidates) {
     const strength = hazeContribution(gas, body);
@@ -1234,6 +1250,7 @@ function fillBody(b, allBodies, stars) {
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
     cloudGas, cloudCoverage, cloudStructure,
     hazeGas, hazeOpacity,
+    dustiness,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,
     periodDays, semiMajorAu, eccentricity, inclinationDeg,
@@ -1424,6 +1441,15 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, hazeGas, hazeOpacity };
 
+  // Lifted mineral dust — independent channel from photochemistry haze
+  // above. Always-on 0..1 for terrestrial bodies; physics gates produce
+  // 0 on bodies where dust can't form (gaseous, too wet, too thick, too
+  // cold/hot) so we don't need a separate null state.
+  if (unknowns.has('dustiness')) {
+    dustiness = dustinessFor(working);
+  }
+  working = { ...working, dustiness };
+
   // ─── Pass B: composition-aware greenhouse refinement ───
   // Pass A used the pressure-proxy greenhouse to settle T/water/ice.
   // Now that atm composition is known, refine greenhouse from per-
@@ -1486,6 +1512,7 @@ function fillBody(b, allBodies, stars) {
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
     cloudGas, cloudCoverage, cloudStructure,
     hazeGas, hazeOpacity,
+    dustiness,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,
     periodDays, semiMajorAu,

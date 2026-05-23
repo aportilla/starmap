@@ -35,10 +35,18 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 //          alpha = cloudCoverage. Jupiter / Saturn / Uranus / Neptune /
 //          Venus.
 //   3. **Haze** (when aAtmoScalars.z > 0) — uniform per-fragment lerp
-//      toward aHazeColor by hazeOpacity. The aerosol overlay (Titan
-//      tholin, Venus sulfate, Mars dust).
-//   4. **Rim** — outward halo + inward fade driven by aAtmoScalars.w
-//      (rimWidthPx).
+//      toward aHazeColor by hazeOpacity. The photochemistry aerosol
+//      overlay (Titan tholin, Venus sulfate). Mineral dust runs as a
+//      separate (4. Dust) overlay below since it can coexist with any
+//      photochemistry species.
+//   4. **Dust** (when aWeights.w > 0) — uniform per-fragment lerp toward
+//      a dust color derived in-shader from the surface palette × weights
+//      (same source as `dustColorFor(body)` CPU-side: weighted blend of
+//      the body's top-3 resource colors). dustiness rides in aWeights.w
+//      to fit under gl_MaxVertexAttribs without a dedicated attribute.
+//      Independent of photochemistry haze; both can fire.
+//   5. **Rim** — outward halo + inward fade driven by aAtmoScalars.w
+//      (rimWidthPx). Color is the merged-rim blend in aHazeColor.xyz.
 //
 // Cloud-structure snaps binary at 0.5 in v1; the procgen distributions
 // produce mostly 0 (terrestrial patchy) or 1 (banded / venusian / gas
@@ -67,10 +75,21 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // (0/1 — gas giants skip the surface block), z = seed, w = tilt.
       attribute vec4  aRenderMeta;
       // Surface resource palette + weights.
-      attribute vec3  aPalette0;
-      attribute vec3  aPalette1;
-      attribute vec3  aPalette2;
-      attribute vec3  aWeights;
+      // Surface palette resource slots (xyz) + merged rim color packed in
+      // .w slots (palette0.w = rimColor.r, palette1.w = .g, palette2.w =
+      // .b). Reconstructed in the vertex shader as vRimColor. Keeps the
+      // species-pure interior haze overlay (which still uses aHazeColor)
+      // visually distinct from the limb-blended rim/halo/inward-fade.
+      attribute vec4  aPalette0;
+      attribute vec4  aPalette1;
+      attribute vec4  aPalette2;
+      // xyz = surface palette resource weights (sum-to-1 normalized);
+      // w = dustiness [0..1] piggybacked on this attribute to stay under
+      // gl_MaxVertexAttribs. Dust color is derived in the fragment shader
+      // as the same xyz-weighted blend of vPalette0/1/2 that the surface
+      // texturing uses — they share dominantResources(body, 3) as the
+      // source, so no separate aDustColor attribute is needed.
+      attribute vec4  aWeights;
       // Cloud-layer palette + weights. Banded clouds pick per worley
       // cell from 4 slots: slot 0 = perceptual base blend (atm + cloud
       // + haze) at ~50% picker weight, slots 1-3 = accent species
@@ -96,11 +115,10 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // Biome stipple: xyz = pigment color, w = coverage density [0..1].
       attribute vec4  aBiomeColor;
       // Shared rim + haze-layer color + per-vertex hover flag.
-      // Layout: xyz = haze RGB (rim + uniform haze tint, picked
-      // CPU-side by the regime in disc-palette.ts), w = hover flag
-      // (0/1, flipped by MoonsLayer.setHovered / PlanetsLayer.
-      // setHovered). Conflated to keep the attribute count under the
-      // GPU's gl_MaxVertexAttribs cap.
+      // Layout: xyz = MERGED rim/haze color (weighted-average blend
+      // across cloud, photochemistry haze, scattering, and dust — see
+      // disc-palette.ts), w = hover flag (0/1, flipped by setHovered).
+      // Conflated to keep the attribute count under gl_MaxVertexAttribs.
       attribute vec4  aHazeColor;
 
       varying float vRadius;
@@ -109,7 +127,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying vec3  vPalette0;
       varying vec3  vPalette1;
       varying vec3  vPalette2;
-      varying vec3  vWeights;
+      varying vec4  vWeights;
       varying vec3  vCloudPalette0;
       varying vec3  vCloudPalette1;
       varying vec3  vCloudPalette2;
@@ -129,13 +147,15 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vHazeOpacity;
       varying float vRimWidthPx;
       varying vec3  vHazeColor;
+      varying vec3  vRimColor;
       uniform float uDiscScale;
       uniform vec2  uViewport;
       void main() {
         vHovered  = aHazeColor.w;
-        vPalette0 = aPalette0;
-        vPalette1 = aPalette1;
-        vPalette2 = aPalette2;
+        vRimColor = vec3(aPalette0.w, aPalette1.w, aPalette2.w);
+        vPalette0 = aPalette0.xyz;
+        vPalette1 = aPalette1.xyz;
+        vPalette2 = aPalette2.xyz;
         vWeights  = aWeights;
         vCloudPalette0 = aCloudPalette0.xyz;
         vCloudPalette1 = aCloudPalette1.xyz;
@@ -189,7 +209,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying vec3  vPalette0;
       varying vec3  vPalette1;
       varying vec3  vPalette2;
-      varying vec3  vWeights;
+      varying vec4  vWeights;
       varying vec3  vCloudPalette0;
       varying vec3  vCloudPalette1;
       varying vec3  vCloudPalette2;
@@ -209,6 +229,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       varying float vHazeOpacity;
       varying float vRimWidthPx;
       varying vec3  vHazeColor;
+      varying vec3  vRimColor;
 
       // Perspective foreshortening for banded mode — the disc is treated
       // as the projection of a sphere whose rotation axis is tipped
@@ -349,12 +370,12 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // function. Inward fade is a per-fragment lerp on the surface
       // color — always opaque output.
       const float OUTER_BASE_ALPHA = 0.35;
-      const float INNER_BASE_ALPHA = 0.08;
+      const float INNER_BASE_ALPHA = 0.2;
       // Width of the inward fade as a fraction of disc radius. Bands
       // within this width grow as 1, 2, 3, ... px from the limb inward
       // following the sphere-projection foreshortening curve — see the
       // inward-fade block below.
-      const float INWARD_RIM_FRACTION = 0.4;
+      const float INWARD_RIM_FRACTION = 0.3;
 
       // Per-pixel dither amplitude (in pixels of distFromLimb) applied
       // to the inward-fade band boundaries. 1.5 → each pixel jitters by
@@ -362,7 +383,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // near a boundary scatter binary between the two sides. Net
       // visual: adjacent concentric bands blur into each other and the
       // rim reads as organic haze rather than clean stripes.
-      const float INWARD_BAND_DITHER = 4.0;
+      const float INWARD_BAND_DITHER = 5.0;
 
       // Limb forward-scattering brightening. The outward halo and the
       // inward fade both target this color instead of vHazeColor
@@ -505,13 +526,15 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vec2 d = gl_FragCoord.xy - vCenter;
         float r = length(d);
 
-        // Limb color — vHazeColor brightened toward white. Used by the
-        // outward halo and the inward limb fade to model forward
-        // scattering at the glancing-angle column. vHazeColor itself
-        // (the species/regime color) is still used un-brightened by
-        // the uniform haze overlay further down so the disc interior
-        // keeps the chromophore tone.
-        vec3 vLimbColor = mix(vHazeColor, vec3(1.0), LIMB_BRIGHTEN);
+        // Limb color — the merged-rim color (weighted blend across
+        // every visible atmospheric contributor) brightened toward white
+        // by LIMB_BRIGHTEN to model forward scattering at the glancing-
+        // angle column. vRimColor differs from vHazeColor: the rim
+        // blends cloud + species haze + scattering + dust, while
+        // vHazeColor stays pure species pigment for the interior
+        // overlay further down (Titan stays vibrantly tholin inside;
+        // its rim picks up cloud + scatter contributions).
+        vec3 vLimbColor = mix(vRimColor, vec3(1.0), LIMB_BRIGHTEN);
 
         // Outside the disc — paint the atmospheric halo (1.3a/b outward)
         // if any, else discard. Sprite is sized to give us vRimWidthPx
@@ -730,7 +753,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           else if (bucket == 4) mask = vec3(1.0, 0.0, 1.0);
           else if (bucket == 5) mask = vec3(0.0, 1.0, 1.0);
           else                  mask = vec3(1.0, 1.0, 1.0);
-          vec3 regionWeights = vWeights * mask;
+          vec3 regionWeights = vWeights.xyz * mask;
           float resH = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
           vec3 landCol = pickFromPalette(resH, vPalette0, vPalette1, vPalette2, regionWeights);
 
@@ -766,7 +789,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           else if (bucket == 4) subMask = vec3(0.0, 1.0, 0.0);
           else if (bucket == 5) subMask = vec3(1.0, 0.0, 0.0);
           else                  subMask = vec3(1.0, 1.0, 1.0);
-          vec3 subWeights = vWeights * subMask;
+          vec3 subWeights = vWeights.xyz * subMask;
           vec3 resourceSubsurface = pickFromPalette(resH, vPalette0, vPalette1, vPalette2, subWeights);
 
           // Default fragment color. Three branches:
@@ -857,7 +880,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             else if (cBucket == 5) cSubMask = vec3(1.0, 0.0, 0.0);
             else                   cSubMask = vec3(1.0, 1.0, 1.0);
             float cPalH = hash21(bestCraterId + vec2(vSeed * 587.0, vSeed * 569.0));
-            vec3 craterRevealCol = pickFromPalette(cPalH, vPalette0, vPalette1, vPalette2, vWeights * cSubMask);
+            vec3 craterRevealCol = pickFromPalette(cPalH, vPalette0, vPalette1, vPalette2, vWeights.xyz * cSubMask);
 
             vec3 craterYoung = craterRevealCol;
             vec3 craterOld   = icyHere ? ICE_COLOR : craterRevealCol;
@@ -1056,6 +1079,23 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           col = mix(col, vHazeColor, vHazeOpacity);
         }
 
+        // ── Dust layer ──
+        // Lifted mineral dust as a uniform aerosol overcoat across the
+        // disc face. Independent of the photochemistry haze above —
+        // models a body that can simultaneously carry sulfate haze AND
+        // suspended dust (a hot dusty terrestrial), or just dust on its
+        // own (Mars). dustiness rides in vWeights.w; dust color is the
+        // body's top-3-resource weighted blend (same expression that
+        // dustColorFor uses CPU-side, just evaluated per-fragment from
+        // the existing surface palette attributes). Gas/ice giants have
+        // no surface to lift from — vWeights.w is zeroed there CPU-side.
+        if (vWeights.w > 0.0 && vHasSurface > 0.5) {
+          vec3 dustCol = vPalette0 * vWeights.x
+                       + vPalette1 * vWeights.y
+                       + vPalette2 * vWeights.z;
+          col = mix(col, dustCol, vWeights.w);
+        }
+
         // Phase 1.3a/b INWARD fade — atmospheric haze visible inside
         // the disc near the limb, simulating column thickening under
         // edge-on viewing geometry. Applies to BOTH surface and banded
@@ -1091,7 +1131,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
             float stackCount = numBands - bandIdx;
             if (stackCount > 0.0) {
               float fadeA = 1.0 - pow(1.0 - INNER_BASE_ALPHA, stackCount);
-              col = mix(col, vHazeColor, fadeA);
+              col = mix(col, vLimbColor, fadeA);
             }
           }
         }
