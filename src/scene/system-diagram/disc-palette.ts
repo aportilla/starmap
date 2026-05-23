@@ -49,37 +49,66 @@ import { PROCEDURAL_TEXTURE_MIN_PX } from './layout/constants';
 // cloudBandPalette which needs it to apply the temperature-driven
 // base-blend weight on these classes.)
 
-// Pressure-driven outward rim width buckets — the number of integer
-// pixels the atmospheric halo extends INTO SPACE beyond the disc edge.
-// log10(surfacePressureBar + 1) crosses these thresholds to step from
-// 0 → N px. Sub-0.01 bar gets no rim (Mercury, Moon, Mars's 0.006 bar);
-// 0.01..0.5 bar = 1 px; 0.5..5 bar = 2 px (Earth lands here); ≥ 5 bar
-// = 3 px (sub-banded thick atmospheres). Capped at 3 px max so the
-// halo stays a glance-read of "this body has air" rather than a
-// dominant visual element. The shader pairs this outward halo with an
-// INWARD fade whose width is proportional to disc radius — together
-// they simulate the limb's atmospheric column thickening at the disc
-// edge as seen edge-on.
-const RIM_PRESSURE_LOG10_THRESHOLDS = [0.005, 0.17, 0.78] as const;
+// Outward rim width buckets for surface bodies — integer pixels of
+// atmospheric halo extending INTO SPACE beyond the disc edge. Driven
+// by a visual-extent scalar combining pressure with the body's
+// scale-height proxy H ∝ T/g (see `scaleHeightFactor` below). The
+// extent crosses these thresholds to step from 0 → N px. Anchors with
+// the curated Sol bodies: Mars 0, Earth 2, Titan 3 (low g + bearable
+// pressure puffs it past Earth despite ~⅔ Earth's surface pressure),
+// Venus 3 (caps out — high P × hot dominates the high-g penalty).
+// Capped at 3 px so the halo stays a glance-read of "this body has
+// air" rather than a dominant visual element. The shader pairs this
+// outward halo with an INWARD fade whose width is proportional to
+// disc radius — together they simulate the limb's atmospheric column
+// thickening at the disc edge as seen edge-on.
+const RIM_EXTENT_THRESHOLDS = [0.02, 0.15, 0.7] as const;
 
 // Cap the rim width to this fraction of disc radius so a tiny moon
 // doesn't get visually swamped by its own halo. 0.15 → a 40-px disc
 // caps at 3 px, a 20-px disc caps at 1 px.
 const RIM_MAX_RADIUS_FRACTION = 0.15;
 
-// Default outward halo width for no-surface bodies (gas / ice giants).
-// These have no surfacePressureBar to drive the pressure mapping, but
-// they always carry a thick atmospheric column. 2 px gives a visible
-// halo without dominating the disc — matches Titan's pressure-derived
-// width so a gas giant doesn't read as more atmosphere-haloed than
-// Titan.
-const NO_SURFACE_RIM_WIDTH_PX = 2;
+// Outward rim width buckets for no-surface bodies (gas / ice giants /
+// hycean / helium / gas dwarfs). No surfacePressureBar to anchor — at
+// the limb you're looking through a deep continuous H₂/He column whose
+// "pressure" is conventional, so width keys off the scale-height
+// proxy alone (already includes the per-class µ correction). All
+// no-surface bodies carry a visible halo; base = 1 px and each
+// threshold adds one. Sol anchors: Jupiter / Neptune → 2 px (compressed
+// by gravity), Saturn / Uranus → 3 px (puffier per their real H/R).
+const RIM_NO_SURFACE_FACTOR_THRESHOLDS = [1.0, 3.5] as const;
+const RIM_NO_SURFACE_BASE_PX = 1;
 
-// Minimum atmospheric pressure for any rim to render at all. Below
-// this the column has too little gas to produce a visible scattering
-// signal. Above it, the clear-air rim color comes from a per-gas
-// scattering blend (no fixed sky-cyan token) so the rim reflects the
-// actual atmospheric composition.
+// Fallback halo width for a surface body with haze but no measured
+// surfacePressureBar — keeps a hazy world's halo on the table when
+// data is partial. Clamped by disc radius like the proper buckets.
+const RIM_HAZE_FALLBACK_PX = 2;
+
+// Per-class molecular-weight ratio µ_air / µ_atm. H ∝ T/(µg), so a
+// lighter atmosphere produces a taller column. Used inside
+// `scaleHeightFactor`. Surface bodies default to 1 (atmospheres
+// roughly air-weight — CO₂/N₂/O₂/CH₄ cluster within ~2×, sub-dominant
+// to T and g). No-surface bodies are H₂/He-dominated (µ ≈ 2.3, ratio
+// ≈ 13); helium worlds sit between at µ ≈ 4. Without this correction
+// gas giants would underestimate their halo by ~13× because T/g alone
+// puts Jupiter at 0.23 (well below Earth).
+const MU_FACTOR_BY_CLASS: Readonly<Record<string, number>> = {
+  gas_giant: 13,
+  ice_giant: 13,
+  gas_dwarf: 13,
+  hycean:    13,
+  helium:     7,
+};
+
+// Minimum atmospheric pressure for any clear-air rim to render at all.
+// Below this the column has too little gas to produce a visible
+// scattering signal. Above it, the clear-air rim color comes from a
+// per-gas scattering blend (no fixed sky-cyan token) so the rim
+// reflects the actual atmospheric composition. Note this gate is on
+// raw pressure, NOT the scale-height-weighted extent — a Rayleigh
+// signal needs molecules per slant path, and below 0.1 bar there
+// just aren't enough no matter how puffy the column.
 const RIM_MIN_PRESSURE_BAR = 0.1;
 
 // Phase 1.6 ice-geometry temperature thresholds. globalness lerps from
@@ -309,14 +338,43 @@ function atmColumnColor(body: Body): Color | null {
   return new Color(r / totalW, g / totalW, b / totalW);
 }
 
-function rimWidthPxForPressure(pressureBar: number | null, discPx: number): number {
-  if (pressureBar === null || pressureBar <= 0) return 0;
-  const logP = Math.log10(pressureBar + 1);
+// Earth-relative atmospheric scale-height proxy. H = kT/(μg);
+// normalized so an air-weight Earth = 1.0. Surface bodies vary mostly
+// through T and g (their atmospheres cluster around µ_air). No-surface
+// bodies pick up a per-class µ multiplier so H₂/He giants reflect
+// their ~13× lighter column — without it Jupiter's T/g lands at 0.23
+// (smaller than Earth) and gas giants under-halo dramatically. Nulls
+// or unphysical inputs fall back to Earth-like.
+function scaleHeightFactor(body: Body): number {
+  const t = body.avgSurfaceTempK;
+  const m = body.massEarth;
+  const r = body.radiusEarth;
+  if (t === null || m === null || r === null || r <= 0) return 1;
+  const gRel = m / (r * r);
+  if (gRel <= 0) return 1;
+  const muMul = body.worldClass !== null ? (MU_FACTOR_BY_CLASS[body.worldClass] ?? 1) : 1;
+  return (t / 288) / gRel * muMul;
+}
+
+function rimWidthForSurfaceAtmosphere(body: Body, discPx: number): number {
+  const p = body.surfacePressureBar;
+  if (p === null || p <= 0) return 0;
+  const extent = Math.log10(p + 1) * scaleHeightFactor(body);
   let width = 0;
-  for (const t of RIM_PRESSURE_LOG10_THRESHOLDS) {
-    if (logP >= t) width++;
+  for (const t of RIM_EXTENT_THRESHOLDS) {
+    if (extent >= t) width++;
   }
   if (width === 0) return 0;
+  const maxWidth = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
+  return Math.min(width, maxWidth);
+}
+
+function rimWidthForNoSurfaceAtmosphere(body: Body, discPx: number): number {
+  const factor = scaleHeightFactor(body);
+  let width = RIM_NO_SURFACE_BASE_PX;
+  for (const t of RIM_NO_SURFACE_FACTOR_THRESHOLDS) {
+    if (factor >= t) width++;
+  }
   const maxWidth = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
   return Math.min(width, maxWidth);
 }
@@ -463,16 +521,15 @@ export function buildDiscPalette(
     const c = atmColumnColor(body);
     if (c !== null) {
       rimColorRgb = [c.r, c.g, c.b];
-      const maxByRadius = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
-      rimWidthPx = Math.min(NO_SURFACE_RIM_WIDTH_PX, maxByRadius);
+      rimWidthPx = rimWidthForNoSurfaceAtmosphere(body, discPx);
     }
   } else if (!tinyDisc && hazeGas !== null && hazeOpacity > 0) {
     const c = hazeColor(hazeGas, body);
     if (c !== null) {
       rimColorRgb = [c.r, c.g, c.b];
       rimWidthPx = body.surfacePressureBar !== null
-        ? rimWidthPxForPressure(body.surfacePressureBar, discPx)
-        : Math.min(NO_SURFACE_RIM_WIDTH_PX,
+        ? rimWidthForSurfaceAtmosphere(body, discPx)
+        : Math.min(RIM_HAZE_FALLBACK_PX,
                    Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION)));
     }
   } else if (!tinyDisc && body.surfacePressureBar !== null
