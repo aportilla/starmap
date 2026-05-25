@@ -901,6 +901,12 @@ function atmFracOf(body, gas) {
 // product species — THOLIN (not CH4), NH4SH (not NH3) — so the
 // renderer paints exactly what the data says without inferring
 // chemistry from precursor names.
+// Per-species formation gates — return raw 0..1 strength based on
+// chemistry physics (T, P, precursor fractions, world class). Pre-
+// potency, pre-scale: the unified haze blend in `hazeFor` is the only
+// thing that combines these with the global category multipliers.
+// Per-species visibility weight lives in GAS_POTENCY (see priors), so
+// no anchor coefficient appears here.
 function hazeContribution(gas, body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
@@ -916,9 +922,6 @@ function hazeContribution(gas, body) {
       // colder bodies (Triton/Pluto class) receive too little UV to
       // drive polymerization; warmer bodies (>130K) lose CH4 to thermal
       // escape and sublimation faster than aerosols can form.
-      // Rising/falling smoothsteps TOUCH at peak T (no plateau), so
-      // tempGate=1.0 only at T=95 exactly — bodies on either side
-      // ramp continuously, avoiding the saturation pile-up.
       if (isGaseous) return 0;
       if (T == null) return 0;
       const tempGate = smoothstep(40, 95, T) * (1 - smoothstep(95, 150, T));
@@ -927,68 +930,48 @@ function hazeContribution(gas, body) {
       const n2Frac  = atmFracOf(body, 'N2');
       const ch4Gate = smoothstep(0.001, 0.05, ch4Frac);
       const n2Gate  = smoothstep(0.1, 0.6, n2Frac);
-      return tempGate * ch4Gate * n2Gate * 0.85;
+      return tempGate * ch4Gate * n2Gate;
     }
     case 'NH4SH': {
       // Ammonium hydrosulfide cloud-top chemistry — Jovian belt brown.
       // Peak at Jupiter's cloud top (~165K) where NH3 + H2S → NH4SH
-      // condensate runs fastest; falls off at lower T (chemistry too
-      // slow, CHROMOPHORE takes over) and higher T (NH3 cloud
-      // dissociates).
+      // condensate runs fastest.
       if (!isGaseous) return 0;
       if (T == null) return 0;
       if (body.cloudGas !== 'NH3') return 0;
       const tempGate = smoothstep(120, 165, T) * (1 - smoothstep(165, 225, T));
-      return tempGate * 0.7;
+      return tempGate;
     }
     case 'CHROMOPHORE': {
       // PH3-photolysis red pigment — Jovian Great Red Spot / Saturn
-      // polar haze. Co-located with NH3 cloud chemistry but peaks at
-      // cooler cloud tops (~125K, Saturn regime) where NH3 + H2S is
-      // too slow for NH4SH dominance and phosphorus polymers
-      // accumulate as the long-lived chromophore.
+      // polar haze. Peaks at cooler cloud tops (~125K) where NH3+H2S
+      // is too slow for NH4SH dominance.
       if (!isGaseous) return 0;
       if (T == null) return 0;
       if (body.cloudGas !== 'NH3') return 0;
       const tempGate = smoothstep(90, 125, T) * (1 - smoothstep(125, 180, T));
-      return tempGate * 0.6;
+      return tempGate;
     }
     case 'SALT': {
       // KCl + ZnS condensate haze — warm sub-Neptune / gas dwarf
-      // regime between NH3-cloud Jovians (NH4SH) and hot-Jupiter
-      // silicate condensates. Anchored to GJ 1214 b modeling: a
-      // ubiquitous featureless haze attributed to alkali-salt
-      // photochemistry at ~600K cloud tops.
+      // regime. GJ 1214 b anchor at ~600K cloud tops.
       if (!isGaseous) return 0;
       if (T == null) return 0;
       const tempGate = smoothstep(250, 625, T) * (1 - smoothstep(625, 950, T));
-      return tempGate * 0.6;
+      return tempGate;
     }
     case 'H2SO4': {
       // Sulfuric acid sulfate haze — Venus-class. Needs hot CO2 + high
-      // pressure: the S source is interior outgassing converted to
-      // H2SO4 by photochemistry against the thick CO2 column. Peak
-      // around Venus' cloud-top temperatures (~720K, well below the
-      // surface 735K because the haze sits at altitude); above ~1000K
-      // H2SO4 dissociates back to SO3 + H2O.
+      // pressure. Above ~1000K H2SO4 dissociates back to SO3 + H2O.
       if (isGaseous) return 0;
       if (T == null || P == null) return 0;
       const tempGate = smoothstep(500, 720, T) * (1 - smoothstep(720, 1100, T));
-      // Pressure gate's upper end widened from 50 to 150 bar so even
-      // Venus-class thick atmospheres (92 bar) don't sit in the
-      // saturation flat — the gate keeps climbing past Venus into
-      // hypothetical super-Venus pressures, so most CO2-rich worlds
-      // ramp continuously rather than hitting the 50-bar ceiling.
       const pressGate = smoothstep(5, 150, P);
-      return tempGate * pressGate * 0.7;
+      return tempGate * pressGate;
     }
     case 'SULFUR': {
-      // S8 elemental sulfur aerosol — Io-class volcanic. Distinct from
-      // H2SO4 by pressure: H2SO4 needs a thick column for sustained
-      // sulfate chemistry; S8 photolysis dominates at THIN SO2
-      // columns where UV penetrates to the surface. Dry-surface gate
-      // (water suppresses sulfur cycle by scavenging SO2 into
-      // sulfate/sulfite). SO2 precursor gate.
+      // S8 elemental sulfur aerosol — Io-class volcanic. Thin SO2
+      // columns where UV reaches the surface; dry-surface gate.
       if (isGaseous) return 0;
       if (T == null || P == null) return 0;
       const so2Frac = atmFracOf(body, 'SO2');
@@ -998,84 +981,60 @@ function hazeContribution(gas, body) {
       const pressGate = 1 - smoothstep(0.5, 5, P);
       const waterFrac = body.waterFraction ?? 0;
       const dryGate = 1 - smoothstep(0.0, 0.2, waterFrac);
-      return tempGate * so2Gate * pressGate * dryGate * 0.65;
+      return tempGate * so2Gate * pressGate * dryGate;
     }
     case 'SILICATE': {
       // Refractive Mg-Si-O cloud particles dredged from deep layers at
-      // extreme insolation. Hot gas-giant / hot sub-Neptune only;
-      // peaks above SALT's range.
+      // extreme insolation. Hot gas-giant / hot sub-Neptune only.
       if (!isGaseous) return 0;
       if (T == null) return 0;
-      return smoothstep(900, 1500, T) * 0.5;
+      return smoothstep(900, 1500, T);
     }
     default:
       return 0;
   }
 }
 
-// Lifted mineral dust loading from body physics. Terrestrial only, dry
-// surface (water suppresses lift), thin atmosphere (thick air is too
-// dense for sustained suspension), moderate T (not frozen, not boiled).
-// Returns 0..1 — never null, since this is always-evaluable on a body
-// with the inputs we need (T, P, waterFraction). Sol anchor: Mars
-// (T=210K, P=0.006 bar, dry) → 0.15.
-//
-// Distinct from the `hazeFor` photochemistry quartet (THOLIN / NH4SH /
-// H2SO4 / SILICATE), which share one mutually-exclusive haze slot. Dust
-// is its own channel because it can coexist with any of them — a hot
-// dusty terrestrial could carry both sulfate-haze chemistry and lifted
-// dust simultaneously.
-function dustinessFor(body) {
+const HAZE_AEROSOL_SPECIES = ['THOLIN', 'NH4SH', 'CHROMOPHORE', 'SALT', 'H2SO4', 'SULFUR', 'SILICATE'];
+
+// Lifted mineral dust gate. Terrestrial only, dry surface, thin
+// atmosphere, moderate T (not frozen, not boiled). Returns raw 0..1
+// strength; the universal HAZE_DUST_SCALE applies in `hazeFor`.
+function dustStrengthFor(body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
   const r = body.radiusEarth;
   if (r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return 0;
   if (T == null || P == null) return 0;
-  // Dust suspends in any non-zero atmosphere — no ATMOSPHERE_MIN_PRESSURE_BAR
-  // gate here. The photochemistry haze species need that floor (Rayleigh /
-  // photolysis chemistry vanishes below ~0.01 bar) but mineral grains
-  // entrain at any pressure including Mars's 0.006 bar. Upper cap at 1
-  // bar — thicker air becomes too dense to keep dust airborne.
+  // Dust suspends in any non-zero atmosphere — mineral grains entrain
+  // at any pressure including Mars's 0.006 bar. Upper cap at 1 bar:
+  // thicker air becomes too dense to keep dust airborne.
   if (P <= 0 || P > 1) return 0;
   const waterFrac = body.waterFraction ?? 0;
   const dryGate = 1 - smoothstep(0.0, 0.3, waterFrac);
   const pressGate = 1 - smoothstep(0.001, 1, P);
   const tempGate = smoothstep(150, 200, T) * (1 - smoothstep(300, 400, T));
-  return Number((dryGate * pressGate * tempGate * 0.2).toFixed(3));
+  return Number((dryGate * pressGate * tempGate).toFixed(3));
 }
 
-// Haze layer — uniform aerosol species + opacity, derived directly from
-// body physics. No regime intermediary: per-species formation gates
-// each consult the body's actual atmosphere, temperature, and pressure.
-// Returns the dominant contributor as `gas` and the combined opacity
-// across all firing species. Multi-species color blending is deferred
-// to a later phase; the dominant species drives both the haze layer
-// color and the rim color in disc-palette.ts today.
+// Unified haze derivation — every atmospheric contributor (bulk atm
+// gases, formation-gated aerosol products, lifted dust, Rayleigh
+// scattering) feeds one weighted sum, soft-capped to 0..1. Color is
+// derived at render time in disc-palette by walking the same
+// contributor list with the species' GAS_COLOR / SCATTERING_COLOR /
+// dust-from-resources hues.
+//
+// Per-species post-gate strengths land on the body as `hazeAerosols`
+// and `dustStrength`, so the runtime palette stage doesn't need to
+// re-run the chemistry gates.
 function hazeFor(body) {
-  if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
-    return { gas: null, opacity: null };
+  const aerosols = {};
+  for (const species of HAZE_AEROSOL_SPECIES) {
+    const s = hazeContribution(species, body);
+    if (s > 0) aerosols[species] = Number(s.toFixed(3));
   }
-  const candidates = ['THOLIN', 'NH4SH', 'CHROMOPHORE', 'SALT', 'H2SO4', 'SULFUR', 'SILICATE'];
-  let best = null;
-  for (const gas of candidates) {
-    const strength = hazeContribution(gas, body);
-    if (strength > 0 && (best === null || strength > best.strength)) {
-      best = { gas, strength };
-    }
-  }
-  if (best === null) return { gas: null, opacity: null };
-  // Opacity is the dominant species' own formation strength — not a
-  // sum across species. Summing produced phantom statistical cliffs:
-  // two co-firing species each at 0.5 totaled to 1.0 and were clamped
-  // by an explicit cap, pinning a chunk of the population to a single
-  // value. The renderer only paints one species' color anyway, so
-  // reporting that species' physical strength is the honest read.
-  // Per-species coefficients (0.5-0.85, anchored to real-world haze
-  // observations) bound the value naturally — no global cap needed.
-  return {
-    gas: best.gas,
-    opacity: Number(best.strength.toFixed(3)),
-  };
+  const dust = dustStrengthFor(body);
+  return { aerosols, dust };
 }
 
 // =============================================================================
@@ -1306,8 +1265,7 @@ function fillBody(b, allBodies, stars) {
     surfacePressureBar,
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
     cloudGas, cloudCoverage, cloudStructure,
-    hazeGas, hazeOpacity,
-    dustiness,
+    hazeAerosols, dustStrength,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,
     periodDays, semiMajorAu, eccentricity, inclinationDeg,
@@ -1486,26 +1444,16 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, cloudGas, cloudCoverage, cloudStructure };
 
-  // Haze layer — uniform aerosol species + opacity. Physics-derived
-  // from atm + T + P via per-species formation gates; Earth-class
-  // bodies and gas giants outside the hot-silicate bracket emit no
-  // haze. No `S` (insolation) input — T already encodes that signal
-  // through avgSurfaceTempK.
-  if (unknowns.has('hazeGas') || unknowns.has('hazeOpacity')) {
+  // Unified haze derivation — emits per-species aerosol formation
+  // strengths + dust strength. Final opacity + color are blended at
+  // render time (disc-palette) from this contributor list plus the
+  // body's atm gases + pressure. Always runs; no CSV override path.
+  {
     const h = hazeFor(working);
-    if (unknowns.has('hazeGas'))     hazeGas     = h.gas;
-    if (unknowns.has('hazeOpacity')) hazeOpacity = h.opacity;
+    hazeAerosols = h.aerosols;
+    dustStrength = h.dust;
   }
-  working = { ...working, hazeGas, hazeOpacity };
-
-  // Lifted mineral dust — independent channel from photochemistry haze
-  // above. Always-on 0..1 for terrestrial bodies; physics gates produce
-  // 0 on bodies where dust can't form (gaseous, too wet, too thick, too
-  // cold/hot) so we don't need a separate null state.
-  if (unknowns.has('dustiness')) {
-    dustiness = dustinessFor(working);
-  }
-  working = { ...working, dustiness };
+  working = { ...working, hazeAerosols, dustStrength };
 
   // ─── Pass B: composition-aware greenhouse refinement ───
   // Pass A used the pressure-proxy greenhouse to settle T/water/ice.
@@ -1568,8 +1516,7 @@ function fillBody(b, allBodies, stars) {
     surfacePressureBar,
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
     cloudGas, cloudCoverage, cloudStructure,
-    hazeGas, hazeOpacity,
-    dustiness,
+    hazeAerosols, dustStrength,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,
     periodDays, semiMajorAu,

@@ -57,12 +57,8 @@ export class PlanetsLayer {
     const palette0  = new Float32Array(P * 4);
     const palette1  = new Float32Array(P * 4);
     const palette2  = new Float32Array(P * 4);
-    // Surface palette weights (xyz, sum-to-1) + dustiness (w). The shader
-    // derives the dust-overlay color from the same xyz-weighted blend of
-    // palette0/1/2 that the surface texturing uses (`dustColorFor` and
-    // the surface pass share `dominantResources` as their input), so we
-    // don't need a separate dust-color attribute — just the dustiness
-    // scalar. Packing it here keeps total attribute count under the cap.
+    // Surface palette weights (xyz, sum-to-1). The .w slot is currently
+    // unused and reserved for layer payload in PR 3.
     const weights   = new Float32Array(P * 4);
     // Cloud-layer palette + weights. Banded clouds pick from 4 slots
     // per worley cell: slot 0 = base blend (atm + cloud + haze) at
@@ -108,7 +104,7 @@ export class PlanetsLayer {
       weights[i * 4 + 0] = disc.weights[0];
       weights[i * 4 + 1] = disc.weights[1];
       weights[i * 4 + 2] = disc.weights[2];
-      weights[i * 4 + 3] = disc.dustiness;
+      weights[i * 4 + 3] = 0;
       cloudPalette0[i * 4 + 0] = disc.cloudPalette[0];
       cloudPalette0[i * 4 + 1] = disc.cloudPalette[1];
       cloudPalette0[i * 4 + 2] = disc.cloudPalette[2];

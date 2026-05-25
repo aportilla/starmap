@@ -242,9 +242,8 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const palette0  = new Float32Array(N * 4);
   const palette1  = new Float32Array(N * 4);
   const palette2  = new Float32Array(N * 4);
-  // Weights (xyz) + dustiness (w). See PlanetsLayer for the rationale —
-  // shader derives dust color from the palette × xyz blend so dustiness
-  // is the only per-body dust value we need to send.
+  // Weights (xyz, sum-to-1). The .w slot is reserved for layer payload
+  // in PR 3.
   const weights   = new Float32Array(N * 4);
   // Cloud-layer palette + weights — 4 slots (base blend + 3 accents).
   // Packed into 3 vec4 attributes to stay under gl_MaxVertexAttribs:
@@ -278,7 +277,7 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
     weights[i * 4 + 0] = disc.weights[0];
     weights[i * 4 + 1] = disc.weights[1];
     weights[i * 4 + 2] = disc.weights[2];
-    weights[i * 4 + 3] = disc.dustiness;
+    weights[i * 4 + 3] = 0;
     cloudPalette0[i * 4 + 0] = disc.cloudPalette[0];
     cloudPalette0[i * 4 + 1] = disc.cloudPalette[1];
     cloudPalette0[i * 4 + 2] = disc.cloudPalette[2];

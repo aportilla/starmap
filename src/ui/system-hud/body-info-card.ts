@@ -110,26 +110,6 @@ function dominantGasLabels(b: Body, count = 2): string[] {
     .map(([name, frac]) => frac !== null ? `${name} ${formatGasFrac(frac)}` : name);
 }
 
-// Cloud-layer label as "species coverage%" — the body's visible cloud
-// deck. Distinct from the gas row because the cloud condensate (NH3
-// ice for Jupiter, H2O for Earth, H2SO4 for Venus) carries the visual
-// signal independent of bulk-gas mining yields. null = no cloud layer.
-function cloudLabel(b: Body): string | null {
-  if (b.cloudGas === null) return null;
-  if (b.cloudCoverage === null) return b.cloudGas;
-  const pct = Math.round(b.cloudCoverage * 100);
-  return `${b.cloudGas} ${pct}%`;
-}
-
-// Haze-layer label as "species opacity%" — the photochemical aerosol
-// overlay (Titan tholin, Venus sulfate, Mars dust). null = no haze.
-function hazeLabel(b: Body): string | null {
-  if (b.hazeGas === null) return null;
-  if (b.hazeOpacity === null) return b.hazeGas;
-  const pct = Math.round(b.hazeOpacity * 100);
-  return `${b.hazeGas} ${pct}%`;
-}
-
 interface BodyRow { key: string; val: string }
 
 // Trailing-space padding pads short keys to align the value column.
@@ -172,10 +152,6 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
   }
   const gases = dominantGasLabels(b);
   if (gases.length > 0) rows.push({ key: k('gas'), val: gases.join(', ') });
-  const cloud = cloudLabel(b);
-  if (cloud !== null) rows.push({ key: k('clouds'), val: cloud });
-  const haze = hazeLabel(b);
-  if (haze !== null) rows.push({ key: k('haze'), val: haze });
   // Gas/ice giants have no accessible surface — the procgen resource
   // grid still carries numbers (atmospheric trace species etc.) but
   // nothing's mineable in a "land a rig" sense, so suppress the row to

@@ -245,28 +245,19 @@ export interface Body {
   readonly cloudGas: string | null;
   readonly cloudCoverage: number | null;
   readonly cloudStructure: number | null;
-  // Haze layer — photochemical aerosol sitting above the cloud deck
-  // (or above the surface when no cloud deck exists). One slot — only the
-  // dominant photochemistry product appears. hazeGas names the species
-  // (CH4 → tholin, SO2 → sulfate, NH3+H2S → NH4SH, SILICATE). hazeOpacity
-  // is the uniform alpha [0..1] — Titan ≈ 0.85, Venus ≈ 0.7. Null when no
-  // photochemical haze is present (Earth, ice giants, airless bodies).
-  // Lifted mineral dust is tracked separately via `dustiness` — it's
-  // not a photochemistry product so it doesn't compete for this slot.
-  readonly hazeGas: string | null;
-  readonly hazeOpacity: number | null;
-  // Lifted mineral dust loading [0..1]. Always-on aerosol channel for
-  // terrestrial bodies where surface dust can be entrained into the
-  // atmosphere — dry surface (water suppresses), thin atmosphere (thick
-  // air is too dense for suspension), moderate temperature. Mars ≈ 0.15.
-  // The visible color is drawn from the body's resource mineralogy (iron-
-  // grey on metal-dominant, tan on silicate-dominant, rust on Mars-class),
-  // not a fixed pigment — dust IS surface material in suspension.
-  // Distinct from `hazeGas` because the four photochemistry-product
-  // species share one slot (mutually exclusive regimes), but dust can
-  // coexist with any of them — a hot dusty terrestrial could carry both
-  // sulfate haze chemistry and lifted dust.
-  readonly dustiness: number | null;
+  // Haze contributor list — per-aerosol-species formation strength
+  // (0..1, post-gate, pre-potency) from procgen's chemistry gates. Disc
+  // palette blends these with bulk atm gases × pressure (Rayleigh +
+  // selective absorption) and lifted dust into one hazeColor +
+  // hazeOpacity for the unified haze pass. Species keys: THOLIN, NH4SH,
+  // CHROMOPHORE, SALT, H2SO4, SULFUR, SILICATE. Only firing species
+  // appear in the record. Null on bodies with no atmosphere.
+  readonly hazeAerosols: Readonly<Record<string, number>> | null;
+  // Lifted mineral dust strength [0..1], post-gate. Body resource grid
+  // supplies the color when this folds into the haze blend (iron-grey
+  // on metal-dominant, rust on Mars-class, tan on silicate-dominant).
+  // Null = no atmosphere data (gaseous bodies, airless).
+  readonly dustStrength: number | null;
   // Resources — 0..10 indices, calibrated against Earth (5/6/7/5/4/0).
   readonly resMetals: number | null;
   readonly resSilicates: number | null;
@@ -538,10 +529,11 @@ export const GAS_COLOR: Record<AtmGas, Color> = {
   H2:  new Color(0xf0e4c8),  // pale Jovian
   He:  new Color(0xf4e8d4),  // Jovian cream
   // Aerosol / reaction-product species — only emitted via cloudGas or
-  // hazeGas, never via atm priors. The color is what the visible
-  // condensate / aerosol actually looks like as a layer; procgen runs
-  // the chemistry gates that decide whether the species forms (so the
-  // renderer paints exactly what procgen says — no chemistry magic).
+  // the hazeAerosols contributor list, never via atm priors. The color
+  // is what the visible condensate / aerosol actually looks like as a
+  // layer; procgen runs the chemistry gates that decide whether the
+  // species forms (so the renderer paints exactly what procgen says —
+  // no chemistry magic).
   H2SO4:       new Color(0xd8c474),  // yellow-cream — Venus sulfuric acid deck
   SILICATE:    new Color(0x788098),  // refractive silicate-cloud grey-blue
   DUST:        new Color(0xa86040),  // ferric oxide rust — Mars-class dust
@@ -579,13 +571,13 @@ export const CONDENSATE_COLOR: Partial<Record<AtmGas, Color>> = {
 // renormalizing, so the displayed weights reflect visual contribution
 // rather than abundance. Tunable.
 
-// Multipliers applied to a body's `cloudCoverage` / `hazeOpacity`
-// before folding the species into cloudBandPalette. Both species are
+// Multipliers applied to a body's `cloudCoverage` / aerosol strength
+// before folding the species into cloudBandPalette. Both kinds are
 // condensed-phase chemistry layered onto the gas column — neither
 // dominates the other structurally now that the chromophore is a band
 // accent (not a uniform overlay), so they share the same boost. The
 // remaining 1× / 1× distinction comes from the body's own `coverage`
-// and `opacity` scalars (e.g. Jupiter NH3=1.0 / NH4SH=0.7).
+// and per-species aerosol strength scalars.
 //
 // Calibrated so on Jupiter the resulting weights land roughly at
 // parity with the dominant atm gas (H2 × potency 0.1 ≈ 0.09), so
@@ -593,6 +585,20 @@ export const CONDENSATE_COLOR: Partial<Record<AtmGas, Color>> = {
 // budget — comparable cell areas for the cream zones and tan belts.
 export const CLOUD_VISUAL_BOOST = 0.03;
 export const HAZE_VISUAL_BOOST  = 0.03;
+
+// Universal scales for the unified haze blend — Σ (per-species weight
+// × GAS_POTENCY) × scale, summed across the four contributor channels,
+// then soft-capped via 1 - exp(-Σ) to land in [0, 1).
+//
+// Calibration anchors: Titan ≈ 0.85, Venus ≈ 0.7, Mars ≈ 0.25, Earth
+// ≈ 0.15 hazeOpacity. Tune these globals, not per-species coefficients,
+// if anchors drift. Mirror of HAZE_*_SCALE in procgen-priors.mjs — kept
+// in sync by hand (a future refactor could ship them via the catalog
+// JSON so there's one source of truth).
+export const HAZE_BULK_GAS_SCALE = 0.2;
+export const HAZE_AEROSOL_SCALE  = 0.5;
+export const HAZE_DUST_SCALE     = 0.1;
+export const HAZE_RAYLEIGH_SCALE = 0.15;
 
 // Per-class set of gases that are present in the atmosphere but not
 // visible from above — buried under a cloud deck at the photic depth
@@ -727,8 +733,9 @@ export const GAS_POTENCY: Record<AtmGas, number> = {
   CH4: 6.0,
   SO2: 8.0,
   // Condensate / aerosol / product species — only enter rendering via
-  // cloudGas or hazeGas paths. Potency 3 matches the cloud-former
-  // magnitude so each species contributes meaningfully when emitted.
+  // cloudGas or the hazeAerosols contributor list. Potency 3 matches
+  // the cloud-former magnitude so each species contributes meaningfully
+  // when emitted.
   H2SO4:       3.0,
   SILICATE:    3.0,
   DUST:        3.0,
@@ -803,8 +810,8 @@ const RESOURCE_KEYS: readonly ResourceKey[] = [
 // blend carries the holistic character on ~half the cells.
 //
 // Renderer rule: paint exactly what procgen emits. Jupiter shows NH4SH
-// brown bands because procgen emitted `hazeGas='NH4SH'` — no chromophore
-// inference inside this function.
+// brown bands because procgen emitted NH4SH in `hazeAerosols` — no
+// chromophore inference inside this function.
 //
 // Used by the banded-cloud branch of `buildDiscPalette` for no-surface
 // bodies (gas / ice giants). Surface bodies with banded clouds (Venus)
@@ -838,8 +845,8 @@ export const NO_SURFACE_WORLD_CLASSES: ReadonlySet<string> = new Set([
 // Both effects mute the band chemistry that would otherwise show
 // through.
 //
-// We don't have a stratospheric-haze data slot — only one `hazeGas`
-// slot per body, used for the chromophore — so this heuristic uses
+// We don't yet emit per-altitude haze layers — only a uniform
+// `hazeAerosols` contributor list per body — so this heuristic uses
 // `avgSurfaceTempK` (cloud-top temperature on gas giants) as a proxy
 // that captures the trend cleanly across the four Sol gas giants:
 //
@@ -943,13 +950,16 @@ export function cloudBandPalette(body: Body): CloudBandPalette {
       weight: body.cloudCoverage * (GAS_POTENCY[gas] ?? 1) * CLOUD_VISUAL_BOOST,
     });
   }
-  if (body.hazeGas !== null && body.hazeOpacity !== null) {
-    const gas = body.hazeGas as AtmGas;
-    const col = GAS_COLOR[gas];
-    if (col) cloudHaze.push({
-      color: col,
-      weight: body.hazeOpacity * (GAS_POTENCY[gas] ?? 1) * HAZE_VISUAL_BOOST,
-    });
+  if (body.hazeAerosols !== null) {
+    for (const [species, strength] of Object.entries(body.hazeAerosols)) {
+      const gas = species as AtmGas;
+      const col = GAS_COLOR[gas];
+      if (!col || strength <= 0) continue;
+      cloudHaze.push({
+        color: col,
+        weight: strength * (GAS_POTENCY[gas] ?? 1) * HAZE_VISUAL_BOOST,
+      });
+    }
   }
 
   // Base blend — weighted average across both pools. Atm species

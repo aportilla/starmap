@@ -35,18 +35,14 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 //          alpha = cloudCoverage. Jupiter / Saturn / Uranus / Neptune /
 //          Venus.
 //   3. **Haze** (when aAtmoScalars.z > 0) — uniform per-fragment lerp
-//      toward aHazeColor by hazeOpacity. The photochemistry aerosol
-//      overlay (Titan tholin, Venus sulfate). Mineral dust runs as a
-//      separate (4. Dust) overlay below since it can coexist with any
-//      photochemistry species.
-//   4. **Dust** (when aWeights.w > 0) — uniform per-fragment lerp toward
-//      a dust color derived in-shader from the surface palette × weights
-//      (same source as `dustColorFor(body)` CPU-side: weighted blend of
-//      the body's top-3 resource colors). dustiness rides in aWeights.w
-//      to fit under gl_MaxVertexAttribs without a dedicated attribute.
-//      Independent of photochemistry haze; both can fire.
-//   5. **Rim** — outward halo + inward fade driven by aAtmoScalars.w
-//      (rimWidthPx). Color is the merged-rim blend in aHazeColor.xyz.
+//      toward aHazeColor by hazeOpacity. Unified blend across bulk atm
+//      gases × pressure, Rayleigh scattering, formation-gated aerosol
+//      products (Titan tholin, Venus sulfate, Jovian NH4SH), and lifted
+//      mineral dust. Surface bodies only (no-surface uniform overlay
+//      would crush the cloud-band structure on gas giants).
+//   4. **Rim** — outward halo driven by aAtmoScalars.w (rimWidthPx).
+//      Color is the merged-rim blend in vRimColor (cloud slot 0 +
+//      surface haze contributors, or cloud + atm column on giants).
 //
 // Cloud-structure snaps binary at 0.5 in v1; the procgen distributions
 // produce mostly 0 (terrestrial patchy) or 1 (banded / venusian / gas
@@ -84,11 +80,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       attribute vec4  aPalette1;
       attribute vec4  aPalette2;
       // xyz = surface palette resource weights (sum-to-1 normalized);
-      // w = dustiness [0..1] piggybacked on this attribute to stay under
-      // gl_MaxVertexAttribs. Dust color is derived in the fragment shader
-      // as the same xyz-weighted blend of vPalette0/1/2 that the surface
-      // texturing uses — they share dominantResources(body, 3) as the
-      // source, so no separate aDustColor attribute is needed.
+      // w currently unused — reserved for layer payload in PR 3.
       attribute vec4  aWeights;
       // Cloud-layer palette + weights. Banded clouds pick per worley
       // cell from 4 slots: slot 0 = perceptual base blend (atm + cloud
@@ -1233,23 +1225,6 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         // aerosol color and erase the structure.
         if (vHazeOpacity > 0.0 && vHasSurface > 0.5) {
           col = mix(col, vHazeColor, vHazeOpacity);
-        }
-
-        // ── Dust layer ──
-        // Lifted mineral dust as a uniform aerosol overcoat across the
-        // disc face. Independent of the photochemistry haze above —
-        // models a body that can simultaneously carry sulfate haze AND
-        // suspended dust (a hot dusty terrestrial), or just dust on its
-        // own (Mars). dustiness rides in vWeights.w; dust color is the
-        // body's top-3-resource weighted blend (same expression that
-        // dustColorFor uses CPU-side, just evaluated per-fragment from
-        // the existing surface palette attributes). Gas/ice giants have
-        // no surface to lift from — vWeights.w is zeroed there CPU-side.
-        if (vWeights.w > 0.0 && vHasSurface > 0.5) {
-          vec3 dustCol = vPalette0 * vWeights.x
-                       + vPalette1 * vWeights.y
-                       + vPalette2 * vWeights.z;
-          col = mix(col, dustCol, vWeights.w);
         }
 
         // 1-px hover rim — same as the previous flat-disc material. The
