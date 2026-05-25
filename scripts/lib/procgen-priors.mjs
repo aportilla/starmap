@@ -688,7 +688,7 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v16';
+export const PROCGEN_VERSION = 'v17';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands

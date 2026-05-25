@@ -58,16 +58,8 @@ import { PROCEDURAL_TEXTURE_MIN_PX } from './layout/constants';
 // pressure puffs it past Earth despite ~⅔ Earth's surface pressure),
 // Venus 3 (caps out — high P × hot dominates the high-g penalty).
 // Capped at 3 px so the halo stays a glance-read of "this body has
-// air" rather than a dominant visual element. The shader pairs this
-// outward halo with an INWARD fade whose width is proportional to
-// disc radius — together they simulate the limb's atmospheric column
-// thickening at the disc edge as seen edge-on.
+// air" rather than a dominant visual element.
 const RIM_EXTENT_THRESHOLDS = [0.02, 0.15, 0.7] as const;
-
-// Cap the rim width to this fraction of disc radius so a tiny moon
-// doesn't get visually swamped by its own halo. 0.15 → a 40-px disc
-// caps at 3 px, a 20-px disc caps at 1 px.
-const RIM_MAX_RADIUS_FRACTION = 0.15;
 
 // Outward rim width buckets for no-surface bodies (gas / ice giants /
 // hycean / helium / gas dwarfs). No surfacePressureBar to anchor — at
@@ -374,7 +366,7 @@ function scaleHeightFactor(body: Body): number {
   return (t / 288) / gRel * muMul;
 }
 
-function rimWidthForSurfaceAtmosphere(body: Body, discPx: number): number {
+function rimWidthForSurfaceAtmosphere(body: Body): number {
   const p = body.surfacePressureBar;
   if (p === null || p <= 0) return 0;
   const extent = Math.log10(p + 1) * scaleHeightFactor(body);
@@ -382,19 +374,16 @@ function rimWidthForSurfaceAtmosphere(body: Body, discPx: number): number {
   for (const t of RIM_EXTENT_THRESHOLDS) {
     if (extent >= t) width++;
   }
-  if (width === 0) return 0;
-  const maxWidth = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
-  return Math.min(width, maxWidth);
+  return width;
 }
 
-function rimWidthForNoSurfaceAtmosphere(body: Body, discPx: number): number {
+function rimWidthForNoSurfaceAtmosphere(body: Body): number {
   const factor = scaleHeightFactor(body);
   let width = RIM_NO_SURFACE_BASE_PX;
   for (const t of RIM_NO_SURFACE_FACTOR_THRESHOLDS) {
     if (factor >= t) width++;
   }
-  const maxWidth = Math.max(1, Math.floor((discPx / 2) * RIM_MAX_RADIUS_FRACTION));
-  return Math.min(width, maxWidth);
+  return width;
 }
 
 // World-class color or unknown-grey fallback. Same precedence as the
@@ -586,8 +575,8 @@ export function buildDiscPalette(
     if (mw > 0) {
       rimColorRgb = [mr / mw, mg / mw, mb / mw];
       rimWidthPx = hasSurface
-        ? rimWidthForSurfaceAtmosphere(body, discPx)
-        : rimWidthForNoSurfaceAtmosphere(body, discPx);
+        ? rimWidthForSurfaceAtmosphere(body)
+        : rimWidthForNoSurfaceAtmosphere(body);
       // Presence floor — any contributor that made it into the merger
       // counts as "has atmosphere," so any surface body that fell
       // through the pressure tiers still gets a visible rim. Catches

@@ -347,11 +347,10 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       const float CLOUD_LON_PX = 12.0;
       const float CLOUD_LAT_PX = 5.0;
 
-      // Atmospheric rim — paints both OUTSIDE the disc (the
-      // halo extending into space, 0..3 px driven by pressure) AND
-      // INSIDE the disc near the limb (an edge-on column-thickness fade
-      // proportional to disc radius, simulating atmospheric haze across
-      // the planet's near-tangential limb).
+      // Outward atmospheric halo — paints OUTSIDE the disc, 0..3 px wide
+      // driven by atmospheric column depth (see rimWidthFor* in
+      // disc-palette.ts). No inward fade — the flat pixel aesthetic
+      // doesn't want a soft gradient inside the disc edge.
       //
       // **Stroke-stacking model.** For a halo of width W, conceptually
       // we paint W concentric strokes — one of each width from W down
@@ -362,48 +361,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // layers fade naturally as fewer strokes overlap them. Computed
       // inline rather than actually painting W strokes — the math is
       // the closed form of multiple back-to-front blends.
-      //
-      // **Fake transparency.** Outward halo fragments output
-      // rimColor × alpha as opaque, treating the scene background as
-      // black. This keeps the planet material at transparent=false
-      // so depthWrite and the diagram's per-vertex z-stack still
-      // function. Inward fade is a per-fragment lerp on the surface
-      // color — always opaque output.
       const float OUTER_BASE_ALPHA = 0.35;
-      const float INNER_BASE_ALPHA = 0.35;
-      // Width of the inward fade as a fraction of disc radius. Bands
-      // within this width grow as 1, 2, 3, ... px from the limb inward
-      // following the sphere-projection foreshortening curve — see the
-      // inward-fade block below.
-      const float INWARD_RIM_FRACTION = 0.25;
-
-      // Inward-fade enable flag. 0 disables the per-fragment haze lerp
-      // inside the disc near the limb; the outward halo still paints.
-      // Off while we evaluate whether the inward column-thickness cue
-      // adds enough signal to justify the extra read of vRimColor on
-      // every interior fragment — and whether it competes visually
-      // with the surface palette near the limb. Flip to 1.0 to restore.
-      const float INWARD_RIM_ENABLE = 0.0;
-
-      // Per-pixel dither amplitude (in pixels of distFromLimb) applied
-      // to the inward-fade band boundaries. 1.5 → each pixel jitters by
-      // up to ±0.75 px before its band index is computed, so pixels
-      // near a boundary scatter binary between the two sides. Net
-      // visual: adjacent concentric bands blur into each other and the
-      // rim reads as organic haze rather than clean stripes.
-      const float INWARD_BAND_DITHER = 5.0;
-
-      // Limb forward-scattering brightening — disabled. Models the
-      // longer scattering path at the glancing-angle limb that
-      // brightens the visible signal toward white in real photos. Off
-      // because it was applied as a uniform 30% lerp across every body
-      // regardless of atmospheric column depth, washing species pigment
-      // (Titan tholin, Mars dust) toward a generic pale halo. The
-      // outward halo + inward fade now paint pure vRimColor (the
-      // data-merged blend across cloud + haze + scattering + dust).
-      // Raise above 0 — ideally as a per-body function of column
-      // depth — if dark hazes start vanishing against dark interiors.
-      const float LIMB_BRIGHTEN = 0.0;
 
       // Phase 1.5b — per-region resource-subset selection. Aggregate
       // REGION_PATCH_FACTOR fine worley cells per axis into one
@@ -619,32 +577,24 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         vec2 d = gl_FragCoord.xy - vCenter;
         float r = length(d);
 
-        // Limb color — the merged-rim color (weighted blend across
-        // every visible atmospheric contributor) brightened toward white
-        // by LIMB_BRIGHTEN to model forward scattering at the glancing-
-        // angle column. vRimColor differs from vHazeColor: the rim
-        // blends cloud + species haze + scattering + dust, while
-        // vHazeColor stays pure species pigment for the interior
-        // overlay further down (Titan stays vibrantly tholin inside;
-        // its rim picks up cloud + scatter contributions).
-        vec3 vLimbColor = mix(vRimColor, vec3(1.0), LIMB_BRIGHTEN);
-
-        // Outside the disc — paint the atmospheric halo (1.3a/b outward)
-        // if any, else discard. Sprite is sized to give us vRimWidthPx
-        // pixels of overdraw space in the outward direction. Stack count
-        // for layer L = (W - L): innermost layer (closest to disc) is
-        // covered by the widest stroke and every narrower stroke, so it
-        // accumulates the most opacity. Output uses real alpha so the
-        // halo blends correctly with rings, moons, and other scene
-        // elements behind it (the planet material is transparent=true
-        // for this reason — see the material config below).
+        // Outside the disc — paint the atmospheric halo if any, else
+        // discard. Sprite is sized to give us vRimWidthPx pixels of
+        // overdraw space in the outward direction. Stack count for layer
+        // L = (W - L): innermost layer (closest to disc) is covered by
+        // the widest stroke and every narrower stroke, so it accumulates
+        // the most opacity. Output uses real alpha so the halo blends
+        // correctly with rings, moons, and other scene elements behind
+        // it (the planet material is transparent=true for this reason —
+        // see the material config below). vRimColor is the weighted-
+        // average merger across cloud + species haze + scattering + dust
+        // contributors (see disc-palette.ts).
         if (r > vRadius) {
           if (r > vRadius + vRimWidthPx || vRimWidthPx < 1.0) discard;
           float distOut = r - vRadius;
           float layer = floor(distOut);
           float stackCount = vRimWidthPx - layer;
           float rimA = 1.0 - pow(1.0 - OUTER_BASE_ALPHA, stackCount);
-          gl_FragColor = vec4(vLimbColor, rimA);
+          gl_FragColor = vec4(vRimColor, rimA);
           return;
         }
 
@@ -1300,46 +1250,6 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
                        + vPalette1 * vWeights.y
                        + vPalette2 * vWeights.z;
           col = mix(col, dustCol, vWeights.w);
-        }
-
-        // Phase 1.3a/b INWARD fade — atmospheric haze visible inside
-        // the disc near the limb, simulating column thickening under
-        // edge-on viewing geometry. Applies to BOTH surface and banded
-        // modes: surface bodies show haze over land/ocean/biome, banded
-        // bodies show haze over the band paint. Width = radius ×
-        // INWARD_RIM_FRACTION, purely radius-driven.
-        //
-        // Band widths grow as 1, 2, 3, ... px from the limb inward —
-        // the sphere-projection foreshortening curve. Sampling equal
-        // angular shells from the visible meridian projects to image
-        // bands with widths proportional to k (the shell index), giving
-        // thin bands at the limb and wider ones toward the disc center.
-        // Cumulative width through band k is (k+1)(k+2)/2, so the
-        // inverse map from distFromLimb d to bandIdx is:
-        //   bandIdx = floor((sqrt(1 + 8d) - 1) / 2)
-        //
-        // Same stroke-stacking model as the outward halo: band B
-        // counted from the limb inward gets coverage of (numBands - B)
-        // strokes — limb-side band is most opaque, fading inward.
-        if (INWARD_RIM_ENABLE >= 0.5 && vRimWidthPx >= 1.0) {
-          float maxInward = floor(vRadius * INWARD_RIM_FRACTION);
-          float distIn = vRadius - r;
-          if (distIn < maxInward) {
-            // Dither distFromLimb on a per-pixel hash so band boundaries
-            // scatter binary across a 1–2 px transition zone instead of
-            // landing on perfect concentric circles. Salts (829, 853)
-            // are distinct primes from continent (113, 127), resource
-            // (1009, 2017), biome (197, 311), and cloud (991/997/...).
-            float dJ = hash21(floor(d) + vec2(vSeed * 829.0, vSeed * 853.0)) - 0.5;
-            float distInJ = max(0.0, distIn + dJ * INWARD_BAND_DITHER);
-            float bandIdx  = floor((sqrt(1.0 + 8.0 * distInJ) - 1.0) / 2.0);
-            float numBands = floor((sqrt(1.0 + 8.0 * maxInward) - 1.0) / 2.0);
-            float stackCount = numBands - bandIdx;
-            if (stackCount > 0.0) {
-              float fadeA = 1.0 - pow(1.0 - INNER_BASE_ALPHA, stackCount);
-              col = mix(col, vLimbColor, fadeA);
-            }
-          }
         }
 
         // 1-px hover rim — same as the previous flat-disc material. The

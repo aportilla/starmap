@@ -98,7 +98,7 @@ function formatGasFrac(frac: number): string {
 // worlds — Uranus's 2.3% CH4 vs Jupiter's 0.3% CH4 reads at a glance.
 // Reads atm1/atm2/atm3 directly (CSV-authored, already ordered by
 // fraction descending). Empty when the body has no atmosphere data.
-function dominantGasLabels(b: Body, count = 3): string[] {
+function dominantGasLabels(b: Body, count = 2): string[] {
   const pairs: Array<[string, number | null]> = [
     [b.atm1 ?? '', b.atm1Frac],
     [b.atm2 ?? '', b.atm2Frac],
