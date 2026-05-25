@@ -377,6 +377,14 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       // inward-fade block below.
       const float INWARD_RIM_FRACTION = 0.25;
 
+      // Inward-fade enable flag. 0 disables the per-fragment haze lerp
+      // inside the disc near the limb; the outward halo still paints.
+      // Off while we evaluate whether the inward column-thickness cue
+      // adds enough signal to justify the extra read of vRimColor on
+      // every interior fragment — and whether it competes visually
+      // with the surface palette near the limb. Flip to 1.0 to restore.
+      const float INWARD_RIM_ENABLE = 0.0;
+
       // Per-pixel dither amplitude (in pixels of distFromLimb) applied
       // to the inward-fade band boundaries. 1.5 → each pixel jitters by
       // up to ±0.75 px before its band index is computed, so pixels
@@ -1313,7 +1321,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         // Same stroke-stacking model as the outward halo: band B
         // counted from the limb inward gets coverage of (numBands - B)
         // strokes — limb-side band is most opaque, fading inward.
-        if (vRimWidthPx >= 1.0) {
+        if (INWARD_RIM_ENABLE >= 0.5 && vRimWidthPx >= 1.0) {
           float maxInward = floor(vRadius * INWARD_RIM_FRACTION);
           float distIn = vRadius - r;
           if (distIn < maxInward) {
