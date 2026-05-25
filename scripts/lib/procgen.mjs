@@ -844,23 +844,54 @@ function cloudHazeRegimeFor(body, S) {
   return 'dust_terrestrial';
 }
 
-// Cloud layer — condensed species + coverage + structure derived from
-// the body's regime. Returns nulls when the regime has no atmosphere
-// (null regime) or no cloud entry (defensive — every regime currently
-// defines a cloud).
-function cloudFor(body, S) {
+// Cloud layers — 0..3 stratified decks per body, sorted ascending by
+// altitudeNorm. Each regime in CLOUD_BY_REGIME lists its decks
+// (temperate_gaseous gets 3, volcanic gets 2, the rest get 1). Per
+// deck: condensate gas + sampled coverage + bandness + altitudeNorm.
+// Returns an empty array for bodies in airless / sub-threshold
+// pressure regimes.
+// Surface opacity — 1 when the body has a solid surface the renderer
+// should paint underneath the cloud + haze stack (terrestrials), 0
+// when the bulk atm column shows through cloud rents instead (gas /
+// ice giants / hycean / helium / gas_dwarf). Intermediate values are
+// possible later (partial gas-giant rents in PR 4) but for now this
+// is binary, driven by world class.
+function surfaceOpacityFor(body) {
+  const r = body.radiusEarth;
+  const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  return isGaseous ? 0 : 1;
+}
+
+function cloudLayersFor(body, S) {
   const regime = cloudHazeRegimeFor(body, S);
-  if (regime == null) return { gas: null, coverage: null, structure: null };
+  if (regime == null) return [];
   const spec = CLOUD_BY_REGIME[regime];
-  if (!spec) return { gas: null, coverage: null, structure: null };
+  if (!spec) return [];
   const prng = fieldPrng(body, 'cloud');
-  const coverage  = sampleTruncated(prng, spec.coverage);
-  const structure = sampleTruncated(prng, spec.structure);
-  return {
-    gas: spec.gas,
-    coverage:  Number(coverage.toFixed(3)),
-    structure: Number(structure.toFixed(3)),
-  };
+  const out = [];
+  for (const deck of spec.layers) {
+    const coverage = sampleTruncated(prng, deck.coverage);
+    out.push({
+      gas: deck.gas,
+      coverage: Number(coverage.toFixed(3)),
+      bandness: Number(deck.bandness.toFixed(3)),
+      altitudeNorm: Number(deck.altitudeNorm.toFixed(3)),
+    });
+  }
+  // Pre-sort by altitude so the shader can iterate decks in
+  // composition order without re-sorting at upload time.
+  out.sort((a, b) => a.altitudeNorm - b.altitudeNorm);
+  return out;
+}
+
+// True if the body has any cloud deck whose condensate is `gas`.
+// Used by chemistry gates that require a specific cloud-deck
+// precursor (NH4SH and CHROMOPHORE need NH3 ice).
+function hasCloudDeck(body, gas) {
+  const layers = body.cloudLayers;
+  if (!layers || layers.length === 0) return false;
+  for (const l of layers) if (l.gas === gas) return true;
+  return false;
 }
 
 // Molar fraction of `gas` in body.atm1/atm2/atm3, or 0 when absent.
@@ -935,10 +966,11 @@ function hazeContribution(gas, body) {
     case 'NH4SH': {
       // Ammonium hydrosulfide cloud-top chemistry — Jovian belt brown.
       // Peak at Jupiter's cloud top (~165K) where NH3 + H2S → NH4SH
-      // condensate runs fastest.
+      // condensate runs fastest. Requires an NH3 cloud deck (the
+      // precursor) somewhere in the body's layered atmosphere.
       if (!isGaseous) return 0;
       if (T == null) return 0;
-      if (body.cloudGas !== 'NH3') return 0;
+      if (!hasCloudDeck(body, 'NH3')) return 0;
       const tempGate = smoothstep(120, 165, T) * (1 - smoothstep(165, 225, T));
       return tempGate;
     }
@@ -948,7 +980,7 @@ function hazeContribution(gas, body) {
       // is too slow for NH4SH dominance.
       if (!isGaseous) return 0;
       if (T == null) return 0;
-      if (body.cloudGas !== 'NH3') return 0;
+      if (!hasCloudDeck(body, 'NH3')) return 0;
       const tempGate = smoothstep(90, 125, T) * (1 - smoothstep(125, 180, T));
       return tempGate;
     }
@@ -1264,7 +1296,7 @@ function fillBody(b, allBodies, stars) {
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
-    cloudGas, cloudCoverage, cloudStructure,
+    cloudLayers, surfaceOpacity,
     hazeAerosols, dustStrength,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,
@@ -1433,16 +1465,16 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac };
 
-  // Cloud layer — condensed species + coverage + structure. Regime
-  // dispatch (cloudHazeRegimeFor) shares one set of physical thresholds
-  // with the haze layer below.
-  if (unknowns.has('cloudGas') || unknowns.has('cloudCoverage') || unknowns.has('cloudStructure')) {
-    const c = cloudFor(working, S);
-    if (unknowns.has('cloudGas'))       cloudGas       = c.gas;
-    if (unknowns.has('cloudCoverage'))  cloudCoverage  = c.coverage;
-    if (unknowns.has('cloudStructure')) cloudStructure = c.structure;
+  // Cloud layers — up to 3 stratified decks. Regime dispatch
+  // (cloudHazeRegimeFor) chooses the deck list; curated bodies that
+  // authored decks in body_layers.csv skip this and keep the CSV
+  // values. Surface opacity is co-derived here so the renderer always
+  // has a scalar to drive composition (gas giants = 0, terrestrials = 1).
+  if (unknowns.has('cloudLayers')) {
+    cloudLayers = cloudLayersFor(working, S);
   }
-  working = { ...working, cloudGas, cloudCoverage, cloudStructure };
+  surfaceOpacity = surfaceOpacityFor(working);
+  working = { ...working, cloudLayers, surfaceOpacity };
 
   // Unified haze derivation — emits per-species aerosol formation
   // strengths + dust strength. Final opacity + color are blended at
@@ -1515,7 +1547,7 @@ function fillBody(b, allBodies, stars) {
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,
     atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
-    cloudGas, cloudCoverage, cloudStructure,
+    cloudLayers, surfaceOpacity,
     hazeAerosols, dustStrength,
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     biosphereArchetype, biosphereTier,

@@ -1484,68 +1484,50 @@ export const CLOUD_REGIME_THRESHOLDS = {
 //
 // Sampled once per body via fieldPrng(body, 'cloud').
 export const CLOUD_BY_REGIME = {
-  // Hot gas/sub-Neptune — refractive silicate clouds at full coverage,
-  // banded by the same zonal circulation as cooler giants.
-  hot_gaseous: {
-    gas: 'SILICATE',
-    coverage:  { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-    structure: { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-  },
+  // Hot gas/sub-Neptune — refractive silicate clouds, banded.
+  hot_gaseous: { layers: [
+    { gas: 'SILICATE', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.85 },
+  ]},
   // Hycean — water cloud deck over warm H2/He atmosphere.
-  hycean: {
-    gas: 'H2O',
-    coverage:  { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-    structure: { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-  },
+  hycean: { layers: [
+    { gas: 'H2O', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.80 },
+  ]},
   // Cold gaseous (ice giants) — CH4 absorption is the visible signal;
-  // deeper NH3/H2O clouds are hidden. Banded.
-  cold_gaseous: {
-    gas: 'CH4',
-    coverage:  { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-    structure: { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-  },
-  // Temperate gaseous (Jupiter/Saturn-class) — NH3 ice clouds at full
-  // coverage, banded.
-  temperate_gaseous: {
-    gas: 'NH3',
-    coverage:  { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-    structure: { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-  },
-  // Cold terrestrial (Titan / Triton-class) — sparse methane / nitrogen
-  // ice clouds, patchy. Most of the visual signal is the haze above
-  // (see HAZE_BY_REGIME).
-  cold_terrestrial: {
-    gas: 'CH4',
-    coverage:  { mean: 0.15, sd: 0.10, min: 0.02, max: 0.40 },
-    structure: { mean: 0.00, sd: 0.0,  min: 0.0,  max: 0.0  },
-  },
-  // Volcanic / Venusian — sulfuric-acid droplet deck at full coverage,
-  // banded by superrotation. SO2 sulfate haze sits above (see haze).
-  volcanic: {
-    gas: 'H2SO4',
-    coverage:  { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-    structure: { mean: 1.00, sd: 0.0,  min: 1.0,  max: 1.0  },
-  },
+  // deeper decks are hidden under the CH4 absorption layer.
+  cold_gaseous: { layers: [
+    { gas: 'CH4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.85 },
+  ]},
+  // Temperate gaseous (Jupiter/Saturn-class) — three-deck stratified
+  // model: deep H2O ice → mid NH4SH chromophore (the belt brown) →
+  // top NH3 ice (the bright zones).
+  temperate_gaseous: { layers: [
+    { gas: 'H2O',   coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.20 },
+    { gas: 'NH4SH', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.90, altitudeNorm: 0.50 },
+    { gas: 'NH3',   coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.85 },
+  ]},
+  // Cold terrestrial (Titan / Triton-class) — sparse methane ice
+  // clouds, patchy. Most of the visual signal is the haze.
+  cold_terrestrial: { layers: [
+    { gas: 'CH4', coverage: { mean: 0.15, sd: 0.10, min: 0.02, max: 0.40 }, bandness: 0.05, altitudeNorm: 0.40 },
+  ]},
+  // Volcanic / Venusian — two-deck H2SO4 droplet stack at deep + mid
+  // altitudes, banded by superrotation.
+  volcanic: { layers: [
+    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.30 },
+    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.70 },
+  ]},
   // Biotic wet (Earth-class with active biosphere) — patchy H2O clouds.
-  // Transpiration lifts the cycle slightly relative to the wet branch.
-  biotic_wet: {
-    gas: 'H2O',
-    coverage:  { mean: 0.45, sd: 0.10, min: 0.20, max: 0.65 },
-    structure: { mean: 0.00, sd: 0.0,  min: 0.0,  max: 0.0  },
-  },
+  biotic_wet: { layers: [
+    { gas: 'H2O', coverage: { mean: 0.45, sd: 0.10, min: 0.20, max: 0.65 }, bandness: 0.10, altitudeNorm: 0.50 },
+  ]},
   // Wet terrestrial — patchy H2O clouds over ocean coverage.
-  wet_terrestrial: {
-    gas: 'H2O',
-    coverage:  { mean: 0.35, sd: 0.10, min: 0.10, max: 0.55 },
-    structure: { mean: 0.00, sd: 0.0,  min: 0.0,  max: 0.0  },
-  },
-  // Dust terrestrial (Mars-class) — sparse high cirrus. Most of the
-  // atmospheric visual signal is the dust haze (see haze regime).
-  dust_terrestrial: {
-    gas: 'H2O',
-    coverage:  { mean: 0.05, sd: 0.03, min: 0.01, max: 0.15 },
-    structure: { mean: 0.00, sd: 0.0,  min: 0.0,  max: 0.0  },
-  },
+  wet_terrestrial: { layers: [
+    { gas: 'H2O', coverage: { mean: 0.35, sd: 0.10, min: 0.10, max: 0.55 }, bandness: 0.10, altitudeNorm: 0.50 },
+  ]},
+  // Dust terrestrial (Mars-class) — sparse high cirrus.
+  dust_terrestrial: { layers: [
+    { gas: 'H2O', coverage: { mean: 0.05, sd: 0.03, min: 0.01, max: 0.15 }, bandness: 0.00, altitudeNorm: 0.60 },
+  ]},
 };
 
 // Haze layer is derived directly from body physics in procgen.mjs's

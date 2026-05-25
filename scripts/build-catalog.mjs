@@ -485,6 +485,7 @@ function buildClusters(stars) {
 // runtime API is uniform `T | null` and consumers don't need to distinguish.
 
 const BODIES_FILE = 'bodies.csv';
+const BODY_LAYERS_FILE = 'body_layers.csv';
 const WORLD_CLASSES = new Set([
   // Terrestrial
   'rocky', 'solid_giant', 'desert', 'ocean', 'ice',
@@ -543,8 +544,6 @@ const BODY_NUMERIC_FIELDS = [
   ['atm1_frac',              'atm1Frac'],
   ['atm2_frac',              'atm2Frac'],
   ['atm3_frac',              'atm3Frac'],
-  ['cloud_coverage',         'cloudCoverage'],
-  ['cloud_structure',        'cloudStructure'],
   ['res_metals',             'resMetals'],
   ['res_silicates',          'resSilicates'],
   ['res_volatiles',          'resVolatiles'],
@@ -561,7 +560,6 @@ const BODY_STRING_FIELDS = [
   ['atm1', 'atm1'],
   ['atm2', 'atm2'],
   ['atm3', 'atm3'],
-  ['cloud_gas', 'cloudGas'],
 ];
 
 function cellOrNull(raw) {
@@ -698,6 +696,57 @@ function parseCsvBodies(text, label) {
     out.push(body);
   }
   return out;
+}
+
+// Parses body_layers.csv — per-body cloud-deck overrides for curated
+// Sol bodies. Each row authors one deck: body_id joins back to a body,
+// layer_index orders rows (also sorts ascending by altitude_norm at
+// emit time). Returns Map<bodyId, CloudLayer[]>.
+function parseCsvBodyLayers(text, label) {
+  const rows = parseCsv(text);
+  const header = rows.shift();
+  if (!header) throw new Error(`${label}: empty CSV`);
+  const colIdx = (name) => {
+    const i = header.indexOf(name);
+    if (i < 0) throw new Error(`${label}: missing column ${name}`);
+    return i;
+  };
+  const ix = {
+    body_id: colIdx('body_id'),
+    layer_index: colIdx('layer_index'),
+    gas: colIdx('gas'),
+    coverage: colIdx('coverage'),
+    bandness: colIdx('bandness'),
+    altitude_norm: colIdx('altitude_norm'),
+  };
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!row.length || (row.length === 1 && !row[0])) continue;
+    const bodyId = (row[ix.body_id] ?? '').trim();
+    if (!bodyId) continue;
+    const gas = (row[ix.gas] ?? '').trim();
+    if (!gas) throw new Error(`${label}: ${bodyId} layer missing gas`);
+    const num = (key) => {
+      const v = Number((row[ix[key]] ?? '').trim());
+      if (!Number.isFinite(v) || v < 0 || v > 1) {
+        throw new Error(`${label}: ${bodyId} layer ${key}=${row[ix[key]]} out of [0,1]`);
+      }
+      return v;
+    };
+    const layer = {
+      gas,
+      coverage: num('coverage'),
+      bandness: num('bandness'),
+      altitudeNorm: num('altitude_norm'),
+    };
+    const list = grouped.get(bodyId) ?? [];
+    list.push(layer);
+    grouped.set(bodyId, list);
+  }
+  // Sort each body's decks ascending by altitudeNorm so the shader
+  // composites deep → top without re-sorting at upload time.
+  for (const list of grouped.values()) list.sort((a, b) => a.altitudeNorm - b.altitudeNorm);
+  return grouped;
 }
 
 // Resolves each body's host and builds parent → children index lists. Planets
@@ -848,6 +897,29 @@ async function main() {
 
   const bodiesText = await readFile(resolve(DATA_DIR, BODIES_FILE), 'utf8');
   const rawBodies = parseCsvBodies(bodiesText, BODIES_FILE);
+  const bodyLayersText = await readFile(resolve(DATA_DIR, BODY_LAYERS_FILE), 'utf8');
+  const bodyLayersByBodyId = parseCsvBodyLayers(bodyLayersText, BODY_LAYERS_FILE);
+  // Attach curated cloud-deck overrides. Bodies with entries get
+  // cloudLayers populated + flagged not-unknown so the Filler skips
+  // synthesis. Bodies without entries get cloudLayers=null + the
+  // 'cloudLayers' unknown so Filler runs cloudLayersFor on them.
+  for (const b of rawBodies) {
+    const decks = bodyLayersByBodyId.get(b.id);
+    if (decks && decks.length > 0) {
+      b.cloudLayers = decks;
+    } else {
+      b.cloudLayers = null;
+      b._unknowns.push('cloudLayers');
+    }
+  }
+  // Sanity check: warn for body_layers.csv entries that reference
+  // bodies missing from bodies.csv (typos, stale rows).
+  const bodyIds = new Set(rawBodies.map((b) => b.id));
+  for (const id of bodyLayersByBodyId.keys()) {
+    if (!bodyIds.has(id)) {
+      console.warn(`${BODY_LAYERS_FILE}: orphan layer for unknown body ${id}`);
+    }
+  }
 
   // Architect — generate full procgen systems for stars with no catalog
   // planets. Catalog-anchored stars go through the overlay below instead.

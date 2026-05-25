@@ -103,6 +103,18 @@ export type BiosphereTier =
 export type BodyKind = 'planet' | 'moon' | 'belt' | 'ring';
 export type BodySource = 'catalog' | 'procgen';
 
+// One cloud deck on a body. Up to 3 per body, stratified by
+// altitudeNorm — the deepest deck composites first, the top deck last.
+// `bandness` lerps the cloud renderer's cell aspect + color-hash mode
+// continuously from patchy cellular (0) through fully banded zonal
+// (1); intermediate values produce organic in-between structures.
+export interface CloudLayer {
+  readonly gas: string;
+  readonly coverage: number;    // 0..1 — fraction of disc covered
+  readonly bandness: number;    // 0..1 — patchy → banded interpolant
+  readonly altitudeNorm: number;// 0..1 — deep → top
+}
+
 // One planet or moon. Catalog-sourced rows come from
 // scripts/scrape-planets-from-stellarcatalog.mjs; hand-seeded Sol bodies and
 // (later) procgen output share the same shape. `kind` discriminates whether
@@ -233,18 +245,22 @@ export interface Body {
   readonly atm2Frac: number | null;
   readonly atm3: string | null;
   readonly atm3Frac: number | null;
-  // Cloud layer — condensed species that forms the body's visible cloud
-  // deck. Independent of atm1/atm2/atm3 (which carry the gas-phase mix
-  // for gameplay). cloudGas names the condensate (H2O ice/droplets, NH3
-  // ice, CH4 ice, H2SO4 droplets, SILICATE condensate, etc.).
-  // cloudCoverage is the rendered fraction of the disc covered by clouds
-  // (Earth ≈ 0.4 patchy, Jupiter = 1.0 full deck). cloudStructure is the
-  // pattern scalar: 0 = patchy cellular (Earth, Mars), 1 = banded zonal
-  // (Venus, gas giants). Null when the body has no visible cloud layer
-  // (Mercury, airless moons).
-  readonly cloudGas: string | null;
-  readonly cloudCoverage: number | null;
-  readonly cloudStructure: number | null;
+  // Cloud layers — up to 3 stratified decks per body, sorted ascending
+  // by altitudeNorm (deep first, top last). Each deck names its
+  // condensate gas (H2O ice/droplets, NH3 ice, CH4 ice, H2SO4 droplets,
+  // SILICATE condensate, etc.), the fraction of disc covered, a bandness
+  // scalar in [0..1] for organic patchy↔banded interpolation (0 =
+  // patchy cellular like Earth's trade-winds; 1 = banded zonal like
+  // Jupiter's zones), and a normalized altitude. Empty array for
+  // bodies with no visible cloud cover (Mercury, airless moons).
+  readonly cloudLayers: readonly CloudLayer[];
+  // Surface opacity [0..1]. 1 = solid surface visible underneath the
+  // atmospheric layers (terrestrials). 0 = no visible surface, the
+  // bulk atm column shows through cloud rents instead (gas / ice giants
+  // / hycean / helium / gas_dwarf). The disc shader runs the surface
+  // pass regardless; this scalar controls how much it contributes to
+  // the composition.
+  readonly surfaceOpacity: number;
   // Haze contributor list — per-aerosol-species formation strength
   // (0..1, post-gate, pre-potency) from procgen's chemistry gates. Disc
   // palette blends these with bulk atm gases × pressure (Rayleigh +
@@ -942,12 +958,13 @@ export function cloudBandPalette(body: Body): CloudBandPalette {
   addAtm(body.atm2, body.atm2Frac);
   addAtm(body.atm3, body.atm3Frac);
 
-  if (body.cloudGas !== null && body.cloudCoverage !== null) {
-    const gas = body.cloudGas as AtmGas;
+  for (const layer of body.cloudLayers) {
+    const gas = layer.gas as AtmGas;
     const col = CONDENSATE_COLOR[gas] ?? GAS_COLOR[gas];
-    if (col) cloudHaze.push({
+    if (!col || layer.coverage <= 0) continue;
+    cloudHaze.push({
       color: col,
-      weight: body.cloudCoverage * (GAS_POTENCY[gas] ?? 1) * CLOUD_VISUAL_BOOST,
+      weight: layer.coverage * (GAS_POTENCY[gas] ?? 1) * CLOUD_VISUAL_BOOST,
     });
   }
   if (body.hazeAerosols !== null) {

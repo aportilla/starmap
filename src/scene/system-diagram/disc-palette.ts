@@ -452,9 +452,17 @@ export function buildDiscPalette(
   }
 
   // ── CLOUD PALETTE — base+accent for banded, single condensate for patchy ──
-  const cloudGas = body.cloudGas as AtmGas | null;
-  const rawCloudCoverage  = body.cloudCoverage ?? 0;
-  const rawCloudStructure = body.cloudStructure ?? 0;
+  // For now (Phase B of the layered cloud rollout) the shader still
+  // takes a single deck. Pick the top layer (highest altitudeNorm —
+  // last in the procgen-sorted array) as the representative deck;
+  // Phase D will dispatch all layers to the shader through a per-body
+  // data texture.
+  const topLayer = body.cloudLayers.length > 0
+    ? body.cloudLayers[body.cloudLayers.length - 1]
+    : null;
+  const cloudGas = topLayer ? (topLayer.gas as AtmGas) : null;
+  const rawCloudCoverage  = topLayer?.coverage ?? 0;
+  const rawCloudStructure = topLayer?.bandness ?? 0;
   let cC0 = new Color(0, 0, 0);
   let cC1 = new Color(0, 0, 0);
   let cC2 = new Color(0, 0, 0);
