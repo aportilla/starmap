@@ -594,21 +594,17 @@ export const CONDENSATE_COLOR: Partial<Record<AtmGas, Color>> = {
 // × GAS_POTENCY) × scale, summed across the four contributor channels,
 // then soft-capped via 1 - exp(-Σ) to land in [0, 1).
 //
-// Every contributor's weight is multiplied by `log10(P+1)` in
-// `surfaceHazeContributors`, so these scales are calibrated against
+// Every contributor's weight is multiplied by `atmColumnFactor(body)`
+// in `surfaceHazeContributors` — log10(P/g_norm + 1), the true
+// Earth-normalized vertical column-mass density. Low-gravity bodies
+// (Titan, Pluto) accumulate more atmospheric mass per unit surface
+// pressure than Earth, so their haze saturates at lower P than the raw
+// surface-pressure model implied. These scales are calibrated against
 // thick-column anchors (Titan-class for aerosol, Venus-class for bulk
-// gas). Thin-column bodies see proportionally less haze regardless of
-// per-species formation strength — a 0.01-bar body with strong
-// aerosols can't paint full haze because there's no column to carry
-// them. Aerosol scale is set so Titan-class anchors land near their
-// old hazeOpacity even after the new logP factor; dust scale is bumped
-// to keep dusty bodies in the 0.1–1 bar regime visibly hazy, accepting
-// that sub-0.01-bar bodies (Mars-class) now read as clear with only
-// localized dust storms rather than a global haze tint. Tune these
-// globals, not per-species coefficients, if anchors drift. Mirror of
-// HAZE_*_SCALE in procgen-priors.mjs — kept in sync by hand (a future
-// refactor could ship them via the catalog JSON so there's one source
-// of truth).
+// gas). Tune these globals, not per-species coefficients, if anchors
+// drift. Mirror of HAZE_*_SCALE in procgen-priors.mjs — kept in sync
+// by hand (a future refactor could ship them via the catalog JSON so
+// there's one source of truth).
 export const HAZE_BULK_GAS_SCALE = 0.2;
 export const HAZE_AEROSOL_SCALE  = 1.25;
 export const HAZE_DUST_SCALE     = 3.0;

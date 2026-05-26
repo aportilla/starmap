@@ -1012,7 +1012,12 @@ function hazeContribution(gas, body) {
       if (tempGate === 0) return 0;
       const ch4Frac = atmFracOf(body, 'CH4');
       const n2Frac  = atmFracOf(body, 'N2');
-      const ch4Gate = smoothstep(0.001, 0.05, ch4Frac);
+      // ch4Gate saturates near Titan's ~2.8% CH4 — IRL Titan is the
+      // canonical fully-saturated THOLIN case, so the bottleneck is UV
+      // flux (captured by tempGate as a T proxy) rather than precursor
+      // supply. Bodies with sub-Titan CH4 still ramp in via the lower
+      // edge.
+      const ch4Gate = smoothstep(0.001, 0.04, ch4Frac);
       const n2Gate  = smoothstep(0.1, 0.6, n2Frac);
       return tempGate * ch4Gate * n2Gate;
     }

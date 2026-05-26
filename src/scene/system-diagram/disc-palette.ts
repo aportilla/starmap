@@ -187,8 +187,11 @@ export interface DiscPalette {
   // (surface + cloud). Derived from the unified contributor blend
   // (bulk atm gases × pressure × potency, formation-gated aerosol
   // products, lifted dust from body mineralogy, Rayleigh scattering)
-  // soft-capped via 1 - exp(-Σ). Titan ≈ 0.85, Venus ≈ 0.7, Mars ≈
-  // 0.25, Earth ≈ 0.15. Zero on bodies with no atmosphere data.
+  // soft-capped via 1 - exp(-Σ). Titan ≈ 0.92 (puffy-column-anchored —
+  // low gravity piles ~10× Earth-equivalent atmospheric mass per unit
+  // surface pressure, matching real Titan's orbit-invisible surface),
+  // Venus ≈ 0.7, Mars ≈ 0.30 (dust storms now visible from orbit),
+  // Earth ≈ 0.15. Zero on bodies with no atmosphere data.
   readonly hazeOpacity: number;
   // Unified haze blend color — weighted average across every
   // atmospheric contributor (bulk gases, Rayleigh, aerosol products,
@@ -250,15 +253,18 @@ function dustColorFor(body: Body): Color {
 // (`hazeAerosols`), and lifted mineral dust colored by the body's
 // resource mineralogy.
 //
-// Every contributor weight is multiplied by `log10(P+1)` — column mass
-// proxy. Aerosol formation strength and dust suspension strength are
-// "per-unit-column" signals from the procgen gates; multiplying by
-// column thickness gives visible opacity. Without this, a 0.01-bar
-// body with the same dust-storm activity as Mars (P=0.006) would
-// render at full haze with no atmospheric column to actually carry the
-// aerosols. Surface bodies with no atmosphere (P null/0) contribute
-// nothing here — they're handled by the no-surface stratospheric path
-// in `hazeBlendFor`.
+// Every contributor weight is multiplied by `atmColumnFactor(body)` =
+// log10(P/g + 1) — true column-mass-per-unit-area proxy in Earth-
+// normalized units. Aerosol formation strength and dust suspension
+// strength are "per-unit-column" signals from the procgen gates;
+// multiplying by column thickness gives visible opacity. The 1/g
+// factor (over plain log10(P+1)) is the puffy-column effect: low-
+// gravity bodies pile more atmospheric mass per unit surface pressure,
+// so Titan-class (g=0.135) sits ~2.75× more opaque than its surface
+// pressure alone would suggest, matching the IRL observation that
+// Titan's surface is invisible from orbit. Surface bodies with no
+// atmosphere (P null/0) contribute nothing here — they're handled by
+// the no-surface stratospheric path in `hazeBlendFor`.
 //
 // Aerosol species that already paint as a cloud deck on this body are
 // skipped — they shouldn't double-count as stratospheric haze. Species
@@ -268,7 +274,7 @@ function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: numb
   const out: Array<{ color: Color; weight: number }> = [];
   const P = body.surfacePressureBar;
   if (P === null || P <= 0) return out;
-  const logP = Math.log10(P + 1);
+  const colFactor = atmColumnFactor(body);
   const atmPairs: Array<[AtmGas | null, number | null]> = [
     [body.atm1 as AtmGas | null, body.atm1Frac],
     [body.atm2 as AtmGas | null, body.atm2Frac],
@@ -279,12 +285,12 @@ function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: numb
     const col = GAS_COLOR[gas];
     const potency = GAS_POTENCY[gas] ?? 0;
     if (col && potency > 0) {
-      out.push({ color: col, weight: frac * potency * logP * HAZE_BULK_GAS_SCALE });
+      out.push({ color: col, weight: frac * potency * colFactor * HAZE_BULK_GAS_SCALE });
     }
     const sCol = SCATTERING_COLOR[gas];
     const sPotency = SCATTERING_POTENCY[gas] ?? 0;
     if (sCol && sPotency > 0) {
-      out.push({ color: sCol, weight: frac * sPotency * logP * HAZE_RAYLEIGH_SCALE });
+      out.push({ color: sCol, weight: frac * sPotency * colFactor * HAZE_RAYLEIGH_SCALE });
     }
   }
   if (body.hazeAerosols !== null) {
@@ -297,13 +303,13 @@ function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: numb
       const col = GAS_COLOR[gas];
       const potency = GAS_POTENCY[gas] ?? 0;
       if (!col || potency <= 0) continue;
-      out.push({ color: col, weight: strength * potency * logP * HAZE_AEROSOL_SCALE });
+      out.push({ color: col, weight: strength * potency * colFactor * HAZE_AEROSOL_SCALE });
     }
   }
   if (body.dustStrength !== null && body.dustStrength > 0) {
     const potency = GAS_POTENCY.DUST ?? 0;
     if (potency > 0) {
-      out.push({ color: dustColorFor(body), weight: body.dustStrength * potency * logP * HAZE_DUST_SCALE });
+      out.push({ color: dustColorFor(body), weight: body.dustStrength * potency * colFactor * HAZE_DUST_SCALE });
     }
   }
   return out;
@@ -378,6 +384,30 @@ function atmColumnColor(body: Body): Color | null {
   }
   if (totalW <= 0) return null;
   return new Color(r / totalW, g / totalW, b / totalW);
+}
+
+// Earth-normalized atmospheric column-mass proxy for vertical viewing
+// (orbit straight down). Hydrostatic equilibrium gives column mass per
+// unit area = P/g, so a low-gravity body with the same surface pressure
+// as Earth has more atmospheric mass — and therefore more aerosol
+// particles — in the line of sight. Titan at 1.45 bar / 0.135 g_earth
+// returns log10(10.7 + 1) ≈ 1.07 vs the surface-pressure-only
+// log10(2.45) ≈ 0.39 — the "puffy column" effect that makes Titan's
+// haze read as opaque from orbit even though its surface pressure is
+// only ~1.5× Earth's. Sibling to scaleHeightFactor (slant-path proxy
+// for the rim); both are Earth-normalized atmospheric measures, but
+// column mass density (this one) is the right physics for vertical
+// optical depth through aerosols and bulk gas absorption. Nulls or
+// unphysical inputs fall back to plain log10(P+1).
+function atmColumnFactor(body: Body): number {
+  const p = body.surfacePressureBar;
+  if (p === null || p <= 0) return 0;
+  const m = body.massEarth;
+  const r = body.radiusEarth;
+  if (m === null || r === null || r <= 0) return Math.log10(p + 1);
+  const gRel = m / (r * r);
+  if (gRel <= 0) return Math.log10(p + 1);
+  return Math.log10(p / gRel + 1);
 }
 
 // Earth-relative atmospheric scale-height proxy. H = kT/(μg);
