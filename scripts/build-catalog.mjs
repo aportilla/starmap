@@ -17,7 +17,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
-import { generateSystem, generateMoons, generateRing, generateOverlay } from './lib/procgen-architect.mjs';
+import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES } from './lib/procgen-priors.mjs';
 import { frostLineAU } from './lib/astrophysics.mjs';
 
@@ -992,6 +992,62 @@ async function main() {
     }
   }
 
+  const starById = new Map(placedStars.map(s => [s.id, s]));
+
+  // Partial-anchor synthesis — catalog rows that arrived with a host
+  // and a period column but no measured mass (transit-only detections,
+  // direct-imaging companions whose mass is too poorly constrained to
+  // record). Without this pass `radiusFromMass(null)` returns null, the
+  // Filler's terrestrial branch needs T which needs S which needs mass
+  // for pressure, and the body cascades to a featureless gray disc
+  // with `worldClass=null`. The synthesis sits ahead of the moon and
+  // ring backfill below so generateMoons / generateRing see populated
+  // anchors. Curated systems (Sol) bypass this for the same reason
+  // they bypass moon backfill — their CSV is authoritative.
+  const diskCtxCache = new Map();
+  const getDiskCtx = (starId) => {
+    if (!diskCtxCache.has(starId)) {
+      const s = starById.get(starId);
+      diskCtxCache.set(starId, s ? starDiskContext(s) : null);
+    }
+    return diskCtxCache.get(starId);
+  };
+  for (const body of rawBodies) {
+    if (body.kind !== 'planet') continue;
+    if (body.source !== 'catalog') continue;
+    if (body.massEarth != null) continue;
+    if (CURATED_SYSTEM_HOSTS.has(body.hostId)) continue;
+    const host = starById.get(body.hostId);
+    if (!host) continue;
+    // The synthesis needs a formation orbit. Kepler-derive semiMajorAu
+    // from periodDays on the fly here (the Filler does the same a step
+    // later — we just need it available now). Write through so the
+    // moon + ring backfill below sees the same value.
+    if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
+      body.semiMajorAu = Number(
+        Math.pow(Math.pow(body.periodDays / 365.25, 2) * host.mass, 1 / 3).toFixed(5)
+      );
+      const u = body._unknowns;
+      if (Array.isArray(u)) {
+        const idx = u.indexOf('semiMajorAu');
+        if (idx >= 0) u.splice(idx, 1);
+      }
+    }
+    const diskCtx = getDiskCtx(host.id);
+    if (!diskCtx) continue;
+    const synth = synthesizePartialAnchor(host, body, diskCtx);
+    if (!synth) continue;
+    body.massEarth = synth.massEarth;
+    body.radiusEarth = synth.radiusEarth;
+    // Strip from _unknowns so the Filler treats these as anchors rather
+    // than re-deriving — load-bearing for radius, whose Filler path
+    // (`radiusFromMass(mass)`) would overwrite the scattered radius we
+    // just sampled with the plain piecewise mean.
+    if (Array.isArray(body._unknowns)) {
+      body._unknowns = body._unknowns.filter(f => f !== 'massEarth' && f !== 'radiusEarth');
+    }
+  }
+
   // Moon backfill — observed exoplanets almost never have moon coverage
   // in the catalog (RV/transit detection bias against picking out
   // satellite signals), so without this pass every catalog planet would
@@ -1009,7 +1065,6 @@ async function main() {
   // moons that contradict the curated truth.
   const catalogMoonHosts = new Set(rawBodies.filter(b => b.kind === 'moon').map(b => b.hostId));
   const catalogRingHosts = new Set(rawBodies.filter(b => b.kind === 'ring').map(b => b.hostId));
-  const starById = new Map(placedStars.map(s => [s.id, s]));
   const backfillMoons = [];
   const backfillRings = [];
   for (const planet of rawBodies) {

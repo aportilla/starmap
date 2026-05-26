@@ -75,6 +75,16 @@ function moonPrng(planetId, mIdx, salt) {
   return mulberry32(hash32(`${planetId}:moon${mIdx}:${salt}:${PROCGEN_VERSION}`));
 }
 
+// Per-(planet, salt) PRNG for partial-anchor backfill — synthesizing
+// mass / radius for catalog rows that arrived with a host star + period
+// but no measured mass (transit-only or direct-imaging detections that
+// the catalog can't constrain). Seeded off planet.id like moonPrng so
+// the draw is stable across builds and independent of the architect's
+// per-star slot seeds, which never reached these rows.
+function partialPrng(planetId, salt) {
+  return mulberry32(hash32(`${planetId}:partial:${salt}:${PROCGEN_VERSION}`));
+}
+
 // Sample a body's bulkWaterFraction (0..1 H₂O mass fraction) keyed on
 // the formation zone — which snow lines the body accreted past. Threads
 // formationAu + frostLinesAu rather than current insolation, so a
@@ -759,6 +769,109 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
     bulkMetalFraction,
     bulkVolatileFraction,
   });
+}
+
+// =============================================================================
+// Partial-anchor synthesis
+// =============================================================================
+
+// Public per-star disk context for callers outside the architect (e.g.
+// build-catalog's partial-anchor backfill, which needs the same
+// diskCtx that the architect would have used had the star gone through
+// generateSystem / generateOverlay).
+export const starDiskContext = buildStarDiskContext;
+
+// Inverse Otegi mass-radius — the forward relation `radiusFromMass`
+// is monotonic per branch, so for catalog rows that arrived with a
+// measured radius but no mass column (transit detections), we can
+// recover a deterministic best-fit mass:
+//   r < 1.213           — rocky branch:    r = m^0.279
+//   1.213 ≤ r < ~14.9   — sub-Neptune:     r = 0.808 · m^0.589
+//   r ≥ 14.9            — gas plateau:     r = 11.0 (ambiguous)
+// The gas plateau is one-to-many; an `id`-seeded log-uniform draw
+// over a Jupiter-class mass range fills in. None of the affected
+// catalog rows today reach the plateau (the four transit-only rows
+// sit at r ∈ {0.6, 1.0}), but the branch keeps the function total.
+export function massFromRadius(radius, planetId) {
+  if (radius == null || radius <= 0) return null;
+  const r = radius;
+  const rRocky = Math.pow(2, 0.279);                  // ≈ 1.213
+  const rSubNep = 0.808 * Math.pow(130, 0.589);       // ≈ 14.88
+  if (r < rRocky) {
+    return Number(Math.pow(r, 1 / 0.279).toFixed(3));
+  }
+  if (r < rSubNep) {
+    return Number(Math.pow(r / 0.808, 1 / 0.589).toFixed(3));
+  }
+  // Gas plateau: log-uniform between 130 M⊕ (Saturn-ish) and 3000 M⊕
+  // (~10 M_J, near the deuterium burning limit). Salted so the draw
+  // is stable per body across builds.
+  const prng = partialPrng(planetId, 'gasMass');
+  const logM = Math.log(130) + prng() * (Math.log(3000) - Math.log(130));
+  return Number(Math.exp(logM).toFixed(3));
+}
+
+// Synthesize mass + radius for a catalog row that arrived without one
+// or both. Two modes:
+//   - radius set, mass null: invert M-R via massFromRadius (deterministic,
+//     no scatter — the radius itself already pins the body's bulk).
+//   - both null: run the architect's disk-physics chain (isolation mass
+//     × accretion efficiency × envelope decision) at the body's existing
+//     formation orbit, then derive radius forward via Otegi + log-scatter
+//     — same posture as buildPlanetCore for procgen siblings, just
+//     reseeded so the draws don't collide with architect slot seeds.
+//
+// Returns null when inputs are missing (no host star, no disk context,
+// no semi-major axis even after Kepler derivation). Caller is responsible
+// for grafting the returned scalars onto the body and stripping the
+// corresponding fields from `_unknowns` so the Filler doesn't overwrite
+// the scattered radius with a plain `radiusFromMass(mass)` value.
+export function synthesizePartialAnchor(star, body, diskCtx) {
+  if (star == null || body == null || diskCtx == null) return null;
+  if (body.massEarth != null) return null;
+  const formationAu = body.formationAu ?? body.semiMajorAu;
+  if (formationAu == null) return null;
+
+  // Mode 1: invert Otegi for transit-only rows (radius known).
+  if (body.radiusEarth != null) {
+    const m = massFromRadius(body.radiusEarth, body.id);
+    if (m == null) return null;
+    return { massEarth: m, radiusEarth: body.radiusEarth };
+  }
+
+  // Mode 2: full disk-physics synthesis for direct-imaging rows
+  // (neither mass nor radius known).
+  const Σ = solidSurfaceDensity(
+    star.mass, formationAu, diskCtx.frostLines, MMSN_NORMALIZATION, SNOW_LINE_BOOSTS,
+  );
+  const mIso = isolationMass(formationAu, star.mass, Σ);
+  if (mIso == null || mIso <= 0) return null;
+
+  const accZone = formationAu < diskCtx.frostLines.H2O ? 'inner' : 'outer';
+  const accPrng = partialPrng(body.id, 'accretion');
+  const coreMass = mIso * samplePhysical(accPrng, ACCRETION_EFFICIENCY[accZone]);
+
+  let envelopeMass = 0;
+  const canRunaway =
+    coreMass >= CRITICAL_CORE_MASS_EARTH &&
+    formationAu > diskCtx.frostLines.H2O &&
+    diskCtx.diskGasLifetimeMyr > TIME_TO_RUNAWAY_MYR;
+  if (canRunaway) {
+    const envPrng = partialPrng(body.id, 'envelope');
+    const envRatio = sampleLogTruncated(envPrng, ENVELOPE_FRACTION);
+    envelopeMass = coreMass * envRatio;
+  }
+  const massEarth = coreMass + envelopeMass;
+
+  const radiusPrng = partialPrng(body.id, 'radius');
+  const meanRadius = radiusFromMass(massEarth) ?? 1.0;
+  const noisyRadius = meanRadius * Math.exp(sampleNormal(radiusPrng, 0, RADIUS_SCATTER_LOG));
+  const radiusEarth = Math.max(0.1, Math.min(30, noisyRadius));
+
+  return {
+    massEarth: Number(massEarth.toFixed(3)),
+    radiusEarth: Number(radiusEarth.toFixed(3)),
+  };
 }
 
 // Attach moons + (optional) ring to a planet that survived migration.

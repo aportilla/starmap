@@ -1285,16 +1285,12 @@ function fillBody(b, allBodies, stars) {
   // Resolve host + the mass that drives Kepler's third law for this body:
   //   planet → host star (solar masses)
   //   moon   → parent planet (Earth masses; convert to solar)
-  // Insolation always traces up to the host star, so a moon inherits its
-  // parent planet's stellar flux.
   let hostStar = null;
-  let aFromStar = null;
   let hostMassSolar = null;
   let hostBody = null;
   if (b.kind === 'planet') {
     if (b.hostStarIdx != null) {
       hostStar = stars[b.hostStarIdx];
-      aFromStar = b.semiMajorAu;
       hostMassSolar = hostStar.mass;
     }
   } else if (b.kind === 'moon') {
@@ -1303,7 +1299,6 @@ function fillBody(b, allBodies, stars) {
       if (hostBody) {
         if (hostBody.hostStarIdx != null) {
           hostStar = stars[hostBody.hostStarIdx];
-          aFromStar = hostBody.semiMajorAu;
         }
         if (hostBody.massEarth != null) {
           hostMassSolar = hostBody.massEarth / EARTH_PER_SOLAR_MASS;
@@ -1312,6 +1307,46 @@ function fillBody(b, allBodies, stars) {
     }
   }
 
+  const unknowns = new Set(b._unknowns ?? []);
+
+  // Track filled values starting from the body's current state. Each
+  // generator reads its dependencies from a working copy that includes
+  // previously-filled values; that's how downstream rules pick up upstream
+  // results within the same pass.
+  let {
+    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
+    waterFraction, iceFraction, surfaceAge,
+    avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
+    tectonicActivity, rotationPeriodHours, magneticFieldGauss,
+    surfacePressureBar,
+    atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
+    cloudLayers, surfaceOpacity,
+    hazeAerosols, dustStrength,
+    resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
+    biosphereArchetype, biosphereTier,
+    periodDays, semiMajorAu, eccentricity, inclinationDeg,
+    axialTiltDeg, orbitalPhaseDeg,
+  } = b;
+
+  // Kepler relation — periodDays ↔ semiMajorAu round-trip. Must run
+  // before insolation S is captured below: catalog rows that carry
+  // periodDays but no semi_major_au need the derived semiMajorAu to
+  // feed S, otherwise S=null cascades through temp/pressure/worldClass
+  // and the body renders as a featureless gray disc.
+  if (unknowns.has('periodDays') && semiMajorAu != null) {
+    const p = keplerPeriodDays(semiMajorAu, hostMassSolar);
+    if (p != null) periodDays = p;
+  }
+  if (unknowns.has('semiMajorAu') && periodDays != null) {
+    const a = keplerSemiMajorAu(periodDays, hostMassSolar);
+    if (a != null) semiMajorAu = a;
+  }
+
+  // Insolation always traces up to the host star, so a moon inherits its
+  // parent planet's stellar flux.
+  const aFromStar = b.kind === 'moon'
+    ? (hostBody ? hostBody.semiMajorAu : null)
+    : semiMajorAu;
   const S = hostStar ? insolation(hostStar.mass, aFromStar) : null;
   // Composition (bulkWater / bulkMetal / bulkVolatile) reads insolation
   // at the body's formation location, not its current orbit — a hot
@@ -1334,35 +1369,15 @@ function fillBody(b, allBodies, stars) {
     CH4: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.CH4),
   } : null;
   const lockProxy = (b.kind === 'planet' && hostStar)
-    ? tidalLockProxy(hostStar.mass, b.semiMajorAu)
-    : (b.kind === 'moon' ? tidalLockProxy(hostMassSolar, b.semiMajorAu) : null);
-  const unknowns = new Set(b._unknowns ?? []);
-
-  // Track filled values starting from the body's current state. Each
-  // generator reads its dependencies from a working copy that includes
-  // previously-filled values; that's how downstream rules pick up upstream
-  // results within the same pass.
-  let {
-    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
-    waterFraction, iceFraction, surfaceAge,
-    avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
-    tectonicActivity, rotationPeriodHours, magneticFieldGauss,
-    surfacePressureBar,
-    atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac,
-    cloudLayers, surfaceOpacity,
-    hazeAerosols, dustStrength,
-    resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
-    biosphereArchetype, biosphereTier,
-    periodDays, semiMajorAu, eccentricity, inclinationDeg,
-    axialTiltDeg, orbitalPhaseDeg,
-  } = b;
+    ? tidalLockProxy(hostStar.mass, semiMajorAu)
+    : (b.kind === 'moon' ? tidalLockProxy(hostMassSolar, semiMajorAu) : null);
 
   if (unknowns.has('radiusEarth')) {
     const r = radiusFromMass(b.massEarth);
     if (r != null) radiusEarth = r;
   }
 
-  let working = { ...b, radiusEarth };
+  let working = { ...b, radiusEarth, periodDays, semiMajorAu };
 
   // Bulk composition fill for catalog rows the Architect didn't touch.
   // Symmetric with the Architect's per-body draws; all three read the
@@ -1400,17 +1415,6 @@ function fillBody(b, allBodies, stars) {
     orbitalPhaseDeg = Number((fieldPrng(b, 'orbitalPhaseDeg')() * 360).toFixed(2));
   }
   working = { ...working, eccentricity, inclinationDeg, axialTiltDeg, orbitalPhaseDeg };
-
-  // Kepler relation — periodDays ↔ semiMajorAu round-trip.
-  if (unknowns.has('periodDays') && semiMajorAu != null) {
-    const p = keplerPeriodDays(semiMajorAu, hostMassSolar);
-    if (p != null) periodDays = p;
-  }
-  if (unknowns.has('semiMajorAu') && periodDays != null) {
-    const a = keplerSemiMajorAu(periodDays, hostMassSolar);
-    if (a != null) semiMajorAu = a;
-  }
-  working = { ...working, periodDays, semiMajorAu };
 
   // Class-free physical scalar chain: tectonics → rotation → magnetic.
   // Each reads from physics (mass, period, lock proxy) not from class.
