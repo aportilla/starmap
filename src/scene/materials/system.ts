@@ -63,7 +63,7 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 // Max cloud decks the shader iterates per body. Per-body data lives in
 // uCloudLayerData, a DataTexture of width = BODY_TEXTURE_WIDTH and
 // height = body count. Texel layout per body row:
-//   [0..MAX_CLOUD_LAYERS)            — per-layer scalars (coverage, bandness, alt, seed)
+//   [0..MAX_CLOUD_LAYERS)            — per-layer scalars (coverage, windSpeedMS, alt, seed)
 //   [MAX_CLOUD_LAYERS]               — atm column color (rgb, .a unused)
 //   [MAX_CLOUD_LAYERS+1 .. +1+N*3)   — per-deck palette texels, 3 per deck:
 //                                       texel = (color.rgb, weight). Slot 0 is
@@ -116,7 +116,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
       attribute vec4  aSurfaceScalars;
       // Atmosphere scalars: x = hazeOpacity [0..1] uniform overlay
       // alpha, y = rimWidthPx (integer 0..N halo width), zw unused.
-      // Per-layer cloud data (coverage / bandness / altitudeNorm) lives
+      // Per-layer cloud data (coverage / windSpeedMS / altitudeNorm) lives
       // in uCloudLayerData sampled by aBodyIndex.
       attribute vec4  aAtmoScalars;
       // Biome stipple: xyz = pigment color, w = coverage density [0..1].
@@ -1093,21 +1093,39 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         // the cheap equivalent of interleaving haze sub-layers between
         // every deck without sampling haze multiple times.
         //
-        // Cloud rendering is a single unified worley sampler with two
-        // continuous bandness lerps:
-        //   - cell aspect: mix(patchy aspect, banded aspect, bandness)
-        //   - color hash key: mix(both-axes, lat-only, bandness)
-        // bandness = 0 produces Earth-style patchy cumulus; bandness = 1
-        // produces Jupiter-style zonal bands; intermediate values blend
-        // organically (elongated patches drifting east-west).
+        // Cloud rendering is a single unified worley sampler. Per-deck
+        // wind speed (m/s, peak cloud-top zonal jets) drives two
+        // dimensions of the banding effect via independent curves:
+        //   - bandness (0..1) — smoothstep from Earth jet stream
+        //     (~30 m/s, patchy cumulus → both-axes color hash) to
+        //     Jupiter-class (~150 m/s, lat-strip aligned → lat-only
+        //     hash). Controls hash mode + lerps toward bandedLonPx
+        //     below as cells transition from cellular to lat-aligned.
+        //   - bandedLonPx — east-west cell pitch at full bandness.
+        //     Sqrt curve over windSpeed / WIND_STRETCH_REFERENCE_MS so
+        //     low wind speeds already produce visible stretching
+        //     (Jupiter ~130 lands at ~13:1 aspect) while high speeds
+        //     saturate gracefully (Neptune ~600 caps at 24:1, Saturn
+        //     ~450 at 21:1, Uranus ~250 at 17:1). Sqrt rather than
+        //     linear because real wind speeds span an order of
+        //     magnitude across the gas giants and a linear curve
+        //     leaves Jupiter under-stretched relative to its bands.
+        const float WIND_BANDNESS_LOW_MS    = 30.0;
+        const float WIND_BANDNESS_HIGH_MS   = 150.0;
+        const float WIND_STRETCH_REFERENCE_MS = 600.0;
+        const float BAND_MAX_LON_PX         = 120.0;
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
           vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
           float coverage = layer.x;
           if (coverage <= 0.0) continue;
-          float bandness = layer.y;
+          float windSpeedMS = layer.y;
           float altitudeNorm = layer.z;
           float layerSeed = layer.w;
+          float bandness = smoothstep(WIND_BANDNESS_LOW_MS, WIND_BANDNESS_HIGH_MS, windSpeedMS);
+          float windFactor = sqrt(clamp(windSpeedMS / WIND_STRETCH_REFERENCE_MS, 0.0, 1.0));
+          float bandedLonPx = mix(BAND1_LON_PX, BAND_MAX_LON_PX, windFactor);
+          float lonPx = mix(CLOUD_LON_PX, bandedLonPx, bandness);
 
           // Per-deck palette — 3 RGBA texels, each (color.rgb, weight).
           // Slot 0 = condensate base (CONDENSATE_COLOR[gas]); slots 1-2 =
@@ -1124,10 +1142,12 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           vec4 deckP2 = texture2D(uCloudLayerData, vec2(pTex2U, vBodyV));
           vec3 deckWeights = vec3(deckP0.a, deckP1.a, deckP2.a);
 
-          vec2 cellAspect = mix(
-            vec2(CLOUD_LON_PX, CLOUD_LAT_PX),
-            vec2(BAND1_LON_PX, BAND1_LAT_PX),
-            bandness
+          // LAT pitch lerps from CLOUD_LAT_PX (patchy) to BAND1_LAT_PX
+          // (banded) by bandness. LON pitch already encodes the wind-
+          // speed stretching via lonPx above.
+          vec2 cellAspect = vec2(
+            lonPx,
+            mix(CLOUD_LAT_PX, BAND1_LAT_PX, bandness)
           );
           vec2 p = vec2(lon, lat) * vRadius / cellAspect;
           vec2 cellId = floor(p);

@@ -82,7 +82,7 @@ export class PlanetsLayer {
     // Surface scalars: [waterFrac, iceFrac, surfaceAge, globalness].
     const surfaceScalars = new Float32Array(P * 4);
     // Atmospheric scalars: [hazeOpacity, rimWidthPx, _, _]. Cloud
-    // coverage / bandness / altitude live per-layer in uCloudLayerData.
+    // coverage / windSpeedMS / altitude live per-layer in uCloudLayerData.
     const atmoScalars = new Float32Array(P * 4);
     // Biome color packed as vec4: xyz = pigment, w = coverage density.
     const biomeColors = new Float32Array(P * 4);
@@ -122,7 +122,7 @@ export class PlanetsLayer {
         const l = disc.cloudLayers[li];
         const scalarOff = rowBase + li * 4;
         cloudLayerData[scalarOff + 0] = l.coverage;
-        cloudLayerData[scalarOff + 1] = l.bandness;
+        cloudLayerData[scalarOff + 1] = l.windSpeedMS;
         cloudLayerData[scalarOff + 2] = l.altitudeNorm;
         // Per-layer hash salt so each deck's worley cells fall on
         // different positions. Layer index alone is enough.

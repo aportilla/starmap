@@ -847,7 +847,7 @@ function cloudHazeRegimeFor(body, S) {
 // Cloud layers — 0..3 stratified decks per body, sorted ascending by
 // altitudeNorm. Each regime in CLOUD_BY_REGIME lists its decks
 // (temperate_gaseous gets 3, volcanic gets 2, the rest get 1). Per
-// deck: condensate gas + sampled coverage + bandness + altitudeNorm.
+// deck: condensate gas + sampled coverage + windSpeedMS + altitudeNorm.
 // Returns an empty array for bodies in airless / sub-threshold
 // pressure regimes.
 // Surface opacity — 1 when the body has a solid surface the renderer
@@ -874,7 +874,7 @@ function cloudLayersFor(body, S) {
     out.push({
       gas: deck.gas,
       coverage: Number(coverage.toFixed(3)),
-      bandness: Number(deck.bandness.toFixed(3)),
+      windSpeedMS: deck.windSpeedMS,
       altitudeNorm: Number(deck.altitudeNorm.toFixed(3)),
     });
   }

@@ -1465,74 +1465,83 @@ export const CLOUD_REGIME_THRESHOLDS = {
 };
 
 // Cloud layer per regime — what condenses into the body's visible cloud
-// deck, how much of the disc it covers, and whether it bands or stays
-// patchy. Independent of HAZE_BY_REGIME (a body can have both, neither,
-// or one).
+// deck, how much of the disc it covers, and the peak zonal wind speed
+// that drives banding + east-west cell stretching at render time.
+// Independent of HAZE_BY_REGIME (a body can have both, neither, or one).
 //
 // Coverage: 0..1 fraction of disc rendered as cloud. Gas giants and
 // Venus-class pin at 1.0 (full deck). Earth-class samples around 0.4
 // (broken trade-wind / mid-latitude cover). Mars-class samples around
 // 0.05 (high-altitude cirrus, sparse).
 //
-// Structure: 0..1 scalar. 0 = patchy cellular convection (Earth, Mars).
-// 1 = banded zonal circulation (Venus's superrotation, gas-giant zonal
-// jets). The renderer reads this to blend between a cellular hash and
-// latitude-strip pattern; intermediate values blend the two (or snap at
-// 0.5 in v1).
+// Wind speed (m/s, cloud-top peak zonal winds): drives both bandness
+// (smoothstep in the shader — low wind = patchy cumulus, high wind =
+// fully lat-aligned bands) and east-west cell stretching (linear above
+// the bandness saturation point, so Neptune visibly out-stretches
+// Jupiter). Real-world anchors:
+//   Earth jet stream      ~30   m/s
+//   Mars                  ~30   m/s
+//   Titan / Triton        ~5    m/s (mostly calm)
+//   Venus superrotation   ~100  m/s
+//   Jupiter zonal peak    ~130  m/s
+//   Uranus                ~250  m/s
+//   Saturn                ~450  m/s
+//   Neptune               ~600  m/s
+// Procgen values per regime use these as the anchor for the dominant
+// physical archetype; curated Sol bodies override via body_layers.csv.
 //
 // Sampled once per body via fieldPrng(body, 'cloud').
 export const CLOUD_BY_REGIME = {
-  // Hot gas/sub-Neptune — refractive silicate clouds, banded.
-  // Top deck has coverage variation so exotic giants can show rents.
+  // Hot gas/sub-Neptune — refractive silicate clouds, fast zonal jets
+  // driven by extreme insolation gradient. Top deck has coverage
+  // variation so exotic giants can show rents.
   hot_gaseous: { layers: [
-    { gas: 'SILICATE', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.85 },
+    { gas: 'SILICATE', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 500, altitudeNorm: 0.85 },
   ]},
-  // Hycean — water cloud deck over warm H2/He atmosphere. Variable
-  // top-deck coverage for exotic-giant variety.
+  // Hycean — water cloud deck over warm H2/He atmosphere. Moderate
+  // winds. Variable top-deck coverage for exotic-giant variety.
   hycean: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.80 },
+    { gas: 'H2O', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 200, altitudeNorm: 0.80 },
   ]},
-  // Cold gaseous (ice giants) — CH4 absorption is the visible signal.
-  // Variable coverage produces occasional broken-cloud ice giants;
-  // when a cell skips, the deep atm column tint (atmColumnColor) shows
-  // through.
+  // Cold gaseous (ice-giant default) — CH4 absorption is the visible
+  // signal. Anchored on Neptune (the more extreme of the Sol ice
+  // giants); Uranus's slower winds get applied via its CSV override.
   cold_gaseous: { layers: [
-    { gas: 'CH4', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.85 },
+    { gas: 'CH4', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 400, altitudeNorm: 0.85 },
   ]},
   // Temperate gaseous (Jupiter/Saturn-class) — three-deck stratified
   // model: deep H2O ice → mid NH4SH chromophore (the belt brown) →
-  // top NH3 ice (the bright zones). Top deck has sampled coverage so
-  // exotic procgen giants reveal NH4SH brown through NH3 rents (and
-  // very-low-coverage outliers reveal H2O ice through both upper
-  // layers' rents). Sol Jupiter / Saturn stay at 1.0 via the
-  // body_layers.csv override path.
+  // top NH3 ice (the bright zones). All decks share one wind speed
+  // (atmospheric circulation is body-wide, not per-deck). Anchored on
+  // Jupiter; Saturn's faster jets land via its CSV override.
   temperate_gaseous: { layers: [
-    { gas: 'H2O',   coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.85, altitudeNorm: 0.20 },
-    { gas: 'NH4SH', coverage: { mean: 0.98, sd: 0.03, min: 0.85, max: 1.00 }, bandness: 0.90, altitudeNorm: 0.50 },
-    { gas: 'NH3',   coverage: { mean: 0.96, sd: 0.06, min: 0.70, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.85 },
+    { gas: 'H2O',   coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.20 },
+    { gas: 'NH4SH', coverage: { mean: 0.98, sd: 0.03, min: 0.85, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.50 },
+    { gas: 'NH3',   coverage: { mean: 0.96, sd: 0.06, min: 0.70, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.85 },
   ]},
   // Cold terrestrial (Titan / Triton-class) — sparse methane ice
-  // clouds, patchy. Most of the visual signal is the haze.
+  // clouds, near-calm surface winds. Most of the visual signal is haze.
   cold_terrestrial: { layers: [
-    { gas: 'CH4', coverage: { mean: 0.15, sd: 0.10, min: 0.02, max: 0.40 }, bandness: 0.05, altitudeNorm: 0.40 },
+    { gas: 'CH4', coverage: { mean: 0.15, sd: 0.10, min: 0.02, max: 0.40 }, windSpeedMS: 5, altitudeNorm: 0.40 },
   ]},
   // Volcanic / Venusian — two-deck H2SO4 droplet stack at deep + mid
-  // altitudes, banded by superrotation.
+  // altitudes, super-rotated at cloud-top.
   volcanic: { layers: [
-    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.30 },
-    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, bandness: 0.95, altitudeNorm: 0.70 },
+    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 100, altitudeNorm: 0.30 },
+    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 100, altitudeNorm: 0.70 },
   ]},
-  // Biotic wet (Earth-class with active biosphere) — patchy H2O clouds.
+  // Biotic wet (Earth-class with active biosphere) — patchy H2O clouds,
+  // jet-stream winds.
   biotic_wet: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.45, sd: 0.10, min: 0.20, max: 0.65 }, bandness: 0.10, altitudeNorm: 0.50 },
+    { gas: 'H2O', coverage: { mean: 0.45, sd: 0.10, min: 0.20, max: 0.65 }, windSpeedMS: 30, altitudeNorm: 0.50 },
   ]},
   // Wet terrestrial — patchy H2O clouds over ocean coverage.
   wet_terrestrial: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.35, sd: 0.10, min: 0.10, max: 0.55 }, bandness: 0.10, altitudeNorm: 0.50 },
+    { gas: 'H2O', coverage: { mean: 0.35, sd: 0.10, min: 0.10, max: 0.55 }, windSpeedMS: 30, altitudeNorm: 0.50 },
   ]},
-  // Dust terrestrial (Mars-class) — sparse high cirrus.
+  // Dust terrestrial (Mars-class) — sparse high cirrus, thin-atm winds.
   dust_terrestrial: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.05, sd: 0.03, min: 0.01, max: 0.15 }, bandness: 0.00, altitudeNorm: 0.60 },
+    { gas: 'H2O', coverage: { mean: 0.05, sd: 0.03, min: 0.01, max: 0.15 }, windSpeedMS: 30, altitudeNorm: 0.60 },
   ]},
 };
 

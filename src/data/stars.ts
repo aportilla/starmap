@@ -105,13 +105,16 @@ export type BodySource = 'catalog' | 'procgen';
 
 // One cloud deck on a body. Up to 3 per body, stratified by
 // altitudeNorm — the deepest deck composites first, the top deck last.
-// `bandness` lerps the cloud renderer's cell aspect + color-hash mode
-// continuously from patchy cellular (0) through fully banded zonal
-// (1); intermediate values produce organic in-between structures.
+// `windSpeedMS` drives both the patchy ↔ banded interpolant (low wind →
+// cellular cumulus, high wind → lat-aligned bands) and the east-west
+// cell stretching beyond the bandness saturation point, so Neptune-scale
+// (~600 m/s) wind speeds out-stretch Jupiter-scale (~130 m/s). Anchored
+// in m/s rather than 0..1 so the value is physically meaningful and
+// procgen can derive it from rotation + insolation gradient.
 export interface CloudLayer {
   readonly gas: string;
   readonly coverage: number;    // 0..1 — fraction of disc covered
-  readonly bandness: number;    // 0..1 — patchy → banded interpolant
+  readonly windSpeedMS: number; // m/s — cloud-top peak zonal winds
   readonly altitudeNorm: number;// 0..1 — deep → top
 }
 
@@ -248,11 +251,11 @@ export interface Body {
   // Cloud layers — up to 3 stratified decks per body, sorted ascending
   // by altitudeNorm (deep first, top last). Each deck names its
   // condensate gas (H2O ice/droplets, NH3 ice, CH4 ice, H2SO4 droplets,
-  // SILICATE condensate, etc.), the fraction of disc covered, a bandness
-  // scalar in [0..1] for organic patchy↔banded interpolation (0 =
-  // patchy cellular like Earth's trade-winds; 1 = banded zonal like
-  // Jupiter's zones), and a normalized altitude. Empty array for
-  // bodies with no visible cloud cover (Mercury, airless moons).
+  // SILICATE condensate, etc.), the fraction of disc covered, the peak
+  // cloud-top zonal wind speed in m/s (drives patchy↔banded rendering +
+  // east-west cell stretching — see CloudLayer doc), and a normalized
+  // altitude. Empty array for bodies with no visible cloud cover
+  // (Mercury, airless moons).
   readonly cloudLayers: readonly CloudLayer[];
   // Surface opacity [0..1]. 1 = solid surface visible underneath the
   // atmospheric layers (terrestrials). 0 = no visible surface, the

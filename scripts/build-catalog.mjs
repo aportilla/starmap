@@ -716,7 +716,7 @@ function parseCsvBodyLayers(text, label) {
     layer_index: colIdx('layer_index'),
     gas: colIdx('gas'),
     coverage: colIdx('coverage'),
-    bandness: colIdx('bandness'),
+    wind_speed_ms: colIdx('wind_speed_ms'),
     altitude_norm: colIdx('altitude_norm'),
   };
   const grouped = new Map();
@@ -726,18 +726,22 @@ function parseCsvBodyLayers(text, label) {
     if (!bodyId) continue;
     const gas = (row[ix.gas] ?? '').trim();
     if (!gas) throw new Error(`${label}: ${bodyId} layer missing gas`);
-    const num = (key) => {
+    const unitRange = (key) => {
       const v = Number((row[ix[key]] ?? '').trim());
       if (!Number.isFinite(v) || v < 0 || v > 1) {
         throw new Error(`${label}: ${bodyId} layer ${key}=${row[ix[key]]} out of [0,1]`);
       }
       return v;
     };
+    const wind = Number((row[ix.wind_speed_ms] ?? '').trim());
+    if (!Number.isFinite(wind) || wind < 0) {
+      throw new Error(`${label}: ${bodyId} wind_speed_ms=${row[ix.wind_speed_ms]} must be ≥ 0 m/s`);
+    }
     const layer = {
       gas,
-      coverage: num('coverage'),
-      bandness: num('bandness'),
-      altitudeNorm: num('altitude_norm'),
+      coverage: unitRange('coverage'),
+      windSpeedMS: wind,
+      altitudeNorm: unitRange('altitude_norm'),
     };
     const list = grouped.get(bodyId) ?? [];
     list.push(layer);

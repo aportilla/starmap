@@ -175,7 +175,7 @@ export interface DiscPalette {
   // and get a no-op composite.
   readonly cloudLayers: ReadonlyArray<{
     readonly coverage: number;
-    readonly bandness: number;
+    readonly windSpeedMS: number;
     readonly altitudeNorm: number;
     // 3 RGB triples (9 floats). Slot 0 = condensate base; slots 1-2 =
     // top staining aerosols sorted by strength descending. Empty
@@ -514,7 +514,7 @@ export function buildDiscPalette(
         const dp = cloudDeckPalette(body, l.gas);
         return {
           coverage: l.coverage,
-          bandness: l.bandness,
+          windSpeedMS: l.windSpeedMS,
           altitudeNorm: l.altitudeNorm,
           palette: [
             dp.palette[0].r, dp.palette[0].g, dp.palette[0].b,

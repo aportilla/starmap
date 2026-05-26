@@ -288,7 +288,7 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
       const l = disc.cloudLayers[li];
       const scalarOff = rowBase + li * 4;
       cloudLayerData[scalarOff + 0] = l.coverage;
-      cloudLayerData[scalarOff + 1] = l.bandness;
+      cloudLayerData[scalarOff + 1] = l.windSpeedMS;
       cloudLayerData[scalarOff + 2] = l.altitudeNorm;
       cloudLayerData[scalarOff + 3] = li;
       const palBase = rowBase + (DECK_PALETTE_BASE_OFFSET + li * PALETTE_TEXELS_PER_DECK) * 4;
