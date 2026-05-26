@@ -1439,111 +1439,174 @@ export const PRESSURE_HISTORY_MULTIPLIER = {
   secondary: { mean: 50,  sd: 50,  min: 5,   max: 500, weight: 0.10 },
 };
 
-// Atmospheric regime thresholds — physical buckets the Filler uses
-// to dispatch CLOUD_BY_REGIME / HAZE_BY_REGIME (below). Pure physics
-// gates, no class input.
+// Per-species condensation specs. One row per visible cloud-deck
+// species. No regime classification: every body iterates through this
+// list, gating each species on its temperature window AND its
+// precursor availability. Multi-deck stacks (Jupiter's NH3 / NH4SH /
+// H2O) emerge naturally when multiple windows simultaneously match.
 //
-// Regimes:
-//   hot_gaseous       gaseous + T > 1500 K       → silicate clouds + haze
-//   hycean            gaseous + S < 0.3 + bulkWater > 0.05  → H2O clouds
-//   cold_gaseous      gaseous + T < 100 K        → CH4 clouds (no haze)
-//   temperate_gaseous gaseous default            → NH3 clouds (Jupiter-class)
-//   cold_terrestrial  terrestrial + T < 200 K    → sparse CH4 cloud + tholin haze
-//   volcanic          terrestrial + (T > 600 K or surfacePressure > 30 bar) → H2SO4 cloud + SO2 haze
-//   biotic_wet        terrestrial + carbon_aqueous biosphere ≥ microbial → H2O patchy cloud
-//   wet_terrestrial   terrestrial + waterFraction ≥ 0.3 → H2O patchy cloud
-//   dust_terrestrial  terrestrial default        → sparse H2O cirrus + DUST haze
-export const CLOUD_REGIME_THRESHOLDS = {
-  hotGaseousTempK:        1500,
-  hyceanInsolationMax:    0.3,
-  hyceanBulkWaterMin:     0.05,
-  coldGaseousTempK:       100,
-  coldTerrestrialTempK:   200,
-  volcanicTempK:          600,
-  volcanicPressureBar:    30,
-  wetWaterFractionMin:    0.3,
-};
-
-// Cloud layer per regime — what condenses into the body's visible cloud
-// deck, how much of the disc it covers, and the peak zonal wind speed
-// that drives banding + east-west cell stretching at render time.
-// Independent of HAZE_BY_REGIME (a body can have both, neither, or one).
+// Fields:
+//   gas             — condensate species. The shader reads
+//                     CONDENSATE_COLOR[gas] (with GAS_COLOR fallback)
+//                     for the deck's color.
+//   condenseTempK   — [low, high] window in K where this species
+//                     condenses at cloud-top pressure. tempCondenseFactor
+//                     gates strength: 1.0 inside the window, ramping to
+//                     0 across a 30 K skirt on each side.
+//   altitudeNorm    — fixed per-species render altitude (0..1). Drives
+//                     back-to-front composite order + per-deck haze
+//                     pre-tint weighting.
+//   altitudeTempOffsetK — for gaseous bodies, how much warmer this
+//                     species' altitude is than the body's cloud-top
+//                     reference T (= avgSurfaceTempK). The temp gate
+//                     evaluates `body.T + altitudeTempOffsetK` against
+//                     condenseTempK, so deeper-warmer species can fire
+//                     on cold ice giants while still firing at the
+//                     correct altitude on temperate gas giants.
+//                     Terrestrials ignore this — their cloud altitudes
+//                     are near-surface so the surface T IS the cloud T.
+//   precursor       — function(body, ctx) → 0..1, "is this species
+//                     available?" Gaseous (H2/He-dominant) bodies get
+//                     cosmic-abundance trace for NH3/NH4SH/CH4/H2O
+//                     even though those aren't recorded in the 3-slot
+//                     atm. Terrestrials gate on the actual atm record
+//                     + waterFraction.
 //
-// Coverage: 0..1 fraction of disc rendered as cloud. Gas giants and
-// Venus-class pin at 1.0 (full deck). Earth-class samples around 0.4
-// (broken trade-wind / mid-latitude cover). Mars-class samples around
-// 0.05 (high-altitude cirrus, sparse).
+// strength = tempCondenseFactor(effectiveT, lo, hi) × precursor(body, ctx).
+// coverage is then derived in cloudDecksFor — see the procgen.mjs
+// coverageFor function for the full-cover vs. sparse-cirrus split.
 //
-// Wind speed (m/s, cloud-top peak zonal winds): drives both bandness
-// (smoothstep in the shader — low wind = patchy cumulus, high wind =
-// fully lat-aligned bands) and east-west cell stretching (linear above
-// the bandness saturation point, so Neptune visibly out-stretches
-// Jupiter). Real-world anchors:
-//   Earth jet stream      ~30   m/s
-//   Mars                  ~30   m/s
-//   Titan / Triton        ~5    m/s (mostly calm)
-//   Venus superrotation   ~100  m/s
-//   Jupiter zonal peak    ~130  m/s
-//   Uranus                ~250  m/s
-//   Saturn                ~450  m/s
-//   Neptune               ~600  m/s
-// Procgen values per regime use these as the anchor for the dominant
-// physical archetype; curated Sol bodies override via body_layers.csv.
-//
-// Sampled once per body via fieldPrng(body, 'cloud').
-export const CLOUD_BY_REGIME = {
-  // Hot gas/sub-Neptune — refractive silicate clouds, fast zonal jets
-  // driven by extreme insolation gradient. Top deck has coverage
-  // variation so exotic giants can show rents.
-  hot_gaseous: { layers: [
-    { gas: 'SILICATE', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 500, altitudeNorm: 0.85 },
-  ]},
-  // Hycean — water cloud deck over warm H2/He atmosphere. Moderate
-  // winds. Variable top-deck coverage for exotic-giant variety.
-  hycean: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 200, altitudeNorm: 0.80 },
-  ]},
-  // Cold gaseous (ice-giant default) — CH4 absorption is the visible
-  // signal. Anchored on Neptune (the more extreme of the Sol ice
-  // giants); Uranus's slower winds get applied via its CSV override.
-  cold_gaseous: { layers: [
-    { gas: 'CH4', coverage: { mean: 0.96, sd: 0.05, min: 0.80, max: 1.00 }, windSpeedMS: 400, altitudeNorm: 0.85 },
-  ]},
-  // Temperate gaseous (Jupiter/Saturn-class) — three-deck stratified
-  // model: deep H2O ice → mid NH4SH chromophore (the belt brown) →
-  // top NH3 ice (the bright zones). All decks share one wind speed
-  // (atmospheric circulation is body-wide, not per-deck). Anchored on
-  // Jupiter; Saturn's faster jets land via its CSV override.
-  temperate_gaseous: { layers: [
-    { gas: 'H2O',   coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.20 },
-    { gas: 'NH4SH', coverage: { mean: 0.98, sd: 0.03, min: 0.85, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.50 },
-    { gas: 'NH3',   coverage: { mean: 0.96, sd: 0.06, min: 0.70, max: 1.00 }, windSpeedMS: 130, altitudeNorm: 0.85 },
-  ]},
-  // Cold terrestrial (Titan / Triton-class) — sparse methane ice
-  // clouds, near-calm surface winds. Most of the visual signal is haze.
-  cold_terrestrial: { layers: [
-    { gas: 'CH4', coverage: { mean: 0.15, sd: 0.10, min: 0.02, max: 0.40 }, windSpeedMS: 5, altitudeNorm: 0.40 },
-  ]},
-  // Volcanic / Venusian — two-deck H2SO4 droplet stack at deep + mid
-  // altitudes, super-rotated at cloud-top.
-  volcanic: { layers: [
-    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 100, altitudeNorm: 0.30 },
-    { gas: 'H2SO4', coverage: { mean: 1.00, sd: 0.00, min: 1.00, max: 1.00 }, windSpeedMS: 100, altitudeNorm: 0.70 },
-  ]},
-  // Biotic wet (Earth-class with active biosphere) — patchy H2O clouds,
-  // jet-stream winds.
-  biotic_wet: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.45, sd: 0.10, min: 0.20, max: 0.65 }, windSpeedMS: 30, altitudeNorm: 0.50 },
-  ]},
-  // Wet terrestrial — patchy H2O clouds over ocean coverage.
-  wet_terrestrial: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.35, sd: 0.10, min: 0.10, max: 0.55 }, windSpeedMS: 30, altitudeNorm: 0.50 },
-  ]},
-  // Dust terrestrial (Mars-class) — sparse high cirrus, thin-atm winds.
-  dust_terrestrial: { layers: [
-    { gas: 'H2O', coverage: { mean: 0.05, sd: 0.03, min: 0.01, max: 0.15 }, windSpeedMS: 30, altitudeNorm: 0.60 },
-  ]},
-};
+// The list is **sorted top-to-bottom in the atm column for the
+// gas-giant regime that's most relevant to it** (refractory species
+// first, then mid-T condensates, then volatile ices). Order doesn't
+// affect emission — the final list is sorted by altitudeNorm before
+// upload — but reading the table top-down traces the same vertical
+// stack you'd see in a Galilean-type cloud-structure diagram.
+export const CONDENSABLES = [
+  {
+    gas: 'SILICATE',
+    condenseTempK: [1500, 2500],
+    altitudeNorm: 0.85,
+    altitudeTempOffsetK: 0,
+    // Hot-Jupiter regime: refractory minerals as atm vapor rain out
+    // as silicate cloud at extreme T. The condensation T IS the
+    // cloud-top T on hot Jupiters (whole atm is hot enough), so no
+    // altitude offset. Always available in gaseous bodies; terrestrials
+    // never reach these temps without becoming molten surfaces.
+    precursor: (_body, ctx) => ctx.isGaseous ? 1.0 : 0,
+  },
+  {
+    gas: 'H2SO4',
+    condenseTempK: [400, 900],
+    altitudeNorm: 0.50,
+    altitudeTempOffsetK: 0,
+    // Venus-class: hot CO2 atm + sulfur from volcanism. Gate fires
+    // on surface T as a proxy for "Venus regime" — real cloud
+    // altitude T (~350 K) is much cooler than Venus surface (737 K),
+    // but the window is wide enough to capture both ends without
+    // an altitude offset on a terrestrial.
+    precursor: (body, ctx) => {
+      if (ctx.isGaseous) return 0;
+      const co2 = ctx.atmFrac('CO2');
+      const press = body.surfacePressureBar ?? 0;
+      return ctx.smoothstep(0.3, 0.95, co2) * ctx.smoothstep(5, 50, press);
+    },
+  },
+  {
+    gas: 'SALT',
+    condenseTempK: [400, 1450],
+    altitudeNorm: 0.60,
+    altitudeTempOffsetK: 50,
+    // Warm sub-Neptune / warm gas giant: KCl + ZnS condensate deck
+    // between H2O (≤380 K) and SILICATE (≥1500 K). +50 K altitude
+    // offset puts the deck slightly deeper-and-warmer than cloud-top,
+    // matching real altitude T profiles on warm gas giants.
+    // Gaseous-only: alkali salts as cloud condensates are a
+    // gas-giant phenomenon (terrestrials at this T have molten
+    // surfaces, not salt cloud decks).
+    precursor: (_body, ctx) => ctx.isGaseous ? 1.0 : 0,
+  },
+  {
+    gas: 'H2O',
+    condenseTempK: [180, 380],
+    altitudeNorm: 0.30,
+    altitudeTempOffsetK: 130,
+    // Terrestrials: H2O atm OR surface water → near-surface cloud
+    // cover (Earth cumulus, Mars cirrus). Window bottom 180 K (skirt
+    // → 150 K) covers Mars-class trace cirrus; top 380 K covers hot
+    // ocean worlds.
+    // Gaseous: H2O condenses DEEP in the atm column (real Jupiter
+    // deck at ~5-10 bar where T ~270 K, cloud-top T = 165 K → offset
+    // +105-130 K). +130 K offset lets H2O fire on all four Sol
+    // gas/ice giants from their actual cloud-top temperatures.
+    // Cosmic trace H2O is universally present in H/He giants
+    // regardless of bulk water fraction (Jupiter's bulk water is
+    // ~1% but its deep H2O cloud is real).
+    precursor: (body, ctx) => {
+      if (ctx.isGaseous) return 1.0;
+      const atmGate = ctx.smoothstep(0.001, 0.01, ctx.atmFrac('H2O'));
+      const waterGate = body.waterFraction ?? 0;
+      const direct = 0.05 + 0.5 * Math.max(atmGate, waterGate);
+      return direct;
+    },
+  },
+  {
+    gas: 'NH4SH',
+    condenseTempK: [120, 220],
+    altitudeNorm: 0.50,
+    altitudeTempOffsetK: 35,
+    // Jovian belt brown — NH3 + H2S photochemistry. Sits slightly
+    // deeper than the NH3 deck (real Jupiter NH4SH at ~2-3 bar vs
+    // NH3 at ~0.5 bar → +35 K hotter). Precursor requires the body's
+    // cloud-top T to be in the NH3-active range — NH4SH formation
+    // needs NH3 to ALSO be condensing nearby (it's a NH3 + H2S
+    // reaction product). On ice giants (Neptune T=72 K below NH3
+    // window), no NH3 → no NH4SH.
+    precursor: (body, ctx) => {
+      if (!ctx.isGaseous) return 0;
+      const T = body.avgSurfaceTempK;
+      if (T == null) return 0;
+      return ctx.smoothstep(100, 130, T) * (1 - ctx.smoothstep(180, 220, T));
+    },
+  },
+  {
+    gas: 'NH3',
+    condenseTempK: [120, 200],
+    altitudeNorm: 0.80,
+    altitudeTempOffsetK: 0,
+    // Cosmic-abundance trace in H2/He giants; on terrestrials gate
+    // on the atm record. NH3 condenses near the cloud-top (no
+    // altitude offset) on Jupiter/Saturn-class temperate giants.
+    precursor: (_body, ctx) => {
+      if (ctx.isGaseous) return 1.0;
+      return ctx.smoothstep(0.001, 0.05, ctx.atmFrac('NH3'));
+    },
+  },
+  {
+    gas: 'CH4',
+    condenseTempK: [60, 130],
+    altitudeNorm: 0.85,
+    altitudeTempOffsetK: 0,
+    // H2/He giants: trace CH4 → ice cirrus (Uranus/Neptune sparse
+    // streaks at cloud-top). Terrestrials need CH4 in atm (Titan).
+    precursor: (_body, ctx) => {
+      if (ctx.isGaseous) return 1.0;
+      return ctx.smoothstep(0.001, 0.05, ctx.atmFrac('CH4'));
+    },
+  },
+  {
+    gas: 'N2',
+    condenseTempK: [30, 80],
+    altitudeNorm: 0.50,
+    altitudeTempOffsetK: 0,
+    // Triton/Pluto: very cold, N2-dominant atm → N2 frost / sparse
+    // cloud near surface. Requires substantial N2 atm presence.
+    precursor: (_body, ctx) => {
+      if (ctx.isGaseous) return 0;
+      return ctx.smoothstep(0.1, 0.9, ctx.atmFrac('N2'));
+    },
+  },
+];
 
 // Haze layer is derived directly from body physics in procgen.mjs's
 // hazeFor — per-species formation gates consult atm + T + P rather than

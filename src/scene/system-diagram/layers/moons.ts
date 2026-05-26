@@ -11,8 +11,8 @@ import {
 } from 'three';
 import { BODIES } from '../../../data/stars';
 import {
-  ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_PALETTE_BASE_OFFSET,
-  makePlanetMaterial, MAX_CLOUD_LAYERS, PALETTE_TEXELS_PER_DECK,
+  ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_COLOR_BASE_OFFSET,
+  makePlanetMaterial, MAX_CLOUD_LAYERS,
 } from '../../materials';
 import { buildDiscPalette } from '../disc-palette';
 import {
@@ -291,19 +291,10 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
       cloudLayerData[scalarOff + 1] = l.windSpeedMS;
       cloudLayerData[scalarOff + 2] = l.altitudeNorm;
       cloudLayerData[scalarOff + 3] = li;
-      const palBase = rowBase + (DECK_PALETTE_BASE_OFFSET + li * PALETTE_TEXELS_PER_DECK) * 4;
-      cloudLayerData[palBase +  0] = l.palette[0];
-      cloudLayerData[palBase +  1] = l.palette[1];
-      cloudLayerData[palBase +  2] = l.palette[2];
-      cloudLayerData[palBase +  3] = l.weights[0];
-      cloudLayerData[palBase +  4] = l.palette[3];
-      cloudLayerData[palBase +  5] = l.palette[4];
-      cloudLayerData[palBase +  6] = l.palette[5];
-      cloudLayerData[palBase +  7] = l.weights[1];
-      cloudLayerData[palBase +  8] = l.palette[6];
-      cloudLayerData[palBase +  9] = l.palette[7];
-      cloudLayerData[palBase + 10] = l.palette[8];
-      cloudLayerData[palBase + 11] = l.weights[2];
+      const colBase = rowBase + (DECK_COLOR_BASE_OFFSET + li) * 4;
+      cloudLayerData[colBase + 0] = l.color[0];
+      cloudLayerData[colBase + 1] = l.color[1];
+      cloudLayerData[colBase + 2] = l.color[2];
     }
     const atmOff = rowBase + ATM_COLUMN_TEXEL_OFFSET * 4;
     cloudLayerData[atmOff + 0] = disc.atmColumnColor[0];

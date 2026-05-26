@@ -72,8 +72,7 @@ import {
   WATER_COVER_NOISE,
   ICE_COVER_NOISE,
   WORLD_CLASS_THRESHOLDS,
-  CLOUD_REGIME_THRESHOLDS,
-  CLOUD_BY_REGIME,
+  CONDENSABLES,
   BIOSPHERE_HABITATS,
 } from './procgen-priors.mjs';
 import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU } from './astrophysics.mjs';
@@ -806,80 +805,134 @@ function atmosphereFor(body, S) {
 }
 
 // BIOSPHERE_TIERS order; used in regime gate matching.
-const BIOSPHERE_TIER_ORDER = ['none', 'prebiotic', 'microbial', 'complex', 'gaian'];
-
-// Cloud + haze regime dispatch — pure physics, no class input. Bucket
-// the body's physical state into one of nine regimes; each regime
-// resolves to a cloud + haze spec via CLOUD_BY_REGIME and HAZE_BY_REGIME.
-// Distinct from `atmosphereRegimeFor` (above), which buckets atm-species
-// dispatch via a different threshold set.
-function cloudHazeRegimeFor(body, S) {
-  if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
-    return null;
-  }
-  const t = CLOUD_REGIME_THRESHOLDS;
-  const T = body.avgSurfaceTempK;
-  // Gaseous bracket (radius >= gasDwarfRadius)
-  if (body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) {
-    if (T != null && T > t.hotGaseousTempK) return 'hot_gaseous';
-    if (S != null && S < t.hyceanInsolationMax &&
-        (body.bulkWaterFraction ?? 0) >= t.hyceanBulkWaterMin) return 'hycean';
-    if (T != null && T < t.coldGaseousTempK) return 'cold_gaseous';
-    return 'temperate_gaseous';
-  }
-  // Terrestrial bracket
-  if (T != null && T < t.coldTerrestrialTempK) return 'cold_terrestrial';
-  if ((T != null && T > t.volcanicTempK) ||
-      (body.surfacePressureBar != null && body.surfacePressureBar > t.volcanicPressureBar)) {
-    return 'volcanic';
-  }
-  // Biotic and wet branches gate the H2O cloud regime — biotic bodies
-  // amplify the water cycle (atm is rich in transpiration H2O), wet
-  // bodies have surface oceans → cloud decks.
-  if (body.biosphereArchetype === 'carbon_aqueous') {
-    const tierIdx = BIOSPHERE_TIER_ORDER.indexOf(body.biosphereTier ?? 'none');
-    if (tierIdx >= BIOSPHERE_TIER_ORDER.indexOf('microbial')) return 'biotic_wet';
-  }
-  if ((body.waterFraction ?? 0) >= t.wetWaterFractionMin) return 'wet_terrestrial';
-  return 'dust_terrestrial';
-}
-
-// Cloud layers — 0..3 stratified decks per body, sorted ascending by
-// altitudeNorm. Each regime in CLOUD_BY_REGIME lists its decks
-// (temperate_gaseous gets 3, volcanic gets 2, the rest get 1). Per
-// deck: condensate gas + sampled coverage + windSpeedMS + altitudeNorm.
-// Returns an empty array for bodies in airless / sub-threshold
-// pressure regimes.
 // Surface opacity — 1 when the body has a solid surface the renderer
 // should paint underneath the cloud + haze stack (terrestrials), 0
 // when the bulk atm column shows through cloud rents instead (gas /
 // ice giants / hycean / helium / gas_dwarf). Intermediate values are
-// possible later (partial gas-giant rents in PR 4) but for now this
-// is binary, driven by world class.
+// possible later (partial gas-giant rents) but for now this is
+// binary, driven by world class.
 function surfaceOpacityFor(body) {
   const r = body.radiusEarth;
   const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
   return isGaseous ? 0 : 1;
 }
 
-function cloudLayersFor(body, S) {
-  const regime = cloudHazeRegimeFor(body, S);
-  if (regime == null) return [];
-  const spec = CLOUD_BY_REGIME[regime];
-  if (!spec) return [];
-  const prng = fieldPrng(body, 'cloud');
+// Per-body cloud-deck emission via per-species condensation gates —
+// Iterates
+// CONDENSABLES; for each species checks the body's T against the
+// species' condensation window AND runs the species' precursor gate.
+// Every species whose product strength > STRENGTH_THRESHOLD emits a
+// deck. Coverage is derived from strength + a sparse-cirrus mode
+// gate (see coverageFor below). Wind speed is a per-altitude proxy
+// (gas giants run cloud-top jets ~5–10x faster than terrestrials).
+//
+// No regime classification: Jupiter, Saturn, Uranus, Neptune,
+// Earth, Mars, Venus, Titan, Triton, and any procgen body all run
+// the same loop. Which decks emerge falls out of the body's actual
+// T + atm + waterFraction + bulkWaterFraction.
+const STRENGTH_THRESHOLD = 0.01;
+const COVERAGE_FULL_MAX  = 0.90;
+const COVERAGE_SPARSE_MAX = 0.15;
+
+// Approximate per-gas absorption strength for the sparse-cirrus mode
+// gate. Mirrors GAS_POTENCY in src/data/stars.ts for the species that
+// can simultaneously be cloud condensates AND atm-column absorbers
+// (the only place procgen needs to reason about column color). Kept
+// small + local instead of pulled across the .ts/.mjs boundary.
+const CLOUD_GAS_POTENCY = {
+  H2:  0.02, He: 0.01, N2: 0.05, Ar: 0.05,
+  CO2: 1.0, CO: 1.0, O2: 1.0,
+  H2O: 3.0, NH3: 3.0,
+  CH4: 12.0, SO2: 8.0,
+  // Aerosol species potencies — only matters if these appear in the
+  // atm record, which they don't today (procgen emits them as
+  // hazeAerosols / cloud condensates, never as bulk atm). Carried for
+  // completeness in case the renderer's atm-column reading evolves.
+  H2SO4: 3.0, SILICATE: 3.0, THOLIN: 3.0, NH4SH: 3.0, SALT: 3.0, SULFUR: 3.0,
+};
+
+function isGaseousBody(body) {
+  return body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+}
+
+// Coverage derivation. Two modes blend smoothly:
+//   • Full-cover: bulk atm column carries no strong color signal in
+//     this gas → deck IS the planet's visible color. Coverage scales
+//     near-linearly with strength.
+//   • Sparse-cirrus: this gas is BOTH a strong absorber (potency ≥
+//     STRONG_ABSORBER_POTENCY) AND present in the atm at appreciable
+//     fraction. The column already paints the planet's bulk color
+//     (CH4 cyan on Neptune); the deck reads as scattered bright
+//     cells on top. Coverage caps low even at peak strength.
+//
+// Restricting sparse mode to strong absorbers (CH4 potency 6, SO2
+// potency 8) keeps NH3 on a gas giant in full-cover mode even when
+// procgen seeds NH3 into the atm record — NH3 doesn't tint a thick
+// column the way CH4 does, so it shouldn't behave like Neptune's
+// cirrus.
+const STRONG_ABSORBER_POTENCY = 5;
+function coverageFor(_body, _gas, strength, atmFrac, gasPotency) {
+  const strongAbsorber = gasPotency >= STRONG_ABSORBER_POTENCY;
+  const absorptionSignal = atmFrac * gasPotency;
+  const sparse = strongAbsorber ? smoothstep(0.01, 0.05, absorptionSignal) : 0;
+  const fullCover = strength * COVERAGE_FULL_MAX;
+  const sparseCover = strength * COVERAGE_SPARSE_MAX;
+  return fullCover + (sparseCover - fullCover) * sparse;
+}
+
+// Peak zonal wind at this deck's altitude. Gaseous bodies run an
+// order of magnitude faster than terrestrials at cloud-top; deeper
+// decks see slower winds via the linear altitude factor. Curated Sol
+// giants override via body_layers.csv (Saturn 450, Neptune 600).
+function windAtAltitude(body, altitudeNorm) {
+  const base = isGaseousBody(body) ? 200 : 30;
+  return base * (0.5 + altitudeNorm);
+}
+
+function cloudDecksFor(body, _S) {
+  if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
+    return [];
+  }
+  const T = body.avgSurfaceTempK;
+  if (T == null) return [];
+
+  // Context shared with each species' precursor gate. Bundling
+  // helpers here keeps CONDENSABLES rows declarative.
+  const ctx = {
+    isGaseous: isGaseousBody(body),
+    atmFrac: (gas) => atmFracOf(body, gas),
+    smoothstep,
+  };
+
   const out = [];
-  for (const deck of spec.layers) {
-    const coverage = sampleTruncated(prng, deck.coverage);
+  for (const c of CONDENSABLES) {
+    // Effective T at this species' altitude. On gaseous bodies, the
+    // atm column has a positive T gradient with depth (~adiabatic),
+    // so deeper-altitude species see a warmer effective T than the
+    // body's cloud-top reference. Terrestrials skip this — their
+    // condensation happens near the surface where surface T applies.
+    const altOffset = ctx.isGaseous ? (c.altitudeTempOffsetK ?? 0) : 0;
+    const effectiveT = T + altOffset;
+    const tempGate = tempCondenseFactor(effectiveT, c.condenseTempK[0], c.condenseTempK[1]);
+    if (tempGate <= 0) continue;
+    const precursor = c.precursor(body, ctx);
+    if (precursor <= 0) continue;
+    const strength = tempGate * precursor;
+    if (strength < STRENGTH_THRESHOLD) continue;
+
+    const atmFrac = atmFracOf(body, c.gas);
+    const gasPotency = CLOUD_GAS_POTENCY[c.gas] ?? 0;
+    const coverage = coverageFor(body, c.gas, strength, atmFrac, gasPotency);
+    if (coverage < STRENGTH_THRESHOLD) continue;
+
     out.push({
-      gas: deck.gas,
+      gas: c.gas,
       coverage: Number(coverage.toFixed(3)),
-      windSpeedMS: deck.windSpeedMS,
-      altitudeNorm: Number(deck.altitudeNorm.toFixed(3)),
+      windSpeedMS: Math.round(windAtAltitude(body, c.altitudeNorm)),
+      altitudeNorm: Number(c.altitudeNorm.toFixed(3)),
     });
   }
-  // Pre-sort by altitude so the shader can iterate decks in
-  // composition order without re-sorting at upload time.
+  // Same back-to-front composite order the renderer expects.
   out.sort((a, b) => a.altitudeNorm - b.altitudeNorm);
   return out;
 }
@@ -1465,33 +1518,14 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, atm1, atm1Frac, atm2, atm2Frac, atm3, atm3Frac };
 
-  // Cloud layers — up to 3 stratified decks. Regime dispatch
-  // (cloudHazeRegimeFor) chooses the deck list; curated bodies that
-  // authored decks in body_layers.csv skip this and keep the CSV
-  // values. Surface opacity is co-derived here so the renderer always
-  // has a scalar to drive composition (gas giants = 0, terrestrials = 1).
-  if (unknowns.has('cloudLayers')) {
-    cloudLayers = cloudLayersFor(working, S);
-  }
-  surfaceOpacity = surfaceOpacityFor(working);
-  working = { ...working, cloudLayers, surfaceOpacity };
-
-  // Unified haze derivation — emits per-species aerosol formation
-  // strengths + dust strength. Final opacity + color are blended at
-  // render time (disc-palette) from this contributor list plus the
-  // body's atm gases + pressure. Always runs; no CSV override path.
-  {
-    const h = hazeFor(working);
-    hazeAerosols = h.aerosols;
-    dustStrength = h.dust;
-  }
-  working = { ...working, hazeAerosols, dustStrength };
-
   // ─── Pass B: composition-aware greenhouse refinement ───
   // Pass A used the pressure-proxy greenhouse to settle T/water/ice.
   // Now that atm composition is known, refine greenhouse from per-
   // gas potencies and re-run the T↔ice loop. Skipped when the proxy
   // is already within 1K of the composition value (most bodies).
+  // Cloud + haze emission run AFTER Pass B so they see the final T
+  // (cloud condensation windows are tight; a 20 K refinement can
+  // flip which species fires).
   if (working.surfacePressureBar != null && working.surfacePressureBar > 0) {
     const greenhouseB = greenhouseKFromComposition(working);
     const deltaK = Math.abs(greenhouseB - greenhouseA);
@@ -1510,6 +1544,32 @@ function fillBody(b, allBodies, stars) {
       };
     }
   }
+
+  // Cloud layers — up to MAX_CLOUD_LAYERS stratified decks. Per-species
+  // condensation gates (cloudDecksFor) iterate CONDENSABLES: each
+  // species' temp window × precursor gate produces a strength; coverage
+  // is then derived from strength + a sparse-cirrus mode gate keyed
+  // off the species' contribution to atm column color. Curated bodies
+  // that authored decks in body_layers.csv skip this and keep the CSV
+  // values. Surface opacity is co-derived here so the renderer always
+  // has a scalar to drive composition (gas giants = 0, terrestrials = 1).
+  if (unknowns.has('cloudLayers')) {
+    cloudLayers = cloudDecksFor(working, S);
+  }
+  surfaceOpacity = surfaceOpacityFor(working);
+  working = { ...working, cloudLayers, surfaceOpacity };
+
+  // Unified haze derivation — emits per-species aerosol formation
+  // strengths + dust strength. Reads cloudLayers (above) for the
+  // NH4SH / CHROMOPHORE chemistry gates that require an NH3 deck.
+  // Final opacity + color are blended at render time (disc-palette)
+  // from this contributor list plus the body's atm + pressure.
+  {
+    const h = hazeFor(working);
+    hazeAerosols = h.aerosols;
+    dustStrength = h.dust;
+  }
+  working = { ...working, hazeAerosols, dustStrength };
 
   // ─── DERIVE worldClass ─── pure label off settled physical state.
   // Runs LAST so it reads the final refined T (post Pass B) plus the

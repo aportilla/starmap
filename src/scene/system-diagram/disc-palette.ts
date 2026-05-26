@@ -17,13 +17,14 @@
 //                    live here alongside bulk gas absorption and
 //                    Rayleigh scattering.
 //   - **cloud**    — up to MAX_CLOUD_LAYERS stratified decks composited
-//                    back-to-front by altitudeNorm. Each deck carries
-//                    its own 3-slot palette: condensate base + up to
-//                    two chromophore accents whose host gas matches
-//                    THIS deck (via AEROSOL_STAINS_GAS). Earth's H2O
-//                    deck is plain white; Jupiter's NH3 deck reads
-//                    white + brown + red because NH4SH and CHROMOPHORE
-//                    stain NH3 specifically.
+//                    back-to-front by altitudeNorm. Each deck is ONE
+//                    condensate color (CONDENSATE_COLOR[gas] with
+//                    GAS_COLOR fallback) plus small per-cell brightness
+//                    jitter. Multi-color character on banded bodies
+//                    emerges from coverage rents in upper decks
+//                    revealing the next-deeper deck (or the surface /
+//                    atm-column beneath the stack), not from in-deck
+//                    palette mixing.
 //   - **rim**      — outward halo into space, no inward fade. Width
 //                    bucketed off pressure (surface) or scale-height
 //                    proxy (no-surface). Color = same contributor blend
@@ -33,8 +34,9 @@
 // Each layer's alpha is data-driven; total opacity emerges from
 // composition rather than a mode flip. Earth's H2O deck at coverage
 // 0.4 covers 40% of the disc in white worley cells; Venus's H2SO4
-// deck at 1.0 covers everything; Jupiter's three full-coverage decks
-// stack such that the upper NH3 hides everything below it.
+// deck at 1.0 covers everything; Saturn's three full-coverage decks
+// stack such that the upper NH3 hides everything below it, while
+// Jupiter's lower NH3 coverage rents zonally to reveal NH4SH bands.
 
 import { Color } from 'three';
 import {
@@ -43,7 +45,7 @@ import {
   HAZE_DUST_SCALE, HAZE_RAYLEIGH_SCALE,
   SCATTERING_COLOR, SCATTERING_POTENCY,
   WORLD_CLASS_COLOR, WORLD_CLASS_TINT,
-  WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, claimedAerosolsFor,
+  WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, deckGasesFor, RENDERER_SKIP_AEROSOLS,
   cloudDeckPalette, dominantResources, stratosphericHazeStrengthFor,
 } from '../../data/stars';
 import { hash32 } from './geom/prng';
@@ -167,25 +169,18 @@ export interface DiscPalette {
   readonly biomeColor: readonly [number, number, number];
   readonly biomeCoverage: number;
   // Cloud layers — up to MAX_CLOUD_LAYERS stratified decks, sorted
-  // ascending by altitudeNorm. Each entry carries its own 3-slot
-  // palette (condensate base + up to two chromophore accents whose
-  // host gas matches this deck's gas via AEROSOL_STAINS_GAS). The
-  // shader composites layers above the surface + haze, each pre-tinted
-  // by the haze opacity sitting above it. Empty slots have coverage = 0
-  // and get a no-op composite.
+  // ascending by altitudeNorm. Each entry carries one condensate color
+  // (no in-deck mixing). The shader composites layers above the
+  // surface + haze, each pre-tinted by the haze opacity sitting above
+  // it. Empty slots have coverage = 0 and get a no-op composite.
+  // Banded character emerges from coverage rents revealing the deck
+  // below (or the surface / atm-column beneath the stack).
   readonly cloudLayers: ReadonlyArray<{
     readonly coverage: number;
     readonly windSpeedMS: number;
     readonly altitudeNorm: number;
-    // 3 RGB triples (9 floats). Slot 0 = condensate base; slots 1-2 =
-    // top staining aerosols sorted by strength descending. Empty
-    // trailing slots are [0,0,0].
-    readonly palette: readonly [number, number, number,
-                                number, number, number,
-                                number, number, number];
-    // Weights sum to 1. Slot 0 = (1 - accentClaim); slots 1-2 share
-    // accentClaim by relative aerosol strength.
-    readonly weights: readonly [number, number, number];
+    // Condensate RGB — CONDENSATE_COLOR[gas] with GAS_COLOR fallback.
+    readonly color: readonly [number, number, number];
   }>;
   // Haze layer uniform opacity [0..1]. The shader runs a per-fragment
   // mix(col, hazeColor, hazeOpacity) over EVERY paint underneath
@@ -255,9 +250,10 @@ function dustColorFor(body: Body): Color {
 // procgen (`hazeAerosols`), and lifted mineral dust colored by the
 // body's resource mineralogy.
 //
-// Aerosols claimed by a cloud deck (via AEROSOL_STAINS_GAS) are
-// skipped — they're folded into that deck's per-cell palette and
-// shouldn't double-count in the uniform blanket.
+// Aerosol species that already paint as a cloud deck on this body are
+// skipped — they shouldn't double-count as stratospheric haze. Species
+// in RENDERER_SKIP_AEROSOLS (CHROMOPHORE today) are also skipped while
+// their proper home — a thin sparse-coverage top deck — remains a TODO.
 function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: number }> {
   const out: Array<{ color: Color; weight: number }> = [];
   const P = body.surfacePressureBar;
@@ -283,11 +279,12 @@ function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: numb
     }
   }
   if (body.hazeAerosols !== null) {
-    const claimed = claimedAerosolsFor(body);
+    const deckGases = deckGasesFor(body);
     for (const [species, strength] of Object.entries(body.hazeAerosols)) {
       if (strength <= 0) continue;
       const gas = species as AtmGas;
-      if (claimed.has(gas)) continue;
+      if (deckGases.has(gas)) continue;
+      if (RENDERER_SKIP_AEROSOLS.has(gas)) continue;
       const col = GAS_COLOR[gas];
       const potency = GAS_POTENCY[gas] ?? 0;
       if (!col || potency <= 0) continue;
@@ -502,12 +499,10 @@ export function buildDiscPalette(
     : [0, 0, 0];
   const biomeCoverage = biomePaint ? biomePaint.coverage : 0;
 
-  // Cloud layer scalars + per-deck palette. Each deck independently
-  // derives its 3-slot palette via cloudDeckPalette — condensate base
-  // + up to 2 chromophore accents whose host gas matches THIS deck's
-  // gas (NH4SH stains NH3, CHROMOPHORE stains NH3, THOLIN stains CH4,
-  // SULFUR stains SO2). tinyDisc suppresses all decks since per-fragment
-  // worley would resolve as noise on a small disc.
+  // Cloud layer scalars + per-deck color. One condensate per deck;
+  // banded character emerges from coverage rents revealing the deck
+  // below, not from in-deck mixing. tinyDisc suppresses all decks
+  // since per-fragment worley would resolve as noise on a small disc.
   const cloudLayers = tinyDisc
     ? []
     : body.cloudLayers.map((l) => {
@@ -516,12 +511,7 @@ export function buildDiscPalette(
           coverage: l.coverage,
           windSpeedMS: l.windSpeedMS,
           altitudeNorm: l.altitudeNorm,
-          palette: [
-            dp.palette[0].r, dp.palette[0].g, dp.palette[0].b,
-            dp.palette[1].r, dp.palette[1].g, dp.palette[1].b,
-            dp.palette[2].r, dp.palette[2].g, dp.palette[2].b,
-          ] as const,
-          weights: [dp.weights[0], dp.weights[1], dp.weights[2]] as const,
+          color: [dp.color.r, dp.color.g, dp.color.b] as const,
         };
       });
 
@@ -553,11 +543,11 @@ export function buildDiscPalette(
       mr += c.r * w; mg += c.g * w; mb += c.b * w; mw += w;
     };
 
-    // Per-deck cloud bases (slot 0 of each deck's palette) weighted by
-    // that deck's coverage. Higher decks aren't preferred over lower
-    // decks at the limb — the rim sees the sum of cloud chemistry.
+    // Per-deck cloud bases weighted by that deck's coverage. Higher
+    // decks aren't preferred over lower decks at the limb — the rim
+    // sees the sum of cloud chemistry.
     for (const dl of cloudLayers) {
-      const cr = dl.palette[0], cg = dl.palette[1], cb = dl.palette[2];
+      const cr = dl.color[0], cg = dl.color[1], cb = dl.color[2];
       if ((cr + cg + cb) > 0) add({ r: cr, g: cg, b: cb }, dl.coverage);
     }
     if (hasSurface) {

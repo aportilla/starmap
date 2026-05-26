@@ -13,9 +13,8 @@ export {
 export {
   ATM_COLUMN_TEXEL_OFFSET,
   BODY_TEXTURE_WIDTH,
-  DECK_PALETTE_BASE_OFFSET,
+  DECK_COLOR_BASE_OFFSET,
   MAX_CLOUD_LAYERS,
-  PALETTE_TEXELS_PER_DECK,
   makeBlobMaterial,
   makePlanetMaterial,
   makeRingMaterial,

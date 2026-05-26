@@ -906,7 +906,7 @@ async function main() {
   // Attach curated cloud-deck overrides. Bodies with entries get
   // cloudLayers populated + flagged not-unknown so the Filler skips
   // synthesis. Bodies without entries get cloudLayers=null + the
-  // 'cloudLayers' unknown so Filler runs cloudLayersFor on them.
+  // 'cloudLayers' unknown so Filler runs cloudDecksFor on them.
   for (const b of rawBodies) {
     const decks = bodyLayersByBodyId.get(b.id);
     if (decks && decks.length > 0) {

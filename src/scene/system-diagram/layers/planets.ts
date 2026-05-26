@@ -9,8 +9,8 @@ import {
 } from 'three';
 import { BODIES } from '../../../data/stars';
 import {
-  ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_PALETTE_BASE_OFFSET,
-  makePlanetMaterial, MAX_CLOUD_LAYERS, PALETTE_TEXELS_PER_DECK,
+  ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_COLOR_BASE_OFFSET,
+  makePlanetMaterial, MAX_CLOUD_LAYERS,
 } from '../../materials';
 import { buildDiscPalette } from '../disc-palette';
 import { RENDER_ORDER_PLANET, Z_PLANET, Z_STRIDE } from '../layout/constants';
@@ -127,20 +127,11 @@ export class PlanetsLayer {
         // Per-layer hash salt so each deck's worley cells fall on
         // different positions. Layer index alone is enough.
         cloudLayerData[scalarOff + 3] = li;
-        // Per-deck palette: 3 texels each = (color.rgb, weight).
-        const palBase = rowBase + (DECK_PALETTE_BASE_OFFSET + li * PALETTE_TEXELS_PER_DECK) * 4;
-        cloudLayerData[palBase +  0] = l.palette[0];
-        cloudLayerData[palBase +  1] = l.palette[1];
-        cloudLayerData[palBase +  2] = l.palette[2];
-        cloudLayerData[palBase +  3] = l.weights[0];
-        cloudLayerData[palBase +  4] = l.palette[3];
-        cloudLayerData[palBase +  5] = l.palette[4];
-        cloudLayerData[palBase +  6] = l.palette[5];
-        cloudLayerData[palBase +  7] = l.weights[1];
-        cloudLayerData[palBase +  8] = l.palette[6];
-        cloudLayerData[palBase +  9] = l.palette[7];
-        cloudLayerData[palBase + 10] = l.palette[8];
-        cloudLayerData[palBase + 11] = l.weights[2];
+        // Per-deck color: one RGBA texel, condensate hue in .rgb.
+        const colBase = rowBase + (DECK_COLOR_BASE_OFFSET + li) * 4;
+        cloudLayerData[colBase + 0] = l.color[0];
+        cloudLayerData[colBase + 1] = l.color[1];
+        cloudLayerData[colBase + 2] = l.color[2];
       }
       // Atm column color — painted as no-surface base + visible through
       // cloud rents. One texel per body, RGB in xyz (alpha unused).

@@ -65,22 +65,20 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 // height = body count. Texel layout per body row:
 //   [0..MAX_CLOUD_LAYERS)            — per-layer scalars (coverage, windSpeedMS, alt, seed)
 //   [MAX_CLOUD_LAYERS]               — atm column color (rgb, .a unused)
-//   [MAX_CLOUD_LAYERS+1 .. +1+N*3)   — per-deck palette texels, 3 per deck:
-//                                       texel = (color.rgb, weight). Slot 0 is
-//                                       the condensate base; slots 1-2 are the
-//                                       top staining aerosols (NH4SH/CHROMOPHORE
-//                                       on NH3, THOLIN on CH4, SULFUR on SO2;
-//                                       see AEROSOL_STAINS_GAS in stars.ts).
+//   [MAX_CLOUD_LAYERS+1 .. +1+N)     — per-deck color (one RGBA texel per
+//                                       deck; .a unused). Single condensate
+//                                       color — multi-color character on
+//                                       banded bodies emerges from coverage
+//                                       rents revealing the deeper deck,
+//                                       not from in-deck mixing.
 // Pulling everything off vertex attributes brings the per-pool attribute
-// count back under the gl_MaxVertexAttribs cap (was hitting 16 on tighter
-// GPUs when per-body palette attributes stacked).
+// count back under the gl_MaxVertexAttribs cap.
 export const MAX_CLOUD_LAYERS = 3;
-const PALETTE_TEXELS_PER_DECK = 3;
 const ATM_COLUMN_TEXEL_OFFSET = MAX_CLOUD_LAYERS;
-const DECK_PALETTE_BASE_OFFSET = MAX_CLOUD_LAYERS + 1;
+const DECK_COLOR_BASE_OFFSET = MAX_CLOUD_LAYERS + 1;
 export const BODY_TEXTURE_WIDTH =
-  MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS * PALETTE_TEXELS_PER_DECK;
-export { PALETTE_TEXELS_PER_DECK, ATM_COLUMN_TEXEL_OFFSET, DECK_PALETTE_BASE_OFFSET };
+  MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS;
+export { ATM_COLUMN_TEXEL_OFFSET, DECK_COLOR_BASE_OFFSET };
 
 export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
   const m = new ShaderMaterial({
@@ -1114,6 +1112,48 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         const float WIND_BANDNESS_HIGH_MS   = 150.0;
         const float WIND_STRETCH_REFERENCE_MS = 600.0;
         const float BAND_MAX_LON_PX         = 120.0;
+
+        // ── Column band modulation (no-surface bodies) ──
+        // On gas / ice giants the bulk atm column shows subtle zonal
+        // brightness variation from convective turnover — lighter and
+        // darker bands at different latitudes. Cloud decks above paint
+        // the bright cirrus / streaks, but the column itself also
+        // varies. Apply a coarse-scale lat-stretched worley pattern
+        // to modulate column brightness, using the topmost cloud
+        // deck's wind speed for band aspect ratio so high-wind bodies
+        // (Neptune 600 m/s) show longer streaks than low-wind (Uranus
+        // 250 m/s).
+        if (vSurfaceOpacity < 0.5) {
+          float bodyWind = 0.0;
+          float topAlt = -1.0;
+          for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
+            float lU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+            vec4 lyr = texture2D(uCloudLayerData, vec2(lU, vBodyV));
+            if (lyr.x > 0.0 && lyr.z > topAlt) {
+              topAlt = lyr.z;
+              bodyWind = lyr.y;
+            }
+          }
+          float cBandness = smoothstep(WIND_BANDNESS_LOW_MS, WIND_BANDNESS_HIGH_MS, bodyWind);
+          float cWindFactor = sqrt(clamp(bodyWind / WIND_STRETCH_REFERENCE_MS, 0.0, 1.0));
+          float cBandedLon = mix(BAND1_LON_PX, BAND_MAX_LON_PX, cWindFactor);
+          // 2x coarser than cloud cells so the column pattern reads as
+          // an underlying base rhythm rather than competing with cirrus.
+          float cLonPx = mix(CLOUD_LON_PX, cBandedLon, cBandness) * 2.0;
+          float cLatPx = mix(CLOUD_LAT_PX, BAND1_LAT_PX, cBandness) * 2.0;
+          vec2 cAspect = vec2(cLonPx, cLatPx);
+          vec2 cp = vec2(lon, lat) * vRadius / cAspect;
+          vec2 cCellId = floor(cp);
+          // Lat-only hash at high wind so cells in the same latitude
+          // band share a brightness pick (parallel bands); at low wind,
+          // both axes vary (patchy convective cells).
+          vec2 cHashKey = mix(cCellId, vec2(0.0, cCellId.y), cBandness);
+          float cBandHash = hash21(cHashKey + vec2(vSeed * 73.0, vSeed * 89.0));
+          // ±0.08 brightness modulation on the atm column.
+          float cMod = (cBandHash - 0.5) * 0.16;
+          col = clamp(col + vec3(cMod), 0.0, 1.0);
+        }
+
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
           vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
@@ -1127,20 +1167,9 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           float bandedLonPx = mix(BAND1_LON_PX, BAND_MAX_LON_PX, windFactor);
           float lonPx = mix(CLOUD_LON_PX, bandedLonPx, bandness);
 
-          // Per-deck palette — 3 RGBA texels, each (color.rgb, weight).
-          // Slot 0 = condensate base (CONDENSATE_COLOR[gas]); slots 1-2 =
-          // staining aerosols routed by AEROSOL_STAINS_GAS. Earth's
-          // H2O deck is plain white (no chromophore stains H2O).
-          // Jupiter's NH3 deck reads white-cream + brown (NH4SH) + red
-          // (CHROMOPHORE).
-          float pBaseCol = float(${DECK_PALETTE_BASE_OFFSET}) + float(li) * float(${PALETTE_TEXELS_PER_DECK});
-          float pTex0U = (pBaseCol + 0.5) / float(${BODY_TEXTURE_WIDTH});
-          float pTex1U = (pBaseCol + 1.5) / float(${BODY_TEXTURE_WIDTH});
-          float pTex2U = (pBaseCol + 2.5) / float(${BODY_TEXTURE_WIDTH});
-          vec4 deckP0 = texture2D(uCloudLayerData, vec2(pTex0U, vBodyV));
-          vec4 deckP1 = texture2D(uCloudLayerData, vec2(pTex1U, vBodyV));
-          vec4 deckP2 = texture2D(uCloudLayerData, vec2(pTex2U, vBodyV));
-          vec3 deckWeights = vec3(deckP0.a, deckP1.a, deckP2.a);
+          // Per-deck color — one RGBA texel, condensate hue in .rgb.
+          float pDeckColU = (float(${DECK_COLOR_BASE_OFFSET}) + float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+          vec3 deckColor = texture2D(uCloudLayerData, vec2(pDeckColU, vBodyV)).rgb;
 
           // LAT pitch lerps from CLOUD_LAT_PX (patchy) to BAND1_LAT_PX
           // (banded) by bandness. LON pitch already encodes the wind-
@@ -1173,23 +1202,20 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           }
 
           // Existence gate — cells whose per-cell hash exceeds coverage
-          // skip. At coverage = 1.0 every cell fires (banded path);
-          // at coverage = 0.4 ~40% of cells fire (patchy path).
+          // skip, revealing the next-deeper deck (or surface/atm column
+          // beneath). At coverage = 1.0 every cell fires; at coverage =
+          // 0.55 ~45% of cells rent. Banding character emerges because
+          // worley cells are lat-stretched at high wind, so rents
+          // line up into zonal strips.
           float existH = hash21(winnerCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
           if (existH >= coverage) continue;
 
-          // Color hash key — at bandness=0 uses both axes, at bandness=1
-          // uses lat axis only so cells in the same latitude track
-          // resolve to the same palette pick (parallel bands).
-          vec2 hashKey = mix(winnerCell, vec2(0.0, winnerCell.y), bandness);
-          float colorH = hash21(hashKey + vec2(vSeed * 41.0 + layerSeed * 7.0, vSeed * 67.0 + layerSeed * 11.0));
-          vec3 cloudCol = pickFromPalette(
-            colorH,
-            deckP0.rgb, deckP1.rgb, deckP2.rgb,
-            deckWeights
-          );
+          // Per-cell brightness jitter — keyed to lat so cells in the
+          // same band share tonal life, gives a deck visual texture
+          // without introducing alien hues. Lat-only key matches the
+          // banded character at high wind.
           float lj = (hash11(winnerCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
-          cloudCol = clamp(cloudCol + vec3(lj), 0.0, 1.0);
+          vec3 cloudCol = clamp(deckColor + vec3(lj), 0.0, 1.0);
 
           // Haze pre-tint by altitude — deep decks read as more
           // haze-tinted; top decks barely tint. Approximates
