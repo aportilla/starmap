@@ -685,17 +685,18 @@ export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 
 // The unified haze pass blends every atmospheric contributor — bulk
 // atm gases, formation-gated aerosol products, lifted dust, and
-// Rayleigh scattering — into one color + one opacity per body. These
-// four scales are the system-wide tuning handles: each category's
-// contribution is `Σ (perSpeciesWeight × GAS_POTENCY) × scale`.
-//
-// Calibration target after PR 2: Titan ≈ 0.85 hazeOpacity (anchor),
-// Venus ≈ 0.7, Mars ≈ 0.25, Earth ≈ 0.15, Jupiter (surface-gated, so
-// 0 today). Tune these globals — not per-species coefficients — if
-// the anchors drift.
+// Rayleigh scattering — into one color + one opacity per body. Each
+// category's contribution is `Σ (perSpeciesWeight × GAS_POTENCY ×
+// log10(P+1)) × scale` — column thickness gates every species so a
+// thin-atm body can't paint full haze regardless of formation strength.
+// These four scales are the system-wide tuning handles. Aerosol scale
+// is set so thick-column anchors (Titan-class) land near their
+// pre-pressure-fix opacity; dust scale keeps dusty bodies in the
+// 0.1–1 bar regime visibly hazy. Tune these globals — not per-species
+// coefficients — if the anchors drift.
 export const HAZE_BULK_GAS_SCALE = 0.2;
-export const HAZE_AEROSOL_SCALE  = 0.5;
-export const HAZE_DUST_SCALE     = 0.1;
+export const HAZE_AEROSOL_SCALE  = 1.25;
+export const HAZE_DUST_SCALE     = 3.0;
 export const HAZE_RAYLEIGH_SCALE = 0.15;
 
 // ---------------------------------------------------------------------------

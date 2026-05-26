@@ -530,6 +530,22 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
       }
 
+      // 4x4 Bayer matrix lookup keyed on env-pixel coords, returns
+      // value in {0/16, 1/16, ..., 15/16}. Built recursively from the
+      // 2x2 pattern [[0,2],[3,1]] — closed-form (x*2 + y*3 - x*y*4)
+      // for (x,y) ∈ {0,1}², no branches, no texture lookup. Used as
+      // an ordered-dither threshold against per-cell coverage gates
+      // so cells whose hash lands near the threshold render stippled
+      // rather than binary-fire.
+      float bayer4(vec2 p) {
+        vec2 q = mod(floor(p), vec2(4.0));
+        vec2 outer = floor(q / 2.0);
+        vec2 inner = mod(q, vec2(2.0));
+        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
+        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
+        return (4.0 * bInner + bOuter) / 16.0;
+      }
+
       // Pick one of three palette entries by a 0..1 hash, weighted by
       // the supplied weights. Skips zero-weight slots automatically.
       // Defensive fallback: weights summing to zero → p0 (palette0 is
@@ -1075,6 +1091,23 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         // a uniform mix would crush the structure.
         if (vHazeOpacity > 0.0 && vSurfaceOpacity > 0.5) {
           col = mix(col, vHazeColor, vHazeOpacity);
+          // Heavily-hazed surface bodies otherwise paint as a perfectly
+          // flat tinted disc (Venus / magma-ocean class — haze saturation
+          // hides every surface texture beneath the lerp). Stamp a small
+          // luminance jitter via Bayer ordered dither plus a hash
+          // perturbation so the 4x4 tile doesn't read as a crosshatch.
+          // Gated by smoothstep on vHazeOpacity so Earth / Mars class
+          // bodies (light haze, visible surface texture) don't pick up
+          // an artificial pattern they don't need.
+          const float HAZE_DITHER_AMP       = 0.06;
+          const float HAZE_DITHER_GATE_LOW  = 0.3;
+          const float HAZE_DITHER_GATE_HIGH = 0.7;
+          const float HAZE_DITHER_HASH_MIX  = 0.4;
+          float bayerT = bayer4(gl_FragCoord.xy);
+          float hashT  = hash21(floor(gl_FragCoord.xy));
+          float ditherT = mix(bayerT, hashT, HAZE_DITHER_HASH_MIX) - 0.5;
+          float ditherGate = smoothstep(HAZE_DITHER_GATE_LOW, HAZE_DITHER_GATE_HIGH, vHazeOpacity);
+          col += vec3(ditherT * HAZE_DITHER_AMP * ditherGate);
         }
 
         // ── Cloud layers ──
@@ -1113,6 +1146,16 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
         const float WIND_STRETCH_REFERENCE_MS = 600.0;
         const float BAND_MAX_LON_PX         = 120.0;
 
+        // Env-pixel width of the Bayer-dither fringe at cell edges.
+        // Fragments inside a firing cell, within CLOUD_EDGE_DITHER_PX
+        // of the boundary to a non-firing neighbor, stipple against the
+        // layer beneath; cell interiors stay perfectly crisp. The fringe
+        // is what distinguishes cloud silhouettes from same-tone surface
+        // (or same-tone deeper deck) — a hard worley edge can otherwise
+        // disappear into a same-tone neighbor and the cell reads as part
+        // of the underlying texture.
+        const float CLOUD_EDGE_DITHER_PX = 1.5;
+
         // ── Column band modulation (no-surface bodies) ──
         // On gas / ice giants the bulk atm column shows subtle zonal
         // brightness variation from convective turnover — lighter and
@@ -1144,6 +1187,7 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           vec2 cAspect = vec2(cLonPx, cLatPx);
           vec2 cp = vec2(lon, lat) * vRadius / cAspect;
           vec2 cCellId = floor(cp);
+          vec2 cCellFrac = cp - cCellId;
           // Lat-only hash at high wind so cells in the same latitude
           // band share a brightness pick (parallel bands); at low wind,
           // both axes vary (patchy convective cells).
@@ -1151,6 +1195,27 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           float cBandHash = hash21(cHashKey + vec2(vSeed * 73.0, vSeed * 89.0));
           // ±0.08 brightness modulation on the atm column.
           float cMod = (cBandHash - 0.5) * 0.16;
+
+          // Edge dither between adjacent lat bands. The column pass uses
+          // grid-aligned cells (no worley jitter), so visible band seams
+          // are pure horizontal lines at every cLatPx env-pixels. At full
+          // cBandness adjacent LAT cells differ in brightness; LON-
+          // adjacent cells share lj via cHashKey, so lon seams are
+          // invisible and we only dither the lat axis. dyDir picks the
+          // closer lat edge, then we sample the neighbor's mod and
+          // Bayer-threshold so band-to-band transitions taper rather
+          // than meeting at a hard horizontal seam — same machinery as
+          // the firing/firing branch in the cloud loop below.
+          float cDyDir = step(0.5, cCellFrac.y) * 2.0 - 1.0;
+          float cLatDistFrac = (cDyDir > 0.0) ? (1.0 - cCellFrac.y) : cCellFrac.y;
+          float cLatDistPx = cLatDistFrac * cLatPx;
+          vec2 cCellId2 = cCellId + vec2(0.0, cDyDir);
+          vec2 cHashKey2 = mix(cCellId2, vec2(0.0, cCellId2.y), cBandness);
+          float cBandHash2 = hash21(cHashKey2 + vec2(vSeed * 73.0, vSeed * 89.0));
+          float cMod2 = (cBandHash2 - 0.5) * 0.16;
+          float cT = clamp(cLatDistPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
+          if (bayer4(gl_FragCoord.xy) >= 0.5 + 0.5 * cT) cMod = cMod2;
+
           col = clamp(col + vec3(cMod), 0.0, 1.0);
         }
 
@@ -1181,8 +1246,14 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
           vec2 p = vec2(lon, lat) * vRadius / cellAspect;
           vec2 cellId = floor(p);
           vec2 cellFrac = p - cellId;
+          // Track both nearest (F1) and second-nearest (F2) jittered cell
+          // centers. F2 is consulted by the edge-dither check below — the
+          // distance to the F1/F2 boundary tells us how far inside our
+          // own cell we are, and whether the neighbor would have fired.
           float minD2 = 1e9;
+          float secondD2 = 1e9;
           vec2 winnerCell = cellId;
+          vec2 secondCell = cellId;
           for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
               vec2 off = vec2(float(dx), float(dy));
@@ -1195,26 +1266,72 @@ export function makePlanetMaterial(initialDiscScale: number): ShaderMaterial {
               vec2 diff = nCenter - cellFrac;
               float d2 = dot(diff, diff);
               if (d2 < minD2) {
+                secondD2 = minD2;
+                secondCell = winnerCell;
                 minD2 = d2;
                 winnerCell = nCell;
+              } else if (d2 < secondD2) {
+                secondD2 = d2;
+                secondCell = nCell;
               }
             }
           }
 
-          // Existence gate — cells whose per-cell hash exceeds coverage
-          // skip, revealing the next-deeper deck (or surface/atm column
-          // beneath). At coverage = 1.0 every cell fires; at coverage =
-          // 0.55 ~45% of cells rent. Banding character emerges because
-          // worley cells are lat-stretched at high wind, so rents
-          // line up into zonal strips.
+          // Existence gate — binary per-cell hash. Cells whose hash sits
+          // below coverage paint the deck; above this they skip, revealing
+          // the next-deeper deck (or surface / atmColumnColor beneath).
           float existH = hash21(winnerCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
           if (existH >= coverage) continue;
 
+          // Edge dither — two cases share one boundary-distance metric
+          // but apply different thresholds for the asymmetry each wants.
+          //
+          // Distance from the fragment to the F1/F2 perpendicular bisector
+          // (in worley units) is (sqrt(secondD2) - sqrt(minD2)) * 0.5 —
+          // the bisector is equidistant by definition, so this measures
+          // how deep inside F1's cell the fragment sits. Multiply by the
+          // tighter cell-aspect axis to convert to env-pixels: in banded
+          // cells the visible boundaries run along the lat-stretched axis,
+          // so the lat dimension is the one we care about.
+          float existH2 = hash21(secondCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
+          float boundaryWorley = (sqrt(secondD2) - sqrt(minD2)) * 0.5;
+          float boundaryPx = boundaryWorley * min(cellAspect.x, cellAspect.y);
+          float t = clamp(boundaryPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
+          float b = bayer4(gl_FragCoord.xy);
+
+          // ljCell decides which cell's BAND_LIGHTNESS_JITTER colors this
+          // fragment. Defaults to F1; the firing/firing case below may
+          // swap in F2 for fragments inside the dither fringe.
+          vec2 ljCell = winnerCell;
+
+          if (existH2 >= coverage) {
+            // F1 fires, F2 doesn't — cloud/no-cloud boundary. Asymmetric:
+            // Bayer-out fragments fall through to the layer beneath, so
+            // the cloud silhouette gains a stipple halo against same-tone
+            // surface (water cloud over snowcap) or deeper decks (NH3
+            // rent revealing NH4SH on Jupiter).
+            if (b >= t) continue;
+          } else {
+            // F1 fires, F2 also fires — cloud/cloud boundary inside the
+            // deck. Two adjacent worley cells share the same condensate
+            // color but get distinct BAND_LIGHTNESS_JITTER via
+            // hash11(cell.y), so for cells in different lat rows there's
+            // a visible (and at high coverage, ONLY) tonal seam between
+            // them. Symmetric stipple: fragments in the dither fringe
+            // pick up F2's lj instead of F1's so the bands taper into
+            // each other. Threshold 0.5 + 0.5*t gives 50% F1/50% F2 at
+            // the bisector, ramping to 100% F1 at the fringe edge —
+            // visible band-edge dither even on a 100%-coverage deck
+            // (Venus H2SO4) where no rents exist to dither against.
+            if (b >= 0.5 + 0.5 * t) ljCell = secondCell;
+          }
+
           // Per-cell brightness jitter — keyed to lat so cells in the
           // same band share tonal life, gives a deck visual texture
-          // without introducing alien hues. Lat-only key matches the
-          // banded character at high wind.
-          float lj = (hash11(winnerCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
+          // without introducing alien hues. ljCell is F1 except at
+          // band/band boundaries where the symmetric dither above swaps
+          // in F2.
+          float lj = (hash11(ljCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
           vec3 cloudCol = clamp(deckColor + vec3(lj), 0.0, 1.0);
 
           // Haze pre-tint by altitude — deep decks read as more

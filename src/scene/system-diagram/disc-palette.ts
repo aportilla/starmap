@@ -245,10 +245,20 @@ function dustColorFor(body: Body): Color {
 // channel for a body. Reused by both `hazeBlendFor` (one tint + opacity
 // for the uniform haze pass) and the rim merger (which adds per-deck
 // cloud bases on top). Walks four contributor categories: bulk atm
-// gases × pressure (absorption tint), Rayleigh scattering on the same
-// gases (scattering tint), formation-gated aerosol products from
-// procgen (`hazeAerosols`), and lifted mineral dust colored by the
-// body's resource mineralogy.
+// gases (absorption tint), Rayleigh scattering on the same gases
+// (scattering tint), formation-gated aerosol products from procgen
+// (`hazeAerosols`), and lifted mineral dust colored by the body's
+// resource mineralogy.
+//
+// Every contributor weight is multiplied by `log10(P+1)` — column mass
+// proxy. Aerosol formation strength and dust suspension strength are
+// "per-unit-column" signals from the procgen gates; multiplying by
+// column thickness gives visible opacity. Without this, a 0.01-bar
+// body with the same dust-storm activity as Mars (P=0.006) would
+// render at full haze with no atmospheric column to actually carry the
+// aerosols. Surface bodies with no atmosphere (P null/0) contribute
+// nothing here — they're handled by the no-surface stratospheric path
+// in `hazeBlendFor`.
 //
 // Aerosol species that already paint as a cloud deck on this body are
 // skipped — they shouldn't double-count as stratospheric haze. Species
@@ -257,25 +267,24 @@ function dustColorFor(body: Body): Color {
 function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: number }> {
   const out: Array<{ color: Color; weight: number }> = [];
   const P = body.surfacePressureBar;
-  if (P !== null && P > 0) {
-    const logP = Math.log10(P + 1);
-    const atmPairs: Array<[AtmGas | null, number | null]> = [
-      [body.atm1 as AtmGas | null, body.atm1Frac],
-      [body.atm2 as AtmGas | null, body.atm2Frac],
-      [body.atm3 as AtmGas | null, body.atm3Frac],
-    ];
-    for (const [gas, frac] of atmPairs) {
-      if (gas === null || frac === null || frac <= 0) continue;
-      const col = GAS_COLOR[gas];
-      const potency = GAS_POTENCY[gas] ?? 0;
-      if (col && potency > 0) {
-        out.push({ color: col, weight: frac * potency * logP * HAZE_BULK_GAS_SCALE });
-      }
-      const sCol = SCATTERING_COLOR[gas];
-      const sPotency = SCATTERING_POTENCY[gas] ?? 0;
-      if (sCol && sPotency > 0) {
-        out.push({ color: sCol, weight: frac * sPotency * logP * HAZE_RAYLEIGH_SCALE });
-      }
+  if (P === null || P <= 0) return out;
+  const logP = Math.log10(P + 1);
+  const atmPairs: Array<[AtmGas | null, number | null]> = [
+    [body.atm1 as AtmGas | null, body.atm1Frac],
+    [body.atm2 as AtmGas | null, body.atm2Frac],
+    [body.atm3 as AtmGas | null, body.atm3Frac],
+  ];
+  for (const [gas, frac] of atmPairs) {
+    if (gas === null || frac === null || frac <= 0) continue;
+    const col = GAS_COLOR[gas];
+    const potency = GAS_POTENCY[gas] ?? 0;
+    if (col && potency > 0) {
+      out.push({ color: col, weight: frac * potency * logP * HAZE_BULK_GAS_SCALE });
+    }
+    const sCol = SCATTERING_COLOR[gas];
+    const sPotency = SCATTERING_POTENCY[gas] ?? 0;
+    if (sCol && sPotency > 0) {
+      out.push({ color: sCol, weight: frac * sPotency * logP * HAZE_RAYLEIGH_SCALE });
     }
   }
   if (body.hazeAerosols !== null) {
@@ -288,13 +297,13 @@ function surfaceHazeContributors(body: Body): Array<{ color: Color; weight: numb
       const col = GAS_COLOR[gas];
       const potency = GAS_POTENCY[gas] ?? 0;
       if (!col || potency <= 0) continue;
-      out.push({ color: col, weight: strength * potency * HAZE_AEROSOL_SCALE });
+      out.push({ color: col, weight: strength * potency * logP * HAZE_AEROSOL_SCALE });
     }
   }
   if (body.dustStrength !== null && body.dustStrength > 0) {
     const potency = GAS_POTENCY.DUST ?? 0;
     if (potency > 0) {
-      out.push({ color: dustColorFor(body), weight: body.dustStrength * potency * HAZE_DUST_SCALE });
+      out.push({ color: dustColorFor(body), weight: body.dustStrength * potency * logP * HAZE_DUST_SCALE });
     }
   }
   return out;
