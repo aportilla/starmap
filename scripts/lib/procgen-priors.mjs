@@ -1064,6 +1064,16 @@ export const POLAR_CAP = {
   baseFraction:    0.15,  // max cap cover at full polar freeze
   poleFullDeltaK:  60,    // (273 - T_pole) for capWeight = 1
   maxCoverFraction: 0.40, // hard cap on polar-cap mode output
+  // Mean-temperature ceiling. Caps are only stable when the *bulk* body
+  // is temperate enough that cold polar regions can retain a frozen
+  // reservoir without it sublimating equatorward and escaping. On a
+  // 1500K lava world the poles can briefly cool (thin atm + tidal lock
+  // → T_pole reads 195K) but any surface water dissociates / escapes on
+  // geological timescales, so no stable cap exists. 350K leaves Earth
+  // (288K) comfortably inside the regime while excluding hot terrestrial
+  // / iron / lava classes whose nominal T_eq is hundreds of K above any
+  // plausible cap-formation regime.
+  meanTempMaxK:    350,
 };
 
 // Cold-trap regime parameters. T_full_freeze_K = T below which the

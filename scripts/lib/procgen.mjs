@@ -548,6 +548,7 @@ function surfaceIceCover(bulkWater, T_mean, T_pole, surfacePressureBar, noiseMul
 
   // Polar cap: warm body, frozen poles, atm thick enough to keep cap stable.
   if (T_pole == null || T_pole >= 273) return 0;
+  if (T_mean >= POLAR_CAP.meanTempMaxK) return 0;
   if (surfacePressureBar == null || surfacePressureBar < TRIPLE_POINT_BAR) return 0;
   const capWeight = Math.min(1, (273 - T_pole) / POLAR_CAP.poleFullDeltaK);
   const bulkBoost = Math.sqrt(Math.min(1, bulkWater / SURFACE_WATER_SAT));

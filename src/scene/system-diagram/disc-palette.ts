@@ -46,7 +46,8 @@ import {
   SCATTERING_COLOR, SCATTERING_POTENCY,
   WORLD_CLASS_COLOR, WORLD_CLASS_TINT,
   WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, deckGasesFor, RENDERER_SKIP_AEROSOLS,
-  cloudDeckPalette, dominantResources, stratosphericHazeStrengthFor,
+  cloudDeckPalette, dominantResources, rockArchetypeFor,
+  stratosphericHazeStrengthFor,
 } from '../../data/stars';
 import { hash32 } from './geom/prng';
 import { bodyVisualTiltRad } from './geom/ring';
@@ -112,6 +113,72 @@ const MU_FACTOR_BY_CLASS: Readonly<Record<string, number>> = {
 // mapping.
 const ICE_TEMP_GLOBAL_K = 180;
 const ICE_TEMP_CAP_K    = 270;
+
+// Per-body brightness shift — deterministic ±RANGE in [0..1] applied
+// uniformly across all three archetype palette slots so the body's
+// internal contrast is preserved but two bodies sharing an archetype
+// stack (e.g. a system full of M+R rusty worlds) read as visibly
+// different shades. Positive seed → lerp toward white; negative → lerp
+// toward black. Magnitude tuned so adjacent bodies look like siblings
+// rather than the same body twice.
+const PER_BODY_BRIGHTNESS_RANGE = 0.18;
+
+// Per-body temperature tint — hot bodies lerp toward a warm orange,
+// cold bodies toward a cool blue, by `amount × hueShiftMagnitude`. Real
+// planetary surfaces lean this way (more iron oxide & sulfur on hot
+// dry, more ice & frost on cold), and the shift gives a 5-body system
+// orbiting one star a temperature gradient readable at a glance. Tints
+// are deliberately soft hues, not saturated — they nudge, they don't
+// dominate.
+const TEMP_TINT_WARM = new Color(1.0, 0.55, 0.25);
+const TEMP_TINT_COOL = new Color(0.55, 0.78, 1.0);
+const TEMP_TINT_AMOUNT = 0.12;
+const TEMP_NEUTRAL_K = 280;
+const TEMP_COLD_K    = 100;
+const TEMP_HOT_K     = 700;
+
+// Lerp `c` toward `target` by `t` ∈ [0, 1]. Mutates and returns a new
+// Color so callers can chain.
+function lerpColor(c: Color, target: Color, t: number): Color {
+  return new Color(
+    c.r + (target.r - c.r) * t,
+    c.g + (target.g - c.g) * t,
+    c.b + (target.b - c.b) * t,
+  );
+}
+
+// Apply two per-body shifts to an archetype color: a deterministic
+// brightness offset (from the body's hash seed) and a temperature-driven
+// warm/cool tint (from `avgSurfaceTempK`). Both are soft — they vary the
+// body within a recognizable archetype, not across archetypes.
+//
+// seed ∈ [0, 1) — same hash used elsewhere in disc-palette so all three
+// palette slots on one body share the same brightness shift.
+function applyPerBodyTints(c: Color, body: Body, seed: number): Color {
+  // Brightness — map seed [0, 1) to [-RANGE, +RANGE], lerp toward black
+  // or white. Uniform across the body's three slots so internal contrast
+  // is preserved.
+  const brightDelta = (seed - 0.5) * 2 * PER_BODY_BRIGHTNESS_RANGE;
+  let shifted = brightDelta > 0
+    ? lerpColor(c, new Color(1, 1, 1), brightDelta)
+    : brightDelta < 0
+      ? lerpColor(c, new Color(0, 0, 0), -brightDelta)
+      : c;
+  // Temperature — split-piecewise around TEMP_NEUTRAL_K. Hot → warm
+  // tint; cold → cool tint. Amount scales linearly to TEMP_HOT_K /
+  // TEMP_COLD_K then clamps at TEMP_TINT_AMOUNT. Null tempK = no shift.
+  const tempK = body.avgSurfaceTempK;
+  if (tempK !== null) {
+    if (tempK > TEMP_NEUTRAL_K) {
+      const a = Math.min(1, (tempK - TEMP_NEUTRAL_K) / (TEMP_HOT_K - TEMP_NEUTRAL_K));
+      shifted = lerpColor(shifted, TEMP_TINT_WARM, a * TEMP_TINT_AMOUNT);
+    } else if (tempK < TEMP_NEUTRAL_K) {
+      const a = Math.min(1, (TEMP_NEUTRAL_K - tempK) / (TEMP_NEUTRAL_K - TEMP_COLD_K));
+      shifted = lerpColor(shifted, TEMP_TINT_COOL, a * TEMP_TINT_AMOUNT);
+    }
+  }
+  return shifted;
+}
 
 // Compute globalness from avgSurfaceTempK via a smoothstep curve.
 // Null temperature falls back to 0 (cap pattern — safest default for
@@ -481,11 +548,21 @@ export function buildDiscPalette(
   const hasSurface = surfaceOpacity > 0;
   const tinyDisc = discPx < PROCEDURAL_TEXTURE_MIN_PX;
 
-  // ── SURFACE PALETTE — resource-driven for terrestrials, bulk-atm
-  // column tint for gas/ice giants (so a cloud rent reveals the
-  // physically-honest deep-column color). World-class color only
-  // re-enters as a flat-fill fallback when a body carries no resource
-  // signal at all (procgen edge).
+  // ── SURFACE PALETTE — three rock-archetype slots derived from the
+  // body's top resources for terrestrials, bulk-atm column tint for
+  // gas/ice giants. World-class color re-enters as a flat-fill fallback
+  // when a body carries no resource signal at all.
+  //
+  // Slot mapping (terrestrials with N>=1 nonzero resources):
+  //   slot 0 = top-1 single archetype           (Mercury → iron grey)
+  //   slot 1 = (top-1 + top-2) pair archetype   (M+S    → basalt)
+  //   slot 2 = (top-2 + top-3) pair archetype   (S+R    → ferric ochre)
+  //
+  // With N=1 → slot 1 = slot 2 = slot 0; with N=2 → slot 2 = slot 1.
+  // The shader's existing per-region subset hash then picks among these
+  // three archetype colors so a region paints "basalt" or "iron grey" or
+  // "iron oxide rust" as a coherent mineralogy rather than a blend of
+  // raw saturated resource colors.
   let sC0: Color, sC1: Color, sC2: Color;
   let sW0: number, sW1: number, sW2: number;
   if (!hasSurface) {
@@ -499,12 +576,27 @@ export function buildDiscPalette(
       sC0 = base; sC1 = base; sC2 = base;
       sW0 = 1; sW1 = 0; sW2 = 0;
     } else {
-      sC0 = res[0].color;
-      sC1 = res[1]?.color ?? res[0].color;
-      sC2 = res[2]?.color ?? res[0].color;
-      sW0 = res[0].weight;
-      sW1 = res[1]?.weight ?? 0;
-      sW2 = res[2]?.weight ?? 0;
+      const k0 = res[0].key;
+      const k1 = res[1]?.key ?? null;
+      const k2 = res[2]?.key ?? null;
+      const w0 = res[0].weight;
+      const w1 = res[1]?.weight ?? 0;
+      const w2 = res[2]?.weight ?? 0;
+      sC0 = applyPerBodyTints(rockArchetypeFor(k0, null, 1), body, seed);
+      sC1 = applyPerBodyTints(
+        k1 !== null ? rockArchetypeFor(k0, k1, w0 / (w0 + w1)) : sC0,
+        body, seed,
+      );
+      sC2 = applyPerBodyTints(
+        k2 !== null && k1 !== null ? rockArchetypeFor(k1, k2, w1 / (w1 + w2)) : sC1,
+        body, seed,
+      );
+      // Equal weights across the three archetype slots so the region
+      // hash gets an even shot at each. Raw resource weights drove the
+      // legacy "slot probability ∝ resource amount" intent, but with
+      // archetypes the slots already encode the body's composition —
+      // even sampling produces the variegation we want.
+      sW0 = 1; sW1 = 1; sW2 = 1;
     }
   }
 

@@ -750,10 +750,13 @@ export type ResourceKey =
   | 'resMetals' | 'resSilicates' | 'resVolatiles'
   | 'resRareEarths' | 'resRadioactives' | 'resExotics';
 
-// Archetypal hue per resource. Surface texturing picks the 2 dominant
-// resources per body and speckles them over the world-class base color
-// so a metals-rich rocky reads visibly different from a volatiles-rich
-// ice world even though both share an underlying class.
+// Archetypal hue per resource — saturated brand colors used wherever the
+// renderer needs a direct gameplay signal (atmospheric dust takes its
+// color from the body's mineralogy via `dustColorFor`, future mining-
+// yield UI panels, etc.). NOT used directly for the rocky disc surface
+// — the surface path passes the body's top resources through the rock-
+// archetype LUT below so realistic mineralogies (basalt, iron oxide,
+// permafrost) emerge from pairs rather than blending saturated hues.
 export const RESOURCE_COLOR: Record<ResourceKey, Color> = {
   resMetals:       new Color(0x6c6c70),  // iron-grey
   resSilicates:    new Color(0x9c7c5c),  // rust-tan
@@ -767,6 +770,91 @@ const RESOURCE_KEYS: readonly ResourceKey[] = [
   'resMetals', 'resSilicates', 'resVolatiles',
   'resRareEarths', 'resRadioactives', 'resExotics',
 ];
+
+// Desaturated single-resource colors for the rocky-surface palette path.
+// These are what a region paints when only one resource dominates it (no
+// pair lookup fires). Pulled toward neutral / earth tones AND toward the
+// upper-middle of the lightness range so the disc reads as bright pixel-
+// art pastel rather than dark realism. The pair LUT below handles the
+// common mineralogical combinations.
+const ROCK_ARCHETYPE_SINGLE: Record<ResourceKey, Color> = {
+  resMetals:       new Color(0x9899a0),  // light cold grey (Mercury, iron asteroids)
+  resSilicates:    new Color(0xbca884),  // warm light tan (Luna highlands, dust)
+  resVolatiles:    new Color(0xdceaf0),  // pale ice-cyan (Europa, polar caps)
+  resRareEarths:   new Color(0xb89498),  // light dusty rose (trace stain)
+  resRadioactives: new Color(0xb8b080),  // light olive-ochre (uraninite-ore)
+  resExotics:      new Color(0x7e7484),  // lifted obsidian (lavender-grey anomaly)
+};
+
+// Rock-archetype pair LUT — when a region's resource subset contains two
+// resources both above threshold, look up the named mineralogy here
+// instead of RGB-blending the two single colors. Keyed by a sorted
+// "resA|resB" string so lookup is order-independent. The 12 entries
+// cover all physically meaningful pairs; pairs not listed fall back to
+// RGB blend of the two single colors.
+//
+// Each color is a real-world mineral analog so a player can learn to
+// read the disc: basalt = mafic crust, hematite = iron oxide rust,
+// permafrost = cold rocky, sulfur deposits = Io-class warm, obsidian =
+// volcanic glass, etc.
+const ROCK_ARCHETYPE_PAIR: Record<string, Color> = {
+  'resMetals|resSilicates':       new Color(0x988668),  // basalt (mafic crust: Earth ocean, lunar maria, Mars plains)
+  'resMetals|resVolatiles':       new Color(0xb0b8bc),  // cryo-rock (Callisto, dark icy moons)
+  'resMetals|resRareEarths':      new Color(0xa87868),  // iron oxide / hematite (weathered dusty rust — saturated lava reds reserved for future molten-surface effect)
+  'resMetals|resRadioactives':    new Color(0x9c947c),  // uranium-iron metallic (light olive)
+  'resMetals|resExotics':         new Color(0x706878),  // lifted obsidian glass
+  'resSilicates|resVolatiles':    new Color(0xc8c8c0),  // permafrost (tundra, Mars high lat.)
+  'resSilicates|resRareEarths':   new Color(0xd09870),  // ferric sandstone / ochre desert
+  'resSilicates|resRadioactives': new Color(0xd8c084),  // sulfur deposits (Io-class warm yellow)
+  'resSilicates|resExotics':      new Color(0x988494),  // mineralized vein-rock (light purple-brown)
+  'resVolatiles|resRareEarths':   new Color(0xdcc4bc),  // reddish ice (tholin-stained outer moons)
+  'resVolatiles|resRadioactives': new Color(0xc8ccb8),  // brine ice (pale sage)
+  'resVolatiles|resExotics':      new Color(0x9c9cac),  // dark ice (slate)
+};
+
+// Shade-by-balance magnitude. Inside a pair archetype, the base color is
+// lerped toward each contributing resource's single-presence color by
+// `(ratioA − 0.5) × SHADE_AMOUNT` so a 70/30 basalt reads visibly more
+// iron-grey than a 50/50, and a 30/70 reads tan. Kept small so the
+// archetype's identity dominates the visual.
+const ROCK_ARCHETYPE_SHADE_AMOUNT = 0.3;
+
+// Look up the rock archetype for one or two resources, applying shade-
+// by-balance for pair entries.
+//   - `keyA` alone (keyB = null) → the single-presence color.
+//   - `keyA + keyB` with a pair entry → the LUT color, lerped toward
+//     keyA's single color by `(ratioA − 0.5) × SHADE_AMOUNT`.
+//   - `keyA + keyB` with NO pair entry → straight RGB blend of the two
+//     single-presence colors weighted by ratioA / (1 − ratioA). Catches
+//     rare/radioactive/exotic combinations that don't have a curated
+//     mineralogy.
+export function rockArchetypeFor(
+  keyA: ResourceKey,
+  keyB: ResourceKey | null,
+  ratioA: number,
+): Color {
+  const singleA = ROCK_ARCHETYPE_SINGLE[keyA];
+  if (keyB === null) return singleA;
+  const singleB = ROCK_ARCHETYPE_SINGLE[keyB];
+  const lutKey = keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`;
+  const pair = ROCK_ARCHETYPE_PAIR[lutKey];
+  if (!pair) {
+    return new Color(
+      singleA.r * ratioA + singleB.r * (1 - ratioA),
+      singleA.g * ratioA + singleB.g * (1 - ratioA),
+      singleA.b * ratioA + singleB.b * (1 - ratioA),
+    );
+  }
+  const shade = (ratioA - 0.5) * ROCK_ARCHETYPE_SHADE_AMOUNT;
+  const towardKey = shade >= 0 ? keyA : keyB;
+  const toward = ROCK_ARCHETYPE_SINGLE[towardKey];
+  const amount = Math.abs(shade);
+  return new Color(
+    pair.r + (toward.r - pair.r) * amount,
+    pair.g + (toward.g - pair.g) * amount,
+    pair.b + (toward.b - pair.b) * amount,
+  );
+}
 
 // Per-deck cloud palette derivation. Each cloud deck is one condensate
 // species (NH3 ice, H2O ice, H2SO4 droplets, CH4 frost, ...) suspended
@@ -857,11 +945,14 @@ export function cloudDeckPalette(_body: Body, layerGas: string): CloudDeckPalett
 
 // Top `count` resources (default 2) by value, with weights renormalized
 // to sum to 1. Empty when every res scalar is null/zero — caller falls
-// back to a solid world-class color.
+// back to a solid world-class color. `key` is exposed so callers can
+// look the resource up in any of the parallel tables (RESOURCE_COLOR for
+// the saturated gameplay signal, ROCK_ARCHETYPE_SINGLE / _PAIR for the
+// realistic surface mineralogy).
 export function dominantResources(
   body: Body,
   count = 2,
-): Array<{ color: Color; weight: number }> {
+): Array<{ key: ResourceKey; color: Color; weight: number }> {
   const scored = RESOURCE_KEYS
     .map(k => ({ key: k, value: body[k] ?? 0 }))
     .filter(e => e.value > 0)
@@ -870,6 +961,7 @@ export function dominantResources(
   const total = scored.reduce((s, e) => s + e.value, 0);
   if (total <= 0) return [];
   return scored.map(e => ({
+    key: e.key,
     color: RESOURCE_COLOR[e.key],
     weight: e.value / total,
   }));
