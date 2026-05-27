@@ -363,22 +363,24 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // the closed form of multiple back-to-front blends.
       const float OUTER_BASE_ALPHA = 0.35;
 
-      // Phase 1.5b — per-region resource-subset selection. Aggregate
-      // REGION_PATCH_FACTOR fine worley cells per axis into one
-      // super-cell. The super-cell hash picks one of
-      // REGION_BUCKET_COUNT (= 2^3 - 1 = 7) non-empty subsets of the
-      // body's three palette slots (top-1 archetype, top-1+top-2 pair
-      // archetype, body-tinted barren regolith); that subset masks the
-      // body's natural weights, and the fine cell pick within the
-      // super-cell paints from the masked palette. Net visual: each
-      // region carries a distinct combination of the body's archetype
-      // colors plus its tinted regolith — Mercury's iron-grey, basalt
-      // mosaic, and rust-stained dust separate into spatial regions
-      // rather than mixing uniformly across the disc. This replaces
-      // the prior uniform-RGB lightness modifier (which collapsed
-      // multi-resource bodies to muddy shading on top of a uniform
-      // underlying texture); resource-based regions stay pixel-crisp
-      // and palette-coherent.
+      // Per-region primary/secondary/tertiary slot election. Aggregate
+      // REGION_PATCH_FACTOR fine worley cells per axis into one super-
+      // cell, then pickRegionSlots elects one DOMINANT palette slot
+      // for the region (covering ~1-SECONDARY_COVERAGE of its cells), a
+      // SECONDARY slot for sparse decoration, and a TERTIARY slot held
+      // for the crater / linea reveal beneath. Net visual: each region
+      // carries one of the body's archetype colors plus a sparse
+      // second-archetype speckle — an iron-grey region with rust-
+      // stained specks adjacent to a rust region with grey specks.
+      //
+      // The dominant/decoration split is load-bearing. A per-cell
+      // random pick across multiple palette slots paints near-50/50
+      // alternation between adjacent cells, which on barren bodies —
+      // archetype slots collapsed toward similar mid-greys via the
+      // abundance lerp in disc-palette.ts — reads as a hard
+      // checkerboard at SURFACE_PATCH_PX cell pitch. Keeping each
+      // region monochromatic-ish (~80% one slot) breaks the alternation
+      // grain while preserving inter-region color variety.
       //
       // 6 → ~2-3 super-cells across the visible hemisphere of a 60-px
       // disc, the scale at which real planetary regional composition
@@ -388,7 +390,11 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // irregularity for free (super-cell edges are jittery, not
       // grid-aligned).
       const float REGION_PATCH_FACTOR = 6.0;
-      const float REGION_BUCKET_COUNT = 7.0;
+      // Fraction of cells inside a region that promote from primary to
+      // secondary. 0.20 ≈ 1 in 5 cells; low enough that each region
+      // reads as one dominant colour with sparse contrast rather than
+      // checkerboard alternation.
+      const float SECONDARY_COVERAGE = 0.20;
 
       // Phase 1.5c — discrete crater features + ejecta rays. Crater
       // seed cells are CRATER_PATCH_FACTOR × the fine worley cell
@@ -559,20 +565,47 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         return (4.0 * bInner + bOuter) / 16.0;
       }
 
-      // Pick one of three palette entries by a 0..1 hash, weighted by
-      // the supplied weights. Skips zero-weight slots automatically.
-      // Defensive fallback: weights summing to zero → p0 (palette0 is
-      // always plumbed with the dominant signal).
+      // Elect a region's (primary, secondary, tertiary) palette slots.
+      // Primary and secondary are weighted draws against weights;
+      // secondary samples from the non-primary slots only. Tertiary is
+      // the leftover index in {0,1,2}. Degenerates to (0,0,0) for the
+      // (1,0,0) flat-fill weight case so a 1-slot body collapses
+      // cleanly.
       //
-      // Used by both the surface block (resource palette + region-masked
-      // weights) and each cloud deck's loop iteration (per-deck 3-slot
-      // palette: condensate base + up to two staining aerosols).
-      vec3 pickFromPalette(float h, vec3 p0, vec3 p1, vec3 p2, vec3 weights) {
-        float w = weights.x + weights.y + weights.z;
-        if (w <= 0.0) return p0;
-        float t = h * w;
-        if (t < weights.x) return p0;
-        if (t < weights.x + weights.y) return p1;
+      // Salt budget: primary 401/419, secondary 431/433. Both 401/419
+      // and the surface-resource cell hash (1009/2017) are reused below
+      // — keeping the seed map stable across this election + per-cell
+      // pick.
+      ivec3 pickRegionSlots(vec2 regionCell, vec3 weights, float seed) {
+        float wT = weights.x + weights.y + weights.z;
+        if (wT <= 0.0) return ivec3(0, 0, 0);
+        float pH = hash21(regionCell + vec2(seed * 401.0, seed * 419.0));
+        float t = pH * wT;
+        int primary;
+        if      (t < weights.x)              primary = 0;
+        else if (t < weights.x + weights.y)  primary = 1;
+        else                                 primary = 2;
+        vec3 secW = weights;
+        if      (primary == 0) secW.x = 0.0;
+        else if (primary == 1) secW.y = 0.0;
+        else                   secW.z = 0.0;
+        float wT2 = secW.x + secW.y + secW.z;
+        int secondary = primary;
+        if (wT2 > 0.0) {
+          float sH = hash21(regionCell + vec2(seed * 431.0, seed * 433.0));
+          float t2 = sH * wT2;
+          if      (t2 < secW.x)            secondary = 0;
+          else if (t2 < secW.x + secW.y)   secondary = 1;
+          else                             secondary = 2;
+        }
+        int tertiary = (secondary == primary) ? primary : (3 - primary - secondary);
+        return ivec3(primary, secondary, tertiary);
+      }
+
+      // Look up a palette slot by index.
+      vec3 slotColor(int idx, vec3 p0, vec3 p1, vec3 p2) {
+        if (idx == 0) return p0;
+        if (idx == 1) return p1;
         return p2;
       }
 
@@ -803,29 +836,15 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           bool  waterHere = contH < vWaterFrac;
           bool  liquidOceanHere = waterHere && vGlobalness < 0.5;
 
-          // Phase 1.5b — per-region resource-subset selection. The
-          // super-cell hash discretizes into one of REGION_BUCKET_COUNT
-          // non-empty subsets of {palette0, palette1, palette2}; the
-          // subset masks the body's weights so each region paints from
-          // a different combination of its top-2 archetypes plus the
-          // body-tinted barren regolith. The complement of the same
-          // bucket drives the subsurface — what the crater branch
-          // exposes.
+          // Per-region (primary, secondary, tertiary) palette election;
+          // primary covers most cells, secondary fills sparse decoration,
+          // tertiary stays unused on the surface. See the
+          // REGION_PATCH_FACTOR comment block above for the why.
           vec2 regionCell = floor(winnerCell / REGION_PATCH_FACTOR);
-          float regionH = hash21(regionCell + vec2(vSeed * 401.0, vSeed * 419.0));
-          float bucketF = clamp(floor(regionH * REGION_BUCKET_COUNT), 0.0, REGION_BUCKET_COUNT - 1.0);
-          int bucket = int(bucketF);
-          vec3 mask;
-          if      (bucket == 0) mask = vec3(1.0, 0.0, 0.0);
-          else if (bucket == 1) mask = vec3(0.0, 1.0, 0.0);
-          else if (bucket == 2) mask = vec3(0.0, 0.0, 1.0);
-          else if (bucket == 3) mask = vec3(1.0, 1.0, 0.0);
-          else if (bucket == 4) mask = vec3(1.0, 0.0, 1.0);
-          else if (bucket == 5) mask = vec3(0.0, 1.0, 1.0);
-          else                  mask = vec3(1.0, 1.0, 1.0);
-          vec3 regionWeights = vWeights.xyz * mask;
+          ivec3 slots = pickRegionSlots(regionCell, vWeights.xyz, vSeed);
           float resH = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
-          vec3 landCol = pickFromPalette(resH, vPalette0, vPalette1, vPalette2, regionWeights);
+          int chosenSlot = (resH < SECONDARY_COVERAGE) ? slots.y : slots.x;
+          vec3 landCol = slotColor(chosenSlot, vPalette0, vPalette1, vPalette2);
 
           // Biome stipple paints over land cells in the temperate band.
           // Per-pixel hash flips individual land pixels to the body's
@@ -848,22 +867,11 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           }
           vec3 resourceSurface = liquidOceanHere ? OCEAN_COLOR : landCol;
 
-          // Subsurface (complement bucket within the 3-slot space) —
-          // drives crater color. Same resource hash so the surface and
-          // subsurface picks correlate per cell; only the mask differs.
-          // The {p0,p1,p2} surface bucket has an empty complement and
-          // falls back to the union — craters there expose the same
-          // mosaic as the surrounding regolith.
-          vec3 subMask;
-          if      (bucket == 0) subMask = vec3(0.0, 1.0, 1.0);
-          else if (bucket == 1) subMask = vec3(1.0, 0.0, 1.0);
-          else if (bucket == 2) subMask = vec3(1.0, 1.0, 0.0);
-          else if (bucket == 3) subMask = vec3(0.0, 0.0, 1.0);
-          else if (bucket == 4) subMask = vec3(0.0, 1.0, 0.0);
-          else if (bucket == 5) subMask = vec3(1.0, 0.0, 0.0);
-          else                  subMask = vec3(1.0, 1.0, 1.0);
-          vec3 subWeights = vWeights.xyz * subMask;
-          vec3 resourceSubsurface = pickFromPalette(resH, vPalette0, vPalette1, vPalette2, subWeights);
+          // Subsurface = the region's tertiary slot. Surface only ever
+          // paints primary + secondary, so tertiary is the buried
+          // mineralogy a crater impact or linea crack would expose.
+          // Collapses to primary on 1-slot bodies (flat fill).
+          vec3 resourceSubsurface = slotColor(slots.z, vPalette0, vPalette1, vPalette2);
 
           // Default fragment color. Three branches:
           //   capIcyHere   → pure ICE_COLOR (surface cap deposit; the
@@ -1048,18 +1056,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             float pjy = hash21(paintCraterId + vec2(vSeed * 569.0, vSeed * 587.0));
             vec2  pCenter = (paintCraterId + vec2(pjx, pjy)) * CRATER_PATCH_FACTOR;
             vec2  pRegionCell = floor(pCenter / REGION_PATCH_FACTOR);
-            float pRegionH = hash21(pRegionCell + vec2(vSeed * 401.0, vSeed * 419.0));
-            int   pBucket = int(clamp(floor(pRegionH * REGION_BUCKET_COUNT), 0.0, REGION_BUCKET_COUNT - 1.0));
-            vec3  pSubMask;
-            if      (pBucket == 0) pSubMask = vec3(0.0, 1.0, 1.0);
-            else if (pBucket == 1) pSubMask = vec3(1.0, 0.0, 1.0);
-            else if (pBucket == 2) pSubMask = vec3(1.0, 1.0, 0.0);
-            else if (pBucket == 3) pSubMask = vec3(0.0, 0.0, 1.0);
-            else if (pBucket == 4) pSubMask = vec3(0.0, 1.0, 0.0);
-            else if (pBucket == 5) pSubMask = vec3(1.0, 0.0, 0.0);
-            else                   pSubMask = vec3(1.0, 1.0, 1.0);
-            float pPalH = hash21(paintCraterId + vec2(vSeed * 587.0, vSeed * 569.0));
-            vec3 pRevealCol = pickFromPalette(pPalH, vPalette0, vPalette1, vPalette2, vWeights.xyz * pSubMask);
+            ivec3 pSlots = pickRegionSlots(pRegionCell, vWeights.xyz, vSeed);
+            vec3 pRevealCol = slotColor(pSlots.z, vPalette0, vPalette1, vPalette2);
 
             vec3 pYoung = pRevealCol;
             vec3 pOld   = icyHere ? ICE_COLOR : pRevealCol;
