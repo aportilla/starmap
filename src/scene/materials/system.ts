@@ -76,7 +76,13 @@ import { glsl, RASTER_PAD, snappedMaterials } from './shared';
 //                                       `oceanColorFor` in disc-palette.ts).
 // Pulling everything off vertex attributes brings the per-pool attribute
 // count back under the gl_MaxVertexAttribs cap.
-export const MAX_CLOUD_LAYERS = 3;
+// Up to 4 stratified decks per body — 3 chemistry decks (Jupiter
+// stack: H2O / NH4SH / NH3) plus 1 synthetic "base" deck prepended
+// for no-surface bodies in disc-palette. The base deck paints the
+// bulk atm column with subtle lat-band lj jitter so a gas giant
+// reads as gently banded foundation under its real cloud chemistry,
+// instead of a flat fill underneath sparse decks.
+export const MAX_CLOUD_LAYERS = 4;
 const ATM_COLUMN_TEXEL_OFFSET = MAX_CLOUD_LAYERS;
 const DECK_COLOR_BASE_OFFSET = MAX_CLOUD_LAYERS + 1;
 const OCEAN_COLOR_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS;
@@ -1245,74 +1251,6 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         // disappear into a same-tone neighbor and the cell reads as part
         // of the underlying texture.
         const float CLOUD_EDGE_DITHER_PX = 1.5;
-
-        // ── Column band modulation (no-surface bodies) ──
-        // On gas / ice giants the bulk atm column shows subtle zonal
-        // brightness variation from convective turnover — lighter and
-        // darker bands at different latitudes. Cloud decks above paint
-        // the bright cirrus / streaks, but the column itself also
-        // varies. Apply a coarse-scale lat-stretched worley pattern
-        // to modulate column brightness, using the topmost cloud
-        // deck's wind speed for band aspect ratio so high-wind bodies
-        // (Neptune 600 m/s) show longer streaks than low-wind (Uranus
-        // 250 m/s).
-        if (vSurfaceOpacity < 0.5) {
-          float bodyWind = 0.0;
-          float topAlt = -1.0;
-          for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
-            float lU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-            vec4 lyr = texture2D(uCloudLayerData, vec2(lU, vBodyV));
-            if (lyr.x > 0.0 && lyr.z > topAlt) {
-              topAlt = lyr.z;
-              bodyWind = lyr.y;
-            }
-          }
-          float cBandness = smoothstep(WIND_BANDNESS_LOW_MS, WIND_BANDNESS_HIGH_MS, bodyWind);
-          float cWindFactor = sqrt(clamp(bodyWind / WIND_STRETCH_REFERENCE_MS, 0.0, 1.0));
-          float cBandedLon = mix(BAND1_LON_PX, BAND_MAX_LON_PX, cWindFactor);
-          // 2x coarser than cloud cells so the column pattern reads as
-          // an underlying base rhythm rather than competing with cirrus.
-          float cLonPx = mix(CLOUD_LON_PX, cBandedLon, cBandness) * 2.0;
-          float cLatPx = mix(CLOUD_LAT_PX, BAND1_LAT_PX, cBandness) * 2.0;
-          vec2 cAspect = vec2(cLonPx, cLatPx);
-          vec2 cp = vec2(lon, lat) * vRadius / cAspect;
-          vec2 cCellId = floor(cp);
-          vec2 cCellFrac = cp - cCellId;
-          // Lat-only hash at all wind speeds — convective belt/zone
-          // structure is zonal by physics regardless of jet speed. Wind
-          // controls cell aspect ratio (cLonPx widens), not whether
-          // cells stack as bands. A both-axes hash here would paint a
-          // hard grid checkerboard on bodies with bodyWind ≈ 0 (cold
-          // ice giants where no cloud deck fires, so the loop above
-          // can't surface a wind reference), since the lat-only dither
-          // below can't soften LON seams.
-          vec2 cHashKey = vec2(0.0, cCellId.y);
-          float cBandHash = hash21(cHashKey + vec2(vSeed * 73.0, vSeed * 89.0));
-          // ±0.08 brightness modulation on the atm column.
-          float cMod = (cBandHash - 0.5) * 0.16;
-
-          // Edge dither between adjacent lat bands. The column pass uses
-          // grid-aligned cells (no worley jitter), so visible band seams
-          // are pure horizontal lines at every cLatPx env-pixels. LON-
-          // adjacent cells share lj via the lat-only cHashKey, so lon
-          // seams are invisible by construction — only the lat axis
-          // needs dithering. dyDir picks the closer lat edge, then we
-          // sample the neighbor's mod and Bayer-threshold so band-to-
-          // band transitions taper rather than meeting at a hard
-          // horizontal seam — same machinery as the firing/firing
-          // branch in the cloud loop below.
-          float cDyDir = step(0.5, cCellFrac.y) * 2.0 - 1.0;
-          float cLatDistFrac = (cDyDir > 0.0) ? (1.0 - cCellFrac.y) : cCellFrac.y;
-          float cLatDistPx = cLatDistFrac * cLatPx;
-          vec2 cCellId2 = cCellId + vec2(0.0, cDyDir);
-          vec2 cHashKey2 = vec2(0.0, cCellId2.y);
-          float cBandHash2 = hash21(cHashKey2 + vec2(vSeed * 73.0, vSeed * 89.0));
-          float cMod2 = (cBandHash2 - 0.5) * 0.16;
-          float cT = clamp(cLatDistPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
-          if (bayer4(gl_FragCoord.xy) >= 0.5 + 0.5 * cT) cMod = cMod2;
-
-          col = clamp(col + vec3(cMod), 0.0, 1.0);
-        }
 
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});

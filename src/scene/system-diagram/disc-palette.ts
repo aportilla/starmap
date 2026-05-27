@@ -62,9 +62,12 @@
 //
 // Gas / ice giants skip the surface entirely and paint `atmColumnColor`
 // — a frac × GAS_POTENCY weighted blend of the body's atm slots that
-// resolves to whichever absorbing species dominates the column. The
-// shader's column-band-modulation pass overlays subtle brightness
-// variegation on top, then cloud decks composite above.
+// resolves to whichever absorbing species dominates the column. A
+// synthetic "base" cloud deck (prepended at altitudeNorm 0.0 with deck
+// color = atmColumnColor lifted slightly toward white) provides the
+// foundation banding through the same worley + lat-keyed lj machinery
+// the chemistry decks use, so gas giants read as gently banded rather
+// than a flat fill. The chemistry decks then composite above.
 //
 // ─── Haze contributor model ────────────────────────────────────────
 //
@@ -227,6 +230,17 @@ const TEMP_HOT_K     = 700;
 // the disc still hints at the underlying mineralogy rather than reading
 // as pure noise).
 const ABUNDANCE_VISUAL_FLOOR = 0.1;
+
+// Synthetic base deck params for no-surface bodies. The deck color is
+// the atm column lifted slightly toward white so deck cells fire at a
+// just-perceptibly-brighter shade than the rented atm column — gentle
+// wispy variety where the deck doesn't fully cover. Coverage 0.95
+// leaves ~5% rents to pure atm column. BAND_LIGHTNESS_JITTER in the
+// shader (±6%) provides the lat-band tone variation on top.
+const BASE_DECK_LIGHTNESS_LIFT = 0.05;
+const BASE_DECK_COVERAGE = 0.95;
+const BASE_DECK_WIND_DEFAULT = 200;
+const WHITE_COLOR = new Color(1, 1, 1);
 
 // Lerp `c` toward `target` by `t` ∈ [0, 1]. Mutates and returns a new
 // Color so callers can chain.
@@ -635,7 +649,10 @@ export interface DiscPalette {
   // surface + haze, each pre-tinted by the haze opacity sitting above
   // it. Empty slots have coverage = 0 and get a no-op composite.
   // Banded character emerges from coverage rents revealing the deck
-  // below (or the surface / atm-column beneath the stack).
+  // below (or the surface / atm-column beneath the stack). No-surface
+  // bodies get a synthetic base deck prepended at altitudeNorm 0.0
+  // (atm column lifted toward white) so the bulk gas-giant fill reads
+  // as gently banded foundation under any chemistry decks above.
   readonly cloudLayers: ReadonlyArray<{
     readonly coverage: number;
     readonly windSpeedMS: number;
@@ -1060,17 +1077,48 @@ export function buildDiscPalette(
   // banded character emerges from coverage rents revealing the deck
   // below, not from in-deck mixing. tinyDisc suppresses all decks
   // since per-fragment worley would resolve as noise on a small disc.
+  //
+  // No-surface bodies get a synthetic "base" deck prepended at altitude
+  // 0.0 — the bulk atm column rendered through the same worley + lat-
+  // keyed brightness-jitter machinery as real cloud decks, with the
+  // deck color lerped slightly toward white so it reads as "the body's
+  // bulk color, gently banded" rather than a flat fill. Coverage 0.95
+  // leaves occasional rents that reveal the pure atm column beneath
+  // for subtle wispy variety. Wind matches the topmost real deck so
+  // the base deck's bands share geometry with the chemistry decks
+  // above it (no-deck bodies fall back to BASE_DECK_WIND_DEFAULT).
   const cloudLayers = tinyDisc
     ? []
-    : body.cloudLayers.map((l) => {
-        const dp = cloudDeckPalette(body, l.gas);
-        return {
-          coverage: l.coverage,
-          windSpeedMS: l.windSpeedMS,
-          altitudeNorm: l.altitudeNorm,
-          color: [dp.color.r, dp.color.g, dp.color.b] as const,
-        };
-      });
+    : (() => {
+        const decks: Array<{
+          coverage: number;
+          windSpeedMS: number;
+          altitudeNorm: number;
+          color: readonly [number, number, number];
+        }> = body.cloudLayers.map((l) => {
+          const dp = cloudDeckPalette(body, l.gas);
+          return {
+            coverage: l.coverage,
+            windSpeedMS: l.windSpeedMS,
+            altitudeNorm: l.altitudeNorm,
+            color: [dp.color.r, dp.color.g, dp.color.b] as const,
+          };
+        });
+        if (!hasSurface && atmColC !== null) {
+          const topWind = decks.reduce(
+            (max, d) => (d.windSpeedMS > max ? d.windSpeedMS : max),
+            BASE_DECK_WIND_DEFAULT,
+          );
+          const baseColor = lerpColor(atmColC, WHITE_COLOR, BASE_DECK_LIGHTNESS_LIFT);
+          decks.unshift({
+            coverage: BASE_DECK_COVERAGE,
+            windSpeedMS: topWind,
+            altitudeNorm: 0.0,
+            color: [baseColor.r, baseColor.g, baseColor.b] as const,
+          });
+        }
+        return decks;
+      })();
 
   // Unified haze blend — one color + one opacity per body, derived
   // from the atmospheric contributor list (bulk gases × pressure ×
