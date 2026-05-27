@@ -251,32 +251,36 @@ export const HABITABLE_ZONE_AU = {
 // exoplanet scatter at fixed mass runs ~0.10–0.15 dex.
 export const RADIUS_SCATTER_LOG = 0.10;
 
-// Moon-count capacity scale — multiplied by the host's Hill radius (AU)
-// to set λ for a Poisson draw on the moon count. Linear scaling: a planet
-// with a 10× larger Hill sphere holds 10× more satellites. Captures the
-// dominant physical signal — Hill volume sets how much circumplanetary
-// disk + capturable planetesimals stay bound — without modeling the
-// individual capture/migration history per moon.
+// Moon count is sampled as Binomial(MOON_COUNT_MAX, p), where the
+// per-trial success probability `p` is a saturating function of the
+// host's Hill radius. Binomial (vs the older Poisson + clip) is
+// naturally bounded at MOON_COUNT_MAX so the distribution shape is
+// smooth across the full 0..MAX range without piling up at the cap —
+// that pile-up is what an unbounded-λ Poisson + clamp produces and what
+// these constants are calibrated to avoid.
 //
-// Sol-anchored λ values at MOON_CAPACITY_SCALE = 12:
-//   Mercury (R_H ≈ 0.0015 AU): λ ≈ 0.02 → 0 moons (Mercury: 0)
-//   Earth   (R_H ≈ 0.01   AU): λ ≈ 0.12 → ~0–1 (Earth: 1)
-//   Mars    (R_H ≈ 0.007  AU): λ ≈ 0.09 → ~0 (Mars: 2 captured asteroids)
-//   Jupiter (R_H ≈ 0.354  AU): λ ≈ 4.2  → ~4 (Sol: 4 Galilean + tail)
-//   Saturn  (R_H ≈ 0.434  AU): λ ≈ 5.2  → ~5 (Sol: 6+ major)
-//   Uranus  (R_H ≈ 0.469  AU): λ ≈ 5.6  → ~6 (Sol: 5 major)
-//   Neptune (R_H ≈ 0.771  AU): λ ≈ 9.2  → ~9 (Sol: Triton + tail)
+// p = min(MOON_PROBABILITY_CAP, hillAu × MOON_PROBABILITY_PER_HILL)
 //
-// Sits ~3× below the unconstrained physical anchor (Galilean CPD models
-// predict λ ≈ 12–20 for a Sol-Jupiter analog if Hill volume alone gated
-// count). The lower scale keeps the system-diagram's back/front moon-pool
-// budget readable. Outlier rolls past MOON_COUNT_MAX are pruned uniformly
-// at random (see MOON_COUNT_MAX_TUNE below).
+// Sol-anchored means at PER_HILL=2.3, CAP=0.60 (mean = MAX × p):
+//   Mercury (R_H ≈ 0.0015 AU): p ≈ 0.003 → mean 0.02 (Mercury: 0)
+//   Earth   (R_H ≈ 0.010  AU): p ≈ 0.023 → mean 0.11 (Earth: 1)
+//   Mars    (R_H ≈ 0.007  AU): p ≈ 0.016 → mean 0.08 (Mars: 2 small)
+//   Jupiter (R_H ≈ 0.354  AU): p ≈ 0.60  → mean 3.00 (Jupiter: 4 Galileans, on the high end here)
+//   Saturn  (R_H ≈ 0.434  AU): p ≈ 0.60  → mean 3.00
+//   Uranus  (R_H ≈ 0.469  AU): p ≈ 0.60  → mean 3.00 (now curated to top 3)
+//   Neptune (R_H ≈ 0.771  AU): p ≈ 0.60  → mean 3.00
+//   Hot Jupiter at 0.05 AU (R_H ≈ 0.003): p ≈ 0.007 → mean 0.04 (stripped)
+//   Warm Jupiter at 1 AU   (R_H ≈ 0.032): p ≈ 0.073 → mean 0.37 (rare moons)
 //
-// Hot Jupiters (R_H ≈ 0.003 AU at 0.05 AU): λ ≈ 0.04 → 0 moons, matching
-// observation. Migrated giants lose their satellites naturally through
-// the shrunk Hill sphere; no separate migration-strip pass needed.
-export const MOON_CAPACITY_SCALE = 12;
+// CAP=0.60 → binomial(5, 0.60) shape is P(0)=1%, P(1)=8%, P(2)=23%,
+// P(3)=35%, P(4)=26%, P(5)=8%. Smooth peak at 3 with symmetric falloff
+// and only 8% at the cap, so gas giants vary across 1-5 moons as
+// designer-visible variety rather than always-saturated. The PER_HILL
+// slope keeps the migration-strip behavior emergent from physics — a
+// hot Jupiter's shrunk Hill sphere maps to p≈0.007, and binomial(5, 0.007)
+// rolls 0 moons 96% of the time. No separate migration-strip pass needed.
+export const MOON_PROBABILITY_PER_HILL = 3.0;
+export const MOON_PROBABILITY_CAP      = 0.60;
 
 // Defensive ceiling against the unbounded Poisson upper tail. For λ = 9
 // (Neptune-class) the 99th-percentile draw is ~17 — well past any
@@ -323,13 +327,62 @@ export const MOON_COUNT_MAX = MOON_COUNT_MAX_TUNE;
 // On top of this, each moon's upper bound is further capped by its
 // host's mass × MOON_MAX_HOST_MASS_RATIO so a giant moon can only form
 // around a giant host (Earth-mass moons need a Saturn-plus host).
-export const MOON_MASS_LOG_EARTH = { mean: -3, sd: 1.5, min: -5, max: 0.3 };
+// Realistic baseline: log-mean = -3 (Europa-class median), max =
+// log10(2) = 0.3 (2 M⊕ ceiling so super-Earth-mass binaries don't
+// emerge as moons). Sol's moons cluster around 10^-3 to 10^-2.
+const MOON_MASS_LOG_EARTH_REALISTIC = { mean: -3, sd: 1.5, min: -5, max: 0.3 };
 
-// Maximum moon-to-host mass ratio for stable orbital dynamics. Earth/
-// Moon sits at 1.2%; Pluto/Charon at 12% behaves as a binary, not a
-// moon. 3% is a conservative-stable cap that allows mass-comparable
-// satellites without crossing into binary-planet territory.
-export const MOON_MAX_HOST_MASS_RATIO = 0.03;
+// Gameplay tune: shift log-mean to -1.8 AND widen sd to 2.0. Median
+// ≈ 0.016 M⊕ (between Ganymede and Mars). The sd widening is the more
+// load-bearing change — it fattens the right tail so ~25% of moons
+// land above 0.1 M⊕ (Mars-class) and a meaningful minority (~10%)
+// reach 0.3+ M⊕ where atm retention works. Without the tail width,
+// the chain Warm-host migrator → big moon → T+P+water Endor produces
+// a hard zero; with it, a scattering of Pandora-class moons emerges
+// across the galaxy as a game-discoverable rarity. Heller & Pudritz
+// 2015 argue exomoon habitability needs ≥0.25 M⊕, well inside the new
+// right tail.
+const MOON_MASS_LOG_EARTH_TUNE = { mean: -1.5, sd: 2.0 };
+
+export const MOON_MASS_LOG_EARTH = mergeTunes(
+  MOON_MASS_LOG_EARTH_REALISTIC,
+  MOON_MASS_LOG_EARTH_TUNE,
+);
+
+// Circumplanetary-disk delivered water floor for moons. Real moons of
+// giants form in their host's CPD, which accretes water-rich pebbles
+// drifting inward from the outer protoplanetary disk independent of
+// the host's local formation zone. Galilean moons formed in Jupiter's
+// CPD with bulkWater ≈ 0.1–0.5, even though Jupiter's local nebular
+// region wasn't uniformly that wet — the CPD acted as a pebble trap.
+//
+// Modeled here as a minimum bulkWater for any procgen moon:
+//   bulkWater = max(formation-zone sample, MOON_CPD_WATER_FLOOR)
+//
+// 0.01 (1%) sits well above Earth's 2.3e-4 but well below a Galilean
+// (~0.5). Specifically unlocks the Pandora-class chain: in-situ-formed
+// HZ giants around hot stars (A/F-class, with HZ at 3-5 AU but inside
+// the H2O frost line) have moons drawn from the inside_H2O zone
+// (median ~1e-4, dry). The floor lifts those to 1e-2, enough for the
+// surface-cover formula to produce ocean cover when T > 273 K. Stalled
+// warm-Jupiter migrators are unaffected (their moons already inherit
+// the H2O_to_NH3 zone's wet bulk via formationAu). Curated catalog
+// moons (Luna, Europa, etc.) bypass entirely — their bulkWater comes
+// from CSV.
+export const MOON_CPD_WATER_FLOOR = 0.01;
+
+// Maximum moon-to-host mass ratio for stable orbital dynamics.
+// Realistic ratio: Earth/Moon 1.2%; Pluto/Charon 12% (binary, not
+// moon). The realistic 3% cap is conservative — comfortably below
+// binary-planet territory but binding on warm-host moons (a gas
+// dwarf at 11 M⊕ caps moon mass at 0.33 M⊕, just at the Endor
+// retention threshold). Lifting to 5% lets HZ-giant hosts spawn
+// 0.5-Earth-mass moons without crossing into binary dynamics
+// (Heller-Pudritz exomoon stability bounds allow up to 8-10%
+// before tidal disruption becomes the dominant outcome).
+const MOON_MAX_HOST_MASS_RATIO_REALISTIC = 0.03;
+const MOON_MAX_HOST_MASS_RATIO_TUNE = 0.05;
+export const MOON_MAX_HOST_MASS_RATIO = MOON_MAX_HOST_MASS_RATIO_TUNE;
 
 // ---------------------------------------------------------------------------
 // Disk physics — protoplanetary-disk parameters for the continuous mass
@@ -408,10 +461,29 @@ export const DISK_GAS_LIFETIME_MYR = {
 //   1 AU Sun (inner): mass median ≈ 0.75 M⊕ (Venus), tail to ~2.5 M⊕
 //   5 AU Sun (outer): core median ≈ 14 M⊕ (Uranus-core), envelope
 //     fires → typical total ~85 M⊕ (Saturn-class)
-export const ACCRETION_EFFICIENCY = {
+const ACCRETION_EFFICIENCY_REALISTIC = {
   inner: { mean: 20, sd: 10, min: 1,   max: 80, log: true },
   outer: { mean: 3,  sd: 2,  min: 0.3, max: 15, log: true },
 };
+
+// Gameplay tune: lift inner-zone accretion efficiency so M-dwarf HZ
+// bodies grow toward Earth-mass rather than clustering sub-Mars. Under
+// the realistic value 65% of temperate rocky bodies are < 0.1 M⊕ —
+// physics-correct given M-dwarf HZ sits at tiny `a` where isolation
+// mass is naturally small, but the classical Lissauer M_iso formula
+// understates real-world pebble-accretion growth (which bypasses the
+// isolation-mass cap entirely). Real M-dwarf planets reach 0.5-1.4 M⊕
+// commonly (TRAPPIST-1's seven planets span 0.33-1.37). Lifting inner
+// mean 20→35 pushes the temperate-mass distribution toward the
+// observed M-dwarf range without modeling pebble accretion explicitly.
+const ACCRETION_EFFICIENCY_TUNE = {
+  inner: { mean: 80 },
+};
+
+export const ACCRETION_EFFICIENCY = mergeTunes(
+  ACCRETION_EFFICIENCY_REALISTIC,
+  ACCRETION_EFFICIENCY_TUNE,
+);
 
 // Core mass above which gas accretion can run away (assuming the disk
 // still has gas). Below the critical mass, envelope contraction is too
@@ -463,8 +535,43 @@ export const TIME_TO_RUNAWAY_MYR = 0.5;
 //   GJ 1214b at ~6 M⊕) so we sit the cutoff below Neptune-mass.
 // MIN_HOT_JUPITER_AU: hard floor — migrators can't end inside ~0.01 AU
 //   (Roche-limit destruction territory).
-export const MIGRATION_RATE = 0.10;
-export const MIGRATION_FRACTION = { mean: 0.02, sd: 0.015, min: 0.005, max: 0.08 };
+export const MIGRATION_RATE = 0.20;
+
+// Two-mode mixture: most migrators end at hot-Jupiter orbits (the
+// observed Kepler population), but a minority stall mid-disk at
+// warm-orbit / HZ distances. Real warm-Jupiter populations (Kepler-22b,
+// HD 28185 at ~0.85–1 AU) confirm both end-states exist; the bistable
+// shape lets the architect produce both without restating each as a
+// separate pass.
+//
+// Hot-Jupiter mode (primary, 70%): observed-Kepler distribution —
+//   migrators land at 0.5–8% of formation distance. A Jupiter forming
+//   at 5 AU ends at 0.025–0.4 AU (Roche-floor by MIN_HOT_JUPITER_AU).
+// Warm-Jupiter mode (secondary, 30%): mid-disk stall — disk gap closes
+//   or photoevaporation truncates migration before the giant reaches
+//   the hot-Jupiter range. Lands at 15–50% of formation distance. A
+//   Jupiter forming at 5 AU stalls at 0.75–2.5 AU (warm/HZ band for
+//   FGK-class hosts; HZ-edge for cool stars). Hill sphere shrinks
+//   proportionally — these giants retain fewer moons than primordial
+//   cold giants but more than hot Jupiters, opening a path to Pandora-
+//   class habitable moons (Endor-class) which astrobiologists treat
+//   as plausibly outnumbering habitable planets if HZ giants are
+//   common (Heller & Pudritz 2015).
+//
+// Sampled via sampleMixture; the existing two-mode samplers in
+// ECCENTRICITY and PRESSURE_HISTORY_MULTIPLIER use the same shape.
+// Secondary's min lowered from 0.15 → 0.05 to fill the migration-end-state
+// gap. The previous gap 0.08–0.15 was unreachable by either mode, but
+// it's exactly where M-dwarf HZ migrations land (HZ at ~0.05–0.3 AU,
+// giants forming at ~5 AU → HZ stall fraction 1–6%). Now the secondary
+// mode covers 0.05–0.50, so a Jupiter formed past the M-dwarf's frost
+// line can stall anywhere from M-dwarf HZ (0.25 AU) up to a Sun-like
+// warm-Jupiter band (2.5 AU). Slight widening of the mean to 0.20 to
+// keep the distribution roughly balanced after the lower bound shifts.
+export const MIGRATION_FRACTION = {
+  primary:   { mean: 0.02, sd: 0.015, min: 0.005, max: 0.08, weight: 0.60 },
+  secondary: { mean: 0.20, sd: 0.12,  min: 0.05,  max: 0.50, weight: 0.40 },
+};
 export const MIGRATION_MIN_MASS_EARTH = 15;
 export const MIN_HOT_JUPITER_AU = 0.01;
 
@@ -616,9 +723,18 @@ export const WORLD_CLASS_THRESHOLDS = {
   chthonianInsolationMin: 100,
   // Iron: bulkMetal dominant (Mercury-class super-iron).
   ironMetalMin:         0.5,
-  // Ice: surface ice without liquid (Callisto/Triton-class).
-  iceIceMin:            0.5,
+  // Ice: surface ice without liquid (Callisto-class water-ice).
+  // 0.7 floor so bodies with partial ice cover (seasonal caps, mixed
+  // regolith-ice) stay `rocky` rather than collapsing into the ice
+  // bucket. At 0.5 the bucket eats half the procgen population because
+  // every body past the H2O frost line saturates iceFraction.
+  iceIceMin:            0.7,
   iceWaterCeiling:      0.1,
+  // Carbon: methane/volatile-frost-dominant frozen body (Pluto/Triton/
+  // Eris class). Splits off from `ice` when the body's bulk inventory
+  // is volatile-dominated rather than water-dominated — visually and
+  // gameplay-distinct from a water-ice ocean shell.
+  carbonBulkVolatileMin: 0.10,
   // Ocean: surface liquid water dominant.
   oceanWaterFloor:      0.5,
   // Solid giant: large rocky terrestrial (analogous to gas_giant /
@@ -1443,18 +1559,41 @@ export const INSOLATION_COLD_MAX = 0.1;
 //   Titan ~9              → near low, retention ≈ 0.4
 //   Mercury ~7, Europa ~7 → near low, retention ≈ 0.1
 //   Luna ~5               → below thresholdLow, retention = 0
-export const ATMOSPHERIC_RETENTION = {
-  // Jeans-escape sigmoid: v_esc/v_th below jeansLow → fully stripped;
-  // above jeansHigh → fully retained.
+// Realistic baseline: jeansLow=6, magneticFloor=0.05 — tightly anchored
+// against Sol's airless / thin-atm bodies (Luna ratio ~5 fully stripped;
+// Mars ratio ~12 mostly retained but stellar-wind erosion through the
+// non-existent dynamo bleeds it to 0.006 bar).
+const ATMOSPHERIC_RETENTION_REALISTIC = {
   jeansLow:       6,
   jeansHigh:      13,
-  // Magnetic-shielding sigmoid: B in gauss. magneticFloor is the
-  // residual retention for bodies with no internal field (Mars-class
-  // stellar-wind erosion is real but not total).
   magneticFloor:  0.05,
   magneticLow:    0.02,
   magneticHigh:   0.20,
 };
+
+// Gameplay tune: loosen the sigmoid + lift the no-dynamo floor so
+// marginal-gravity rocky bodies (Mars-class through sub-Earth-mass)
+// retain enough atm to land in the habitable pool. Under the realistic
+// values only 43/290 temperate-zone rocky procgen bodies hold P≥0.1
+// bar; the rest end up airless desert/iron. Real Solar System is
+// 4/8 (Venus/Earth/Mars/Titan) at the Mars threshold and our
+// distribution sits well below that. Effects per knob:
+//   - jeansLow 6→5: bodies at v_esc/v_th = 5-6 (sub-Mars, marginal
+//     gravity) keep ~30% retention instead of 0. ~20 added.
+//   - magneticFloor 0.05→0.15: no-dynamo bodies (Mars-class, ~210 of
+//     the 290 temperate population) retain 3× more atm against stellar
+//     wind. ~30 added.
+//   Combined: ~50 marginal-mass bodies move from airless to thin-atm,
+//   roughly doubling the habitable-eligible pool.
+const ATMOSPHERIC_RETENTION_TUNE = {
+  jeansLow:       5,
+  magneticFloor:  0.15,
+};
+
+export const ATMOSPHERIC_RETENTION = mergeTunes(
+  ATMOSPHERIC_RETENTION_REALISTIC,
+  ATMOSPHERIC_RETENTION_TUNE,
+);
 
 // Outgassing-potential scaling — total atm-bar a body would produce if
 // its full volatile inventory cycled to the surface. Linear in mass ×

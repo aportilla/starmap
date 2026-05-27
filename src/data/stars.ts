@@ -87,7 +87,7 @@ export interface Star {
 
 export type WorldClass =
   // Terrestrial taxonomy
-  | 'rocky' | 'solid_giant' | 'desert' | 'ocean' | 'ice'
+  | 'rocky' | 'solid_giant' | 'desert' | 'ocean' | 'ice' | 'carbon'
   | 'iron' | 'lava' | 'magma_ocean' | 'chthonian'
   // Gaseous taxonomy
   | 'gas_dwarf' | 'hycean' | 'helium' | 'ice_giant' | 'gas_giant';
@@ -384,7 +384,8 @@ export const WORLD_CLASS_COLOR: Record<WorldClass, Color> = {
   solid_giant: new Color(0xb88560),  // large rocky terrestrial, slightly darker than rocky
   desert:      new Color(0xe4a854),  // dust-tan (Mars-like)
   ocean:       new Color(0x4a9fd9),  // blue (Earth/Europa)
-  ice:         new Color(0xb8d8e8),  // pale cyan-white (Callisto/Triton)
+  ice:         new Color(0xb8d8e8),  // pale cyan-white (Callisto, water-ice shell)
+  carbon:      new Color(0xb07a58),  // tholin orange-brown (Pluto/Triton/Eris methane-frost)
   iron:        new Color(0x9a6660),  // dark grey-red (Mercury-like)
   lava:        new Color(0xd64a3a),  // molten red-orange
   magma_ocean: new Color(0xb04030),  // dark red, denser than lava

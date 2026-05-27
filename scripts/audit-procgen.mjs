@@ -30,7 +30,8 @@ import {
   PLANET_COUNT_BY_CLASS,
   MAX_PLANETS_PER_CLUSTER,
   RING_DISRUPTION_RATE,
-  MOON_CAPACITY_SCALE,
+  MOON_PROBABILITY_PER_HILL,
+  MOON_PROBABILITY_CAP,
   MOON_COUNT_MAX,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_RESOURCE_PRIORS,
@@ -404,11 +405,11 @@ console.log();
 
 // --- 5. Moon count by Hill-sphere capacity ----------------------------------
 
-// Moon count is Poisson(λ_p) with λ_p = R_H(p) × MOON_CAPACITY_SCALE per
-// planet (Phase E). Bucket procgen planets by R_H and report observed
-// mean against the mean of per-planet λ_p in the bucket — comparing to a
+// Moon count is Binomial(MOON_COUNT_MAX, p) with p = min(CAP, R_H × PER_HILL).
+// Bucket procgen planets by R_H and report observed mean against the mean
+// of per-planet binomial mean (n × p) in the bucket — comparing to a
 // bucket midpoint would mis-anchor the prior since most planets cluster
-// at the low end of each band. Poisson SD ≈ √mean(λ) for the z-score.
+// at the low end of each band. Binomial SD = √(n × p × (1−p)) for the z-score.
 const starByIdForMoons = new Map(stars.map(s => [s.id, s]));
 const HILL_BUCKETS = [
   { label: 'tiny (<0.005 AU)',     lo: 0,      hi: 0.005    },
@@ -430,7 +431,10 @@ for (const p of procgenPlanets) {
   const bucket = moonsByBucket.find(b => hill >= b.lo && hill < b.hi);
   if (bucket) {
     bucket.counts.push(p.moons.length);
-    bucket.lambdas.push(hill * MOON_CAPACITY_SCALE);
+    const prob = Math.min(MOON_PROBABILITY_CAP, hill * MOON_PROBABILITY_PER_HILL);
+    bucket.lambdas.push(MOON_COUNT_MAX * prob);
+    bucket.probs = bucket.probs || [];
+    bucket.probs.push(prob);
   }
 }
 for (const b of moonsByBucket) {
@@ -439,7 +443,8 @@ for (const b of moonsByBucket) {
   const withMoons = arr.filter(n => n > 0).length;
   const atCap = arr.filter(n => n >= MOON_COUNT_MAX).length;
   const meanLambda = b.lambdas.length ? b.lambdas.reduce((s, x) => s + x, 0) / b.lambdas.length : 0;
-  const priorSd = Math.sqrt(meanLambda);
+  const meanProb = b.probs && b.probs.length ? b.probs.reduce((s, x) => s + x, 0) / b.probs.length : 0;
+  const priorSd = Math.sqrt(MOON_COUNT_MAX * meanProb * (1 - meanProb));
   console.log(
     '  ' + pad(b.label, 21) +
     ' |' + pad(arr.length, 8, true) +

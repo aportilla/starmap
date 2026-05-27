@@ -24,6 +24,7 @@ const WORLD_CLASS_LABEL: Record<WorldClass, string> = {
   desert:      'Desert',
   ocean:       'Ocean',
   ice:         'Ice',
+  carbon:      'Carbon',
   iron:        'Iron',
   lava:        'Lava',
   magma_ocean: 'Magma Ocean',

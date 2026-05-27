@@ -540,7 +540,7 @@ const BODIES_FILE = 'bodies.csv';
 const BODY_LAYERS_FILE = 'body_layers.csv';
 const WORLD_CLASSES = new Set([
   // Terrestrial
-  'rocky', 'solid_giant', 'desert', 'ocean', 'ice',
+  'rocky', 'solid_giant', 'desert', 'ocean', 'ice', 'carbon',
   'iron', 'lava', 'magma_ocean', 'chthonian',
   // Gaseous
   'gas_dwarf', 'hycean', 'helium', 'ice_giant', 'gas_giant',

@@ -12,7 +12,7 @@
 // character, atmosphere, resources, biosphere are left as `_unknowns`
 // for the Filler (procgen.mjs) to derive.
 
-import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson } from './prng.mjs';
+import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson, sampleBinomial } from './prng.mjs';
 import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';
 import { radiusFromMass } from './procgen.mjs';
 import {
@@ -33,8 +33,10 @@ import {
   MIGRATION_MIN_MASS_EARTH,
   MIN_HOT_JUPITER_AU,
   RADIUS_SCATTER_LOG,
-  MOON_CAPACITY_SCALE,
+  MOON_PROBABILITY_PER_HILL,
+  MOON_PROBABILITY_CAP,
   MOON_COUNT_MAX,
+  MOON_CPD_WATER_FLOOR,
   MOON_MASS_LOG_EARTH,
   MOON_MAX_HOST_MASS_RATIO,
   zoneForFormationAu,
@@ -186,6 +188,8 @@ const FILLER_TARGET_FIELDS = [
   'hazeAerosols', 'dustStrength',
   'resMetals', 'resSilicates', 'resVolatiles',
   'resRareEarths', 'resRadioactives', 'resExotics',
+  'bioticCarbonAqueous', 'bioticSubsurfaceAqueous', 'bioticAerial',
+  'bioticCryogenic', 'bioticSilicate', 'bioticSulfur',
   'biosphereArchetype', 'biosphereTier',
   'rotationPeriodHours',
 ];
@@ -219,6 +223,8 @@ function makeBody(props) {
     hazeAerosols: null, dustStrength: null,
     resMetals: null, resSilicates: null, resVolatiles: null,
     resRareEarths: null, resRadioactives: null, resExotics: null,
+    bioticCarbonAqueous: null, bioticSubsurfaceAqueous: null, bioticAerial: null,
+    bioticCryogenic: null, bioticSilicate: null, bioticSulfur: null,
     biosphereArchetype: null, biosphereTier: null,
     rotationPeriodHours: null,
     innerAu: null, outerAu: null, innerPlanetRadii: null, outerPlanetRadii: null,
@@ -247,7 +253,7 @@ function makeBody(props) {
 // + `frostLinesAu` are passed through; defaults to null so the backfill
 // path can pass them in without breaking older callers.
 //
-// Count is Poisson(λ) with λ = R_H × MOON_CAPACITY_SCALE, where R_H is
+// Count is Binomial(MOON_COUNT_MAX, p) with p saturating in R_H, where R_H is
 // the host's Hill radius in AU (see hillRadiusAu in astrophysics.mjs).
 // Capacity scales with Hill volume: a Jupiter-class at 5 AU gets ~4
 // moons, an Earth-class at 1 AU gets ~0, a hot Jupiter at 0.05 AU gets ~0.
@@ -258,12 +264,24 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
   if (!star || star.mass == null) return [];
   const hillAu = hillRadiusAu(planet.semiMajorAu, planet.massEarth, star.mass);
   if (hillAu == null || hillAu <= 0) return [];
-  const lambda = hillAu * MOON_CAPACITY_SCALE;
   const countPrng = moonPrng(planet.id, -1, 'count');
-  // Sample the full Poisson draw — no cap here. The gameplay-range
-  // filter applies via uniform-random prune below (see MOON_COUNT_MAX_TUNE
-  // in procgen-priors.mjs for the load-bearing rationale).
-  const N = samplePoisson(countPrng, lambda);
+  // Sample N ~ Binomial(MOON_COUNT_MAX, p) where p is calibrated by
+  // Hill sphere. Binomial is naturally bounded at MOON_COUNT_MAX so
+  // the distribution shape is smooth across 0..MAX — no post-hoc
+  // prune, no pile-up at the cap (which is what Poisson + clamp
+  // produces when λ saturates). Sol anchors at MOON_PROB_PER_HILL=2.3,
+  // MOON_PROB_CAP=0.85:
+  //   Mercury (R_H=0.0015): p=0.003  → mean 0.02  (effectively 0)
+  //   Earth   (R_H=0.010):  p=0.023  → mean 0.11
+  //   Mars    (R_H=0.007):  p=0.016  → mean 0.08
+  //   Jupiter (R_H=0.354):  p=0.81   → mean 4.05  (Galileans)
+  //   Saturn  (R_H=0.434):  p=0.85   → mean 4.25  (capped)
+  //   Uranus  (R_H=0.469):  p=0.85   → mean 4.25
+  //   Neptune (R_H=0.771):  p=0.85   → mean 4.25
+  //   Hot Jupiter (R_H=0.003): p=0.007 → mean 0.04 (migration-stripped)
+  //   Warm Jupiter at 1 AU (R_H=0.032): p=0.07 → mean 0.37
+  const p = Math.min(MOON_PROBABILITY_CAP, hillAu * MOON_PROBABILITY_PER_HILL);
+  const N = sampleBinomial(countPrng, MOON_COUNT_MAX, p);
   if (N === 0) return [];
 
   const moons = [];
@@ -318,41 +336,23 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
       axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
       massEarth: Number(massEarth.toFixed(4)),
       radiusEarth: Number(radiusEarth.toFixed(4)),
-      bulkWaterFraction: sampleBulkWaterFraction(bulkWaterPrng, hostFormationAu, frostLinesAu),
+      // CPD pebble-drift floor: any procgen moon's bulkWater is at
+      // least MOON_CPD_WATER_FLOOR regardless of host formation zone.
+      // See the floor prior's docstring for the Galilean-CPD rationale.
+      bulkWaterFraction: Number(Math.max(
+        sampleBulkWaterFraction(bulkWaterPrng, hostFormationAu, frostLinesAu),
+        MOON_CPD_WATER_FLOOR,
+      ).toFixed(5)),
       bulkMetalFraction: sampleBulkMetalFraction(bulkMetalPrng, hostFormationAu, frostLinesAu),
       bulkVolatileFraction: sampleBulkVolatileFraction(bulkVolatilePrng, hostFormationAu, frostLinesAu),
     }));
   }
 
-  // Gameplay-range filter: uniform-random prune to MOON_COUNT_MAX, then
-  // re-letter survivors so display names stay contiguous (I, II, III, …)
-  // and IDs slug-pack (m1, m2, …). Survivors keep their physically-
-  // sampled mass / orbit / composition — only display identity changes.
-  const kept = pruneMoonsToK(moons, MOON_COUNT_MAX, planet.id);
-  for (let i = 0; i < kept.length; i++) {
-    const slug = `m${i + 1}`;
-    const display = ROMAN[i] ?? `M${i + 1}`;
-    kept[i].id = `${planet.id}-${slug}`;
-    kept[i].name = `${planet.formalName} ${display}`;
-    kept[i].formalName = `${planet.formalName} ${display}`;
-  }
-  return kept;
-}
-
-// Fisher-Yates partial shuffle to pick K moons uniformly at random,
-// returned in semi-major-axis order. Deterministic via a per-planet
-// PRNG so the same host reduces to the same kept set across builds.
-// Mirrors pruneToK for planets — see the comment there.
-function pruneMoonsToK(moons, K, planetId) {
-  if (moons.length <= K) return moons;
-  if (K <= 0) return [];
-  const prng = moonPrng(planetId, -2, 'prune');
-  const arr = moons.slice();
-  for (let i = arr.length - 1; i >= arr.length - K; i--) {
-    const j = Math.floor(prng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr.slice(-K).sort((a, b) => a.semiMajorAu - b.semiMajorAu);
+  // Binomial draw above already bounded N to MOON_COUNT_MAX, so no
+  // prune step is needed. moons are returned in slot order (mIdx=0..N-1)
+  // which corresponds to semi-major-axis order (mIdx drives the
+  // geometric a-spacing).
+  return moons;
 }
 
 // =============================================================================
@@ -926,16 +926,28 @@ function migratePass(planets, star, saltPrefix = '') {
 
   const newA = Math.max(
     MIN_HOT_JUPITER_AU,
-    migrator.formationAu * sampleTruncated(prng, MIGRATION_FRACTION),
+    migrator.formationAu * sampleMixture(prng, MIGRATION_FRACTION),
   );
   migrator.semiMajorAu = Number(newA.toFixed(4));
   migrator.periodDays = Number(
     (365.25 * Math.sqrt(Math.pow(newA, 3) / Math.max(star.mass, 0.01))).toFixed(2),
   );
 
-  // Sweep planets whose current orbit sits inside the migrator's
-  // formation distance. The migrator itself is kept.
-  return planets.filter(p => p === migrator || p.semiMajorAu >= migrator.formationAu);
+  // Sweep planets that were in the migrator's path. Type II migration
+  // drags the gas disk between the migrator's start (formationAu) and
+  // end (semiMajorAu) orbits, clearing companions along the way.
+  // Bodies INSIDE the final orbit survive (they were never in the
+  // path); bodies OUTSIDE the formation orbit survive (the migrator
+  // moved inward, away from them). The swept band is the open
+  // interval (semiMajorAu, formationAu). For hot-Jupiter end-states
+  // this is essentially the inner system; for stalled warm-Jupiter
+  // end-states only the outer-disk band gets cleared, leaving the
+  // inner HZ rockies intact so warm-Jupiter + Earth-twin coexistence
+  // is possible (the Sol-Jupiter analog at warm orbit).
+  return planets.filter(p =>
+    p === migrator ||
+    p.semiMajorAu <= migrator.semiMajorAu ||
+    p.semiMajorAu >= migrator.formationAu);
 }
 
 // Partial-system overlay. For stars that already host one or more catalog

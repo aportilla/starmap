@@ -234,7 +234,18 @@ export function worldClassFor(body, S) {
   if (T >= W.magmaOceanTempFloorK && tect >= W.magmaOceanTectMin) return 'magma_ocean';
   // Iron: metal-dominant interior (Mercury-class super-iron)
   if (bulkMetal >= W.ironMetalMin) return 'iron';
-  // Ice: surface ice dominant, no liquid (Callisto/Triton)
+  // Carbon: methane/volatile-dominated frozen body — checked BEFORE
+  // ice because a body with high iceFraction and bulkVolatile >
+  // bulkWater is a methane/N2-frost world (Pluto/Triton/Eris), not a
+  // water-ice shell. Same surface-cover gate, different bulk inventory.
+  const bulkVolatile = body.bulkVolatileFraction ?? 0;
+  if (ice >= W.iceIceMin && water < W.iceWaterCeiling &&
+      bulkVolatile > bulkWater &&
+      bulkVolatile >= W.carbonBulkVolatileMin) {
+    return 'carbon';
+  }
+  // Ice: surface ice dominant, water-ice-dominated bulk (Callisto/
+  // Ganymede/Europa-shell).
   if (ice >= W.iceIceMin && water < W.iceWaterCeiling) return 'ice';
   // Ocean: surface liquid water dominant (Europa/Ganymede/Earth)
   if (water >= W.oceanWaterFloor) return 'ocean';
@@ -1298,7 +1309,7 @@ const GASEOUS_CLASSES = new Set([
   'gas_giant', 'ice_giant', 'gas_dwarf', 'hycean', 'helium',
 ]);
 const TERRESTRIAL_SOLID_CLASSES = new Set([
-  'rocky', 'desert', 'ocean', 'ice', 'iron', 'lava',
+  'rocky', 'desert', 'ocean', 'ice', 'carbon', 'iron', 'lava',
   'magma_ocean', 'chthonian', 'solid_giant',
 ]);
 
@@ -1413,7 +1424,12 @@ function productivityPostAtm(body, hostStar) {
     const ch4 = atmFracOf(body, 'CH4');
     const nh3 = atmFracOf(body, 'NH3');
     const h2o = atmFracOf(body, 'H2O');
-    const organic_precursors = smoothstep(0.001, 0.1, (ch4 + nh3 + h2o) * colMass);
+    // Gas giants carry no surfacePressureBar (no surface to anchor
+    // against) so the shared `colMass` is 0 here. Sub a cloud-top
+    // reference pressure (~1 bar) so the precursor gate has a column-
+    // thickness signal to weight against atm composition.
+    const cloudDeckColMass = Math.log10(1.0 / g + 1);
+    const organic_precursors = smoothstep(0.001, 0.1, (ch4 + nh3 + h2o) * cloudDeckColMass);
     const windMs = (body.cloudLayers ?? []).reduce(
       (m, l) => Math.max(m, l.windSpeedMS ?? 0), 0
     );
@@ -1820,11 +1836,42 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, hazeAerosols, dustStrength };
 
+  // ─── DERIVE worldClass ─── pure label off settled physical state.
+  // Runs LAST so it reads the final refined T (post Pass B) plus the
+  // settled atm composition (hycean/helium branches inspect atm1).
+  // Nothing in the physics pipeline reads it — it's display-only.
+  if (unknowns.has('worldClass')) {
+    const w = worldClassFor(working, S);
+    if (w != null) worldClass = w;
+  }
+  working = { ...working, worldClass };
+
+  // Resources — six 0..10 scalars.
+  if (
+    unknowns.has('resMetals') || unknowns.has('resSilicates') || unknowns.has('resVolatiles') ||
+    unknowns.has('resRareEarths') || unknowns.has('resRadioactives') || unknowns.has('resExotics')
+  ) {
+    const r = resourcesFor(working, hostStar, hostBody);
+    if (r) {
+      if (unknowns.has('resMetals'))       resMetals = r.resMetals;
+      if (unknowns.has('resSilicates'))    resSilicates = r.resSilicates;
+      if (unknowns.has('resVolatiles'))    resVolatiles = r.resVolatiles;
+      if (unknowns.has('resRareEarths'))   resRareEarths = r.resRareEarths;
+      if (unknowns.has('resRadioactives')) resRadioactives = r.resRadioactives;
+      if (unknowns.has('resExotics'))      resExotics = r.resExotics;
+    }
+  }
+  working = {
+    ...working,
+    resMetals, resSilicates, resVolatiles,
+    resRareEarths, resRadioactives, resExotics,
+  };
+
   // Post-atm biotic productivity — aerial / cryogenic / silicate /
-  // sulfur. All four read atm composition (CH4, N2, NH3, SO2, H2S,
-  // H2SO4); cryogenic additionally reads hazeAerosols.THOLIN, so this
-  // runs after haze. Carbon_aqueous + subsurface_aqueous already
-  // computed in the pre-atm pass.
+  // sulfur. Reads worldClass (for the gaseous / terrestrial-solid
+  // gates) and atm composition + haze aerosols + resource grid
+  // (silicate substrate, sulfur substrate). Must run AFTER worldClass
+  // and resources are settled — both feed gating factors here.
   if (
     unknowns.has('bioticAerial')   || unknowns.has('bioticCryogenic') ||
     unknowns.has('bioticSilicate') || unknowns.has('bioticSulfur')
@@ -1858,32 +1905,6 @@ function fillBody(b, allBodies, stars) {
     });
     biosphereArchetype = labels.archetype;
     biosphereTier      = labels.tier;
-  }
-
-  // ─── DERIVE worldClass ─── pure label off settled physical state.
-  // Runs LAST so it reads the final refined T (post Pass B) plus the
-  // settled atm composition (hycean/helium branches inspect atm1).
-  // Nothing in the physics pipeline reads it — it's display-only.
-  if (unknowns.has('worldClass')) {
-    const w = worldClassFor(working, S);
-    if (w != null) worldClass = w;
-  }
-  working = { ...working, worldClass };
-
-  // Resources — six 0..10 scalars.
-  if (
-    unknowns.has('resMetals') || unknowns.has('resSilicates') || unknowns.has('resVolatiles') ||
-    unknowns.has('resRareEarths') || unknowns.has('resRadioactives') || unknowns.has('resExotics')
-  ) {
-    const r = resourcesFor(working, hostStar, hostBody);
-    if (r) {
-      if (unknowns.has('resMetals'))       resMetals = r.resMetals;
-      if (unknowns.has('resSilicates'))    resSilicates = r.resSilicates;
-      if (unknowns.has('resVolatiles'))    resVolatiles = r.resVolatiles;
-      if (unknowns.has('resRareEarths'))   resRareEarths = r.resRareEarths;
-      if (unknowns.has('resRadioactives')) resRadioactives = r.resRadioactives;
-      if (unknowns.has('resExotics'))      resExotics = r.resExotics;
-    }
   }
 
   // Strip _unknowns; runtime sees only the public Body shape.

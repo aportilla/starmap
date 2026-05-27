@@ -108,3 +108,17 @@ export function samplePoisson(prng, lambda) {
   } while (p > L);
   return k - 1;
 }
+
+// Binomial(n, p) — independent Bernoulli trials. Returns an integer in
+// [0, n] with mean np and variance np(1-p). Used for discrete counts
+// with a hard cap where a Poisson tail would either fail to fire or pile
+// up at the clamp: binomial's natural bound at n produces a smooth
+// distribution across the full 0..n range. n stays small (<10) in our
+// uses so the trivial linear-time draw is fine.
+export function sampleBinomial(prng, n, p) {
+  if (n <= 0 || p <= 0) return 0;
+  if (p >= 1) return n;
+  let k = 0;
+  for (let i = 0; i < n; i++) if (prng() < p) k += 1;
+  return k;
+}
