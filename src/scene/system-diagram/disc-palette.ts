@@ -37,6 +37,84 @@
 // deck at 1.0 covers everything; Saturn's three full-coverage decks
 // stack such that the upper NH3 hides everything below it, while
 // Jupiter's lower NH3 coverage rents zonally to reveal NH4SH bands.
+//
+// ─── Surface palette: three resource-archetype slots ───────────────
+//
+// `buildDiscPalette` derives the surface palette from each body's
+// dominant resources via `dominantResources(body, 2)`:
+//   slot 0  — single-archetype color for the top resource (ROCK_ARCHETYPE_SINGLE)
+//   slot 1  — pair archetype for top-1+top-2 (ROCK_ARCHETYPE_PAIR —
+//             basalt for metals+silicates, iron oxide for metals+
+//             rare-earths, sulfur deposits for silicates+radioactives,
+//             permafrost for silicates+volatiles, etc.)
+//   slot 2  — body-tinted barren regolith via `barrenTintFor(k0, k1)`
+//             — ordered lookup (different colors per ordering so
+//             dominance shows in the regolith) with formula fallback
+//             that mixes BARREN_ROCK_COLOR + RESOURCE_COLOR[k0/k1]
+//
+// Each archetype slot lerps toward BARREN_ROCK_COLOR by `1 − abundance`
+// (with ABUNDANCE_VISUAL_FLOOR so trace-resource slots still hint at
+// their archetype), and picks up a deterministic brightness offset +
+// temperature tint per body. The barren slot is NOT abundance-lerped —
+// it always paints at full strength as the body's regolith. World-
+// class color appears only as a flat-fill fallback when a body has no
+// resource signal at all.
+//
+// Gas / ice giants skip the surface entirely and paint `atmColumnColor`
+// — a frac × GAS_POTENCY weighted blend of the body's atm slots that
+// resolves to whichever absorbing species dominates the column. The
+// shader's column-band-modulation pass overlays subtle brightness
+// variegation on top, then cloud decks composite above.
+//
+// ─── Haze contributor model ────────────────────────────────────────
+//
+// `hazeBlendFor` returns (color, opacity) from four weighted contributor
+// categories, each gated by `log10(P+1)` (column-mass proxy) so a
+// thin-atm body can't paint full haze regardless of formation strength:
+//
+//   bulk gases    — frac × GAS_POTENCY[gas]            × HAZE_BULK_GAS_SCALE
+//   Rayleigh      — frac × SCATTERING_POTENCY[gas]     × HAZE_RAYLEIGH_SCALE
+//   aerosols      — body.hazeAerosols[gas] × POTENCY   × HAZE_AEROSOL_SCALE
+//                   (skipped when species matches a cloud deck on this
+//                    body — `deckGasesFor` — so we don't double-count)
+//   lifted dust   — body.dustStrength × POTENCY[DUST]  × HAZE_DUST_SCALE
+//                   (color from `dominantResources` so dust matches the
+//                    body's mineralogy: iron-grey, rust, tan)
+//
+// No-surface bodies fold `atmColumnColor` in as a stratospheric-haze
+// contributor so Saturn picks up a non-zero opacity (cream H2/He tint)
+// for the per-deck haze pre-tint. Opacity is soft-capped via
+// `1 − exp(−Σ)` so many thin contributions saturate smoothly. CHROMOPHORE
+// sits in RENDERER_SKIP_AEROSOLS — its visible signal is too localized
+// (Jupiter's GRS, Saturn's polar hexagon) for a uniform haze tint.
+//
+// The rim halo uses the same weighted-average merger plus each cloud
+// deck's base color folded in by deck coverage.
+//
+// ─── Where chemistry lives ─────────────────────────────────────────
+//
+// Procgen owns the chemistry: `procgen.mjs:hazeFor` emits per-species
+// formation strengths (THOLIN / NH4SH / CHROMOPHORE / SALT / H2SO4 /
+// SULFUR / SILICATE) and `dustStrength` from peaked T+atm gates;
+// `procgen.mjs:cloudDecksFor` emits cloud decks from per-species
+// condensation gates in `CONDENSABLES`. The renderer paints exactly
+// what procgen emits — no silent substitution. See the chemistry-gate
+// comments in `procgen.mjs:hazeContribution` and the `CONDENSABLES`
+// table in `procgen-priors.mjs` for per-species rationale.
+//
+// Color tables (two layers) live in `src/data/stars.ts`:
+//   GAS_COLOR        — visible hue when the species is gas-phase or
+//                      photochemistry aerosol (CH4 cyan, H2/He cream,
+//                      THOLIN orange, NH4SH brown, H2SO4 sulfate, etc.)
+//   CONDENSATE_COLOR — sparse table of ice/frost appearances for
+//                      condensable gases (CH4 frost, NH3 ice, N2 frost,
+//                      H2O ice). Falls back to GAS_COLOR when the
+//                      species isn't a condensable.
+//
+// `WORLD_CLASS_TINT` applies a small warm/cool shift to surface palette
+// entries — `gas_giant` lerps toward amber so Jupiter reads ruddier
+// than Saturn. Cloud palette entries skip the tint so cloud colors
+// stay aligned with their gas species.
 
 import { Color } from 'three';
 import {

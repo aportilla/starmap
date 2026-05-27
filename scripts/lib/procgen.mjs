@@ -10,28 +10,64 @@
 // Per-field seeding: hash32(body.id + ':' + field + ':' + PROCGEN_VERSION).
 // Bumping PROCGEN_VERSION reseeds the whole galaxy without changing CSV ids.
 //
-// Generator dependency chain (run in this order in fillBody):
-//   radiusEarth ← massEarth
-//   worldClass ← radiusEarth + insolation
-//   waterFraction, iceFraction ← worldClass
-//   tectonicActivity ← worldClass + massEarth
-//   periodDays ↔ semiMajorAu (Kepler 3, bidirectional; needs host mass)
-//   rotationPeriodHours ← worldClass + tidal-lock proxy + periodDays
-//   magneticFieldGauss ← worldClass + tectonicActivity + rotationPeriodHours
-//   surfacePressureBar ← worldClass + massEarth        (must precede avgSurfaceTempK)
-//   avgSurfaceTempK ← worldClass + insolation + iceFraction + surfacePressureBar
-//                     (Bond albedo derived locally — see effectiveBondAlbedo)
-//   eccentricity, inclinationDeg, axialTiltDeg, orbitalPhaseDeg ← seeded draws
-//   surfaceAge ← worldClass + eccentricity + host worldClass (moons of giants
-//                                                             get tidal lift)
-//   surfaceTempMinK, surfaceTempMaxK ← avg + worldClass + axial tilt + eccentricity
-//   biosphereArchetype, biosphereTier ← worldClass + insolation gate   (must precede atmosphere)
-//   atm1..atm3 + fractions ← worldClass + surfacePressureBar + biosphere
-//   resMetals..resExotics ← worldClass
+// ─── fillBody pipeline (run in this order) ───────────────────────────
 //
-// The Kepler step is bidirectional so RV-discovery catalog rows (period
-// known, axis unknown) and transit-discovery rows (axis known, period
-// unknown) both fill out symmetrically.
+// Each pass reads settled state from earlier passes, so order matters.
+// `worldClass` is derived LAST — it's a pure label off final physical
+// state, never an input to physics.
+//
+//   1.  Kepler round-trip       periodDays ↔ semiMajorAu via P² = a³/M
+//   2.  radiusEarth             Otegi piecewise (catalog rows only)
+//   3.  Bulk composition        bulk{Water,Metal,Volatile}Fraction
+//                               from four-zone formation gate
+//   4.  Orbital flavor          eccentricity (mixture), inclination,
+//                               axialTilt, orbitalPhase
+//   5.  Interior + rotation     tectonicActivity (mass-driven),
+//                               rotationPeriodHours (+ tidal lock),
+//                               magneticFieldGauss (mass-cap × dynamo)
+//   6.  surfacePressureBar      outgassing × atm-retention ×
+//                               pressure-history mixture
+//   7.  T ↔ albedo ↔ cover      Two-pass iteration. Pass A uses the
+//                               pressure-proxy greenhouse, Pass B
+//                               refines with per-gas potency once atm
+//                               composition is known.
+//                               Sub-steps inside each pass:
+//                                 surfaceLiquidWaterCover (T ∈ [273, Tboil(P)])
+//                                 surfaceIceCover         (cold-trap OR polar-cap)
+//   8.  surfaceAge              tect^exp × noise + tidal lift for
+//                               eccentric moons of giants
+//   9.  Pre-atm biotic          bioticCarbonAqueous (drives biotic O₂
+//                               lift in step 10), bioticSubsurfaceAqueous.
+//                               Both run pre-atm because they don't read
+//                               atm composition.
+//   10. atm1..atm3 + fractions  Regime dispatch on (radius, T, P, bulkWater)
+//                               into primary / cold_outgassed /
+//                               thick_outgassed / wet_outgassed /
+//                               dry_outgassed. Top-3 species with Jeans-
+//                               escape filter + continuous biotic O₂ lift.
+//   11. cloud + haze            cloudDecksFor walks CONDENSABLES (per-
+//                               species condensation gates); hazeFor
+//                               walks aerosol species + dust gate.
+//   12. worldClass              worldClassFor — pure label off settled
+//                               state. Terrestrial cascade splits
+//                               frozen bodies into `ice` (water-ice
+//                               dominant) vs `carbon` (methane-frost
+//                               dominant) per bulkVolatile vs bulkWater.
+//   13. Resources               Six 0..10 scalars physics-derived from
+//                               bulk composition + stellar metallicity
+//                               + age × decay + tidal bonus.
+//   14. Post-atm biotic         bioticAerial (Sagan floaters on gas
+//                               giants), bioticCryogenic (Titan-class),
+//                               bioticSilicate (hot rocky), bioticSulfur
+//                               (Io / Venus cloud). Then labelsFrom-
+//                               Productivity collapses the six biotic
+//                               scalars into the legacy
+//                               biosphereArchetype / biosphereTier
+//                               fields for info-card display.
+//
+// Moons traverse the same passes as planets. Tidal heating only enters
+// via the step-8 surface-age lift for eccentric moons of giants; every
+// other input is shared between planets and moons.
 
 import { hash32, mulberry32, sampleTruncated, sampleLogTruncated, sampleMixture } from './prng.mjs';
 import {

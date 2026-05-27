@@ -1,16 +1,98 @@
-// System Architect — top-down sampling of planetary systems for stars
-// with no catalog bodies. Reads priors from procgen-priors.mjs; emits
-// new body records (planets + their moons) ready to concatenate with
-// the catalog-sourced rows before attachBodies + fillBodies.
+// System Architect — top-down sampling of planetary systems. Two entry
+// points: generateSystem(star) for stars with zero catalog planets, and
+// generateOverlay(star, catalogPlanets) for catalog-anchored stars that
+// need outer-only siblings filled in. Both emit body records with
+// anchors set (semiMajorAu, formationAu, mass, radius, bulk composition,
+// orbital flavor) and the rest left in _unknowns for the Filler
+// (procgen.mjs) to derive.
 //
-// One pure entry point: generateSystem(star) → Body[]. Determinism via
-// per-(star, slot, field) seeds; PROCGEN_VERSION mixed in so bumping it
-// reseeds the whole galaxy.
+// Determinism via per-(star, slot, field) seeds; PROCGEN_VERSION mixed
+// in so bumping it reseeds the whole galaxy without changing CSV ids.
 //
-// v1 fills anchors (semiMajorAu, massEarth, radiusEarth, periodDays) plus
-// flavor (eccentricity, inclination, axial tilt, orbital phase). Surface
-// character, atmosphere, resources, biosphere are left as `_unknowns`
-// for the Filler (procgen.mjs) to derive.
+// ─── Per-planet mass chain (buildPlanetCore) ────────────────────────
+//
+// No type-keyed mass tables — mass falls out of disk physics:
+//
+//   Σ(a) = MMSN_NORMALIZATION × M_star × a^(-1.5)  with per-frost-line
+//          jumps from SNOW_LINE_BOOSTS at H2O / NH3 / CH4 lines
+//   M_iso(a) = (2π a² Σ)^1.5 / √(3 M_star)              isolation mass
+//   core mass = M_iso × ACCRETION_EFFICIENCY[zone]      inner: heavy-
+//                                                      tailed mergers;
+//                                                      outer: modest
+//   if   core ≥ CRITICAL_CORE_MASS_EARTH
+//   AND  formation past H2O frost line
+//   AND  DISK_GAS_LIFETIME_MYR > TIME_TO_RUNAWAY_MYR
+//     envelope = core × ENVELOPE_FRACTION             runaway gas accretion
+//   else envelope = 0
+//   total mass = core + envelope
+//   radius = Otegi(total) × exp(N(0, RADIUS_SCATTER_LOG))
+//
+// Mass and radius stay physically coupled — no impossible-density bodies
+// from independent draws.
+//
+// ─── System architecture ────────────────────────────────────────────
+//
+// Planet count: PLANET_COUNT_BY_CLASS truncated normal, with cluster
+// clamps (COMPANION_PLANET_SUPPRESSION for binary-stability,
+// MAX_PLANETS_PER_CLUSTER for gameplay legibility). Orbits walk outward
+// through log-normal period-ratio spacing from ORBITAL_GEOMETRY_BY_CLASS.
+// Bulk composition (water / metal / volatile) from the four-zone
+// formation gate (zoneForFormationAu split by H2O / NH3 / CH4 frost
+// lines) so outer-zone bodies carry their water-rich budget through
+// any later migration.
+//
+// ─── Type-II migration (migratePass) ────────────────────────────────
+//
+// Per-system roll at MIGRATION_RATE on the innermost gas giant with
+// formation past the H2O line. Landing fraction draws from a bistable
+// mixture MIGRATION_FRACTION:
+//   primary mode   — hot-Jupiter end-state (small fraction of formationAu)
+//   secondary mode — stalled warm-Jupiter (larger fraction)
+// Sweep filter removes companions between (semiMajorAu, formationAu)
+// — bodies that were in the migrator's path get cleared, bodies inside
+// the final orbit or outside the formation orbit survive. So a stalled
+// warm-Jupiter doesn't strip inner HZ rockies the way a full hot-Jupiter
+// sweep does.
+//
+// ─── Moons (generateMoons) ──────────────────────────────────────────
+//
+// Count ~ Binomial(MOON_COUNT_MAX, p) with
+//   p = min(MOON_PROBABILITY_CAP, hill_au × MOON_PROBABILITY_PER_HILL)
+// Binomial is naturally bounded at MOON_COUNT_MAX with a smooth 0..MAX
+// shape — no Poisson-clip pile-up at the cap. Migration-strip emerges
+// from physics: a hot Jupiter's shrunk Hill sphere maps to p ≈ 0 and
+// binomial rolls 0 moons. Mass from MOON_MASS_LOG_EARTH (median
+// Ganymede-class, right tail to super-Earth) clipped to
+// host × MOON_MAX_HOST_MASS_RATIO for orbital stability.
+// bulkWaterFraction carries a MOON_CPD_WATER_FLOOR baseline modeling
+// circumplanetary-disk pebble-drift water delivery — moons of in-situ
+// HZ giants can still be water-rich even when their host's local
+// formation zone is dry.
+//
+// ─── Rings (generateRing) ───────────────────────────────────────────
+//
+// 0-or-1 per planet with probability R² × RING_DISRUPTION_RATE — the
+// Roche-disruption cross-section. Concentrates rings on gas giants
+// (Jupiter ~30%, Saturn ~21%), with the occasional ringed super-Earth
+// in the tail (~1%). Composition from RING_RESOURCE_ICY /
+// RING_RESOURCE_ROCKY keyed on whether the host formed past the H2O
+// frost line; extent from RING_EXTENT in planet-radius units.
+//
+// ─── Belts (generateBelts) ──────────────────────────────────────────
+//
+// Per-star independent rolls per BELT_CONTEXTS entry (warm, cold) via
+// BELT_OCCURRENCE_BY_CLASS, with BELT_GIANT_ADJACENCY anchoring warm
+// bands inward of the innermost giant and cold bands past the
+// outermost (Sol's Main Belt at 0.4–0.7× Jupiter's a; Kuiper Belt at
+// 1.3–1.85× Neptune's). Giantless systems eat the GIANTLESS_BELT_PENALTY
+// multiplier and fall back to a system-edge band — physically possible
+// but rarer than shepherded belts. Belt size character emerges from
+// shepherding: shepherded belts pull largestBodyKm from the parent-body
+// range (BELT_LARGEST_BODY_KM.{warm,cold}.shepherded — Ceres / Pluto
+// class), free-float belts pull from the dust-cascade range (tens of
+// km max). Belt and ring composition lives in a six-resource grid
+// rather than a discrete class enum, so renderers and gameplay both
+// read mining yields from the same data.
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson, sampleBinomial } from './prng.mjs';
 import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';

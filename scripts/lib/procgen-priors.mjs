@@ -282,32 +282,17 @@ export const RADIUS_SCATTER_LOG = 0.10;
 export const MOON_PROBABILITY_PER_HILL = 3.0;
 export const MOON_PROBABILITY_CAP      = 0.60;
 
-// Defensive ceiling against the unbounded Poisson upper tail. For λ = 9
-// (Neptune-class) the 99th-percentile draw is ~17 — well past any
-// physical Sol anchor. The realistic peer caps at 8, which still
-// preserves the gas-giant-dominates-the-top variety the unconstrained
-// distribution produces. This is the value the architect would use
-// under pure realism; the gameplay tune below tightens it further.
+// Per-planet hard upper bound on moon count — the `n` in the
+// Binomial(n, p) sampler above. Setting it to 5 caps Saturn-class arcs
+// at a readable size on the system-diagram rim split (no 6-to-8-moon
+// arcs overlapping into illegibility) and keeps the per-cluster
+// colonization decision space tractable. The realistic peer at 8
+// preserves more of the gas-giant moon variety; the gameplay tune
+// trades that for legibility. Combined with `MOON_PROBABILITY_CAP =
+// 0.60`, the maximum mean moon count for the largest Hill spheres is
+// `5 × 0.60 = 3.0`, with a smooth bell across 0..5 rather than a
+// pile-up at the cap.
 const MOON_COUNT_MAX_REALISTIC = 8;
-
-// Gameplay tune: tighten the per-planet moon cap from the realistic
-// 8 down to 5. The architect samples the full Poisson(λ) count, builds
-// every candidate moon under the realistic mass + bulk-composition
-// priors, then uniformly-randomly prunes the survivor set to this cap
-// (Fisher-Yates partial shuffle, deterministic via a per-planet PRNG).
-//
-// Random pruning is load-bearing: moon mass and bulk composition are
-// independently sampled today, but any future scheme that ties
-// composition to orbital position (mIdx) would silently bias the type
-// distribution if we just clipped from the outer slots. Uniform random
-// preserves moon-type frequency (Europa-class / Ganymede-class /
-// Titan-class shares) exactly — only absolute count drops. Mirrors
-// the planet-prune-to-K mechanism in procgen-architect.mjs.
-//
-// Player-visible effect: Saturn- and Neptune-class moon arcs stay
-// readable on the system-diagram rim split — no more 6-to-8-moon arcs
-// overlapping into illegibility — and the per-cluster colonization
-// decision space stays tractable.
 const MOON_COUNT_MAX_TUNE = 5;
 
 export const MOON_COUNT_MAX = MOON_COUNT_MAX_TUNE;
