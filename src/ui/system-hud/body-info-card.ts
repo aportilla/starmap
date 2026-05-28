@@ -8,34 +8,17 @@
 // ephemeral; dismissal is the cursor leaving the disc.
 
 import { drawPixelText, getFont, measurePixelText } from '../../data/pixel-font';
-import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey, type WorldClass } from '../../data/stars';
+import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey } from '../../data/stars';
 import type { DiagramPick } from '../../scene/system-diagram';
 import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
 import { colors, fonts, sizes } from '../theme';
+import { composeWorldLabel } from './body-label';
 
 // Pretty labels for enum-valued fields. Defined here (rather than on the
-// data layer) because they're a presentation concern; if the catalog ever
-// adds a new world-class, TS will flag the missing entry here.
-const WORLD_CLASS_LABEL: Record<WorldClass, string> = {
-  // Terrestrial
-  rocky:       'Rocky',
-  solid_giant: 'Solid Giant',
-  desert:      'Desert',
-  ocean:       'Ocean',
-  ice:         'Ice',
-  carbon:      'Carbon',
-  iron:        'Iron',
-  lava:        'Lava',
-  magma_ocean: 'Magma Ocean',
-  chthonian:   'Chthonian',
-  // Gaseous
-  gas_dwarf:   'Gas Dwarf',
-  hycean:      'Hycean',
-  helium:      'Helium',
-  ice_giant:   'Ice Giant',
-  gas_giant:   'Gas Giant',
-};
+// data layer) because they're a presentation concern. The world-class
+// display string is composed richly in body-label.ts; the biosphere /
+// resource labels below stay local since they're only used in the rows.
 
 const BIOSPHERE_ARCHETYPE_LABEL: Record<BiosphereArchetype, string> = {
   carbon_aqueous:     'Aqueous',
@@ -157,8 +140,8 @@ function k(label: string): string {
 
 function rowsForStar(starIdx: number): BodyRow[] {
   const s = STARS[starIdx];
+  // Class (rawClass) is now the subtitle under the name — see subtitleFor.
   const rows: BodyRow[] = [
-    { key: k('class'),  val: s.rawClass },
     { key: k('mass'),   val: `${s.mass.toFixed(2)} Msun` },
     { key: k('radius'), val: `${s.radiusSolar.toFixed(2)} Rsun` },
   ];
@@ -172,8 +155,8 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
   const b = BODIES[bodyIdx];
   if (b.kind === 'belt') return rowsForBelt(b);
   if (b.kind === 'ring') return rowsForRing(b);
+  // Class is now the composed subtitle under the name — see subtitleFor.
   const rows: BodyRow[] = [];
-  if (b.worldClass !== null) rows.push({ key: k('class'),    val: WORLD_CLASS_LABEL[b.worldClass] });
   if (b.avgSurfaceTempK !== null) rows.push({ key: k('temp'), val: `${Math.round(b.avgSurfaceTempK)} K` });
   if (b.surfacePressureBar !== null) rows.push({ key: k('pressure'), val: `${b.surfacePressureBar.toFixed(2)} bar` });
   // Complexity 'none' is the null-equivalent — skip; a planet with
@@ -259,20 +242,19 @@ function rowsForRing(b: Body): BodyRow[] {
   return rows;
 }
 
-// Parent line for moons and rings: "Moon of <p>" or "Ring of <p>".
-// Skipped for planets and belts (whose host is the system's star,
-// already named in the HUD title across the top of the screen).
-function parentLineFor(bodyIdx: number): string | null {
-  const b = BODIES[bodyIdx];
-  if (b.hostBodyIdx === null) return null;
-  if (b.kind === 'moon') return `Moon of ${BODIES[b.hostBodyIdx].name}`;
-  if (b.kind === 'ring') return `Ring of ${BODIES[b.hostBodyIdx].name}`;
-  return null;
-}
-
 function titleFor(pick: DiagramPick): string {
   if (pick.kind === 'star') return STARS[pick.starIdx].name;
   return BODIES[pick.bodyIdx].name;
+}
+
+// Subtitle line under the name — the "what is this" descriptor. Stars show
+// their raw spectral class; planets/moons show the richly-composed world
+// label (see body-label.ts). Belts/rings have no class, so no subtitle.
+function subtitleFor(pick: DiagramPick): string | null {
+  if (pick.kind === 'star') return STARS[pick.starIdx].rawClass;
+  const b = BODIES[pick.bodyIdx];
+  if (b.kind === 'belt' || b.kind === 'ring') return null;
+  return composeWorldLabel(b);
 }
 
 export class BodyInfoCard extends BasePanel {
@@ -296,19 +278,15 @@ export class BodyInfoCard extends BasePanel {
   protected measure(): { w: number; h: number } {
     if (!this.current) return { w: 0, h: 0 };
     const title = titleFor(this.current);
+    const subtitle = subtitleFor(this.current);
     const titleLineH = getFont(fonts.cardName).lineHeight;
+    const subtitleLineH = getFont(fonts.subtitle).lineHeight;
     const bodyLineH = getFont(fonts.body).lineHeight;
     const titleW = measurePixelText(title, fonts.cardName);
+    const subtitleW = subtitle ? measurePixelText(subtitle, fonts.subtitle) : 0;
 
     let maxBodyW = 0;
     let bodyLines = 0;
-
-    const parentLine = this.current.kind !== 'star' ? parentLineFor(this.current.bodyIdx) : null;
-    if (parentLine) {
-      const w = measurePixelText(parentLine);
-      if (w > maxBodyW) maxBodyW = w;
-      bodyLines++;
-    }
 
     const rows = this.current.kind === 'star'
       ? rowsForStar(this.current.starIdx)
@@ -321,9 +299,12 @@ export class BodyInfoCard extends BasePanel {
 
     const w = Math.max(
       sizes.padX * 2 + titleW,
+      sizes.padX * 2 + subtitleW,
       sizes.padX * 2 + maxBodyW,
     );
-    const h = sizes.padY * 2 + titleLineH + sizes.cardNameGap + bodyLineH * bodyLines;
+    const h = sizes.padY * 2 + titleLineH
+      + (subtitle ? subtitleLineH : 0)
+      + sizes.cardNameGap + bodyLineH * bodyLines;
     return { w, h };
   }
 
@@ -332,17 +313,22 @@ export class BodyInfoCard extends BasePanel {
     paintSurface(g, 0, 0, w, h);
 
     const titleLineH = getFont(fonts.cardName).lineHeight;
+    const subtitleLineH = getFont(fonts.subtitle).lineHeight;
     const bodyLineH = getFont(fonts.body).lineHeight;
 
     drawPixelText(g, titleFor(this.current), sizes.padX, sizes.padY, colors.starName, fonts.cardName);
 
-    let cursorY = sizes.padY + titleLineH + sizes.cardNameGap;
+    let cursorY = sizes.padY + titleLineH;
 
-    const parentLine = this.current.kind !== 'star' ? parentLineFor(this.current.bodyIdx) : null;
-    if (parentLine) {
-      drawPixelText(g, parentLine, sizes.padX, cursorY, colors.textKey);
-      cursorY += bodyLineH;
+    // Subtitle — the composed world descriptor (or star class), dim accent
+    // beneath the yellow name, forming the title/subtitle pair above the
+    // key/value list.
+    const subtitle = subtitleFor(this.current);
+    if (subtitle) {
+      drawPixelText(g, subtitle, sizes.padX, cursorY, colors.titleDim, fonts.subtitle);
+      cursorY += subtitleLineH;
     }
+    cursorY += sizes.cardNameGap;
 
     const rows = this.current.kind === 'star'
       ? rowsForStar(this.current.starIdx)
