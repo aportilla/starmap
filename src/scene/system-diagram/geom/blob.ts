@@ -81,6 +81,15 @@ export interface ChunkSpec {
 // Triangle indices are emitted as a triangle fan rooted at vertex 0 of
 // the shape — works correctly for convex polygons, which is all the
 // shape libraries contain.
+//
+// chunkCenterOffsetOut / chunkSizeOut carry the per-vertex chunk
+// metadata needed by makeBlobMaterial's sphere-lighting pass — every
+// vertex of one chunk shares its chunk's center (CX, CY) and half-
+// extent (size), so the fragment shader can reconstruct a local sphere
+// normal from gl_FragCoord. chunkCenterOffsetOut stores the SLOT-
+// RELATIVE center (the same cx, cy the caller passes in) so the owning
+// layer can translate it to world space on every resize without
+// rebaking; chunkSizeOut is invariant and stays as-is across resizes.
 export function bakeBlob(
   shapes: ShapeLibrary,
   shapeIdx: number,
@@ -88,6 +97,7 @@ export function bakeBlob(
   rotation: number,
   cx: number, cy: number,
   posOut: number[], idxOut: number[], colorOut: number[], hoverOut: number[],
+  chunkCenterOffsetOut: number[], chunkSizeOut: number[],
   r: number, g: number, b: number,
   vertexBase: number,
 ): number {
@@ -101,6 +111,8 @@ export function bakeBlob(
     posOut.push(cx + rx, cy + ry, 0);
     colorOut.push(r, g, b);
     hoverOut.push(0);
+    chunkCenterOffsetOut.push(cx, cy);
+    chunkSizeOut.push(size);
   }
   for (let i = 1; i < shape.length - 1; i++) {
     idxOut.push(vertexBase, vertexBase + i, vertexBase + i + 1);
@@ -190,24 +202,33 @@ export interface ChunkPool<S> {
 }
 
 // Chunk pool builder — wraps the accumulated per-vertex (positions,
-// colors) and per-triangle (indices) arrays into an indexed Mesh with
-// makeBlobMaterial. aHovered is allocated zero; the owning layer flips
-// it per-slot on hover.
+// colors, chunk metadata) and per-triangle (indices) arrays into an
+// indexed Mesh with makeBlobMaterial. aHovered is allocated zero; the
+// owning layer flips it per-slot on hover. aChunkCenter is allocated
+// here from the caller's chunkCenterOffsets (slot-relative) — the
+// owning layer rewrites it on every resize alongside positions so the
+// shader sees world-space chunk centers. aChunkSize is invariant.
 export function buildChunkPool<S>(
   slots: S[],
   positions: number[],
   indices: number[],
   colors: number[],
+  chunkCenters: number[],
+  chunkSizes: number[],
   renderOrder: number,
 ): ChunkPool<S> {
   const V = positions.length / 3;
   const posArr = new Float32Array(positions);
   const colorArr = new Float32Array(colors);
   const hoverArr = new Float32Array(V);
+  const chunkCenterArr = new Float32Array(chunkCenters);
+  const chunkSizeArr   = new Float32Array(chunkSizes);
   const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(posArr, 3));
-  geometry.setAttribute('color',    new BufferAttribute(colorArr, 3));
-  geometry.setAttribute('aHovered', new BufferAttribute(hoverArr, 1));
+  geometry.setAttribute('position',     new BufferAttribute(posArr, 3));
+  geometry.setAttribute('color',        new BufferAttribute(colorArr, 3));
+  geometry.setAttribute('aHovered',     new BufferAttribute(hoverArr, 1));
+  geometry.setAttribute('aChunkCenter', new BufferAttribute(chunkCenterArr, 2));
+  geometry.setAttribute('aChunkSize',   new BufferAttribute(chunkSizeArr, 1));
   // Index width: 16-bit if total vertex count fits, else 32. A system
   // with hundreds of chunks each contributing 4-6 verts can creep past
   // 65 K in pathological cases.

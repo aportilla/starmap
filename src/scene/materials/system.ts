@@ -1530,22 +1530,106 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
 // as a coarse-pixel-art feature rather than noise.
 export function makeBlobMaterial(): ShaderMaterial {
   return new ShaderMaterial({
-    uniforms: {},
+    uniforms: {
+      // Body lighting — same contract as makePlanetMaterial. Each chunk
+      // is treated as a tiny sphere clipped to its irregular polygon
+      // silhouette; the fragment shader reconstructs the chunk-local
+      // sphere normal from gl_FragCoord vs the per-chunk center +
+      // extent (threaded via aChunkCenter/aChunkSize attributes), then
+      // applies per-light Lambert + banded tint identical to the
+      // planet shader. See writeLightUniforms in lighting.ts.
+      uLightCount:     { value: 0 },
+      uLightPos:       { value: Array.from({ length: MAX_LIGHTS }, () => new Vector2()) },
+      uLightColor:     { value: Array.from({ length: MAX_LIGHTS }, () => new Color()) },
+      uLightIntensity: { value: new Float32Array(MAX_LIGHTS) },
+    },
     vertexShader: `
       attribute float aHovered;
-      varying vec3 vColor;
+      // Each vertex carries its CHUNK's center + half-extent (same value
+      // across every vertex of a single chunk) so the fragment shader
+      // can reconstruct the chunk's local sphere normal without a per-
+      // primitive uniform path.
+      attribute vec2  aChunkCenter;
+      attribute float aChunkSize;
+      varying vec3  vColor;
       varying float vHovered;
+      varying vec2  vChunkCenter;
+      varying float vChunkSize;
       void main() {
         vColor = color;
         vHovered = aHovered;
+        vChunkCenter = aChunkCenter;
+        vChunkSize   = aChunkSize;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
-      varying vec3 vColor;
+      varying vec3  vColor;
       varying float vHovered;
+      varying vec2  vChunkCenter;
+      varying float vChunkSize;
+      uniform int       uLightCount;
+      uniform vec2      uLightPos[${MAX_LIGHTS}];
+      uniform vec3      uLightColor[${MAX_LIGHTS}];
+      uniform float     uLightIntensity[${MAX_LIGHTS}];
+
+      // Mirror of the planet shader's lighting constants — same crescent
+      // model at a smaller scale. At chunk-radius 2-6 px the LIT band
+      // gives a 1-3 pixel colored highlight on the limb facing each
+      // star; the HOT band pins to the brightest 1-2 limb pixels. See
+      // makePlanetMaterial for the full rationale.
+      const float LIGHT_Z_BIAS         = -0.55;
+      const float LIGHT_BAND_LOW       = 0.18;
+      const float LIGHT_BAND_HIGH      = 0.52;
+      const float LIGHT_DITHER_WIDTH   = 0.08;
+      const float LIGHT_TINT_STRENGTH  = 0.12;
+      const float LIGHT_HOT_BOOST      = 0.10;
+
+      float bayer4(vec2 p) {
+        vec2 q = mod(floor(p), vec2(4.0));
+        vec2 outer = floor(q / 2.0);
+        vec2 inner = mod(q, vec2(2.0));
+        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
+        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
+        return (4.0 * bInner + bOuter) / 16.0;
+      }
+
       void main() {
-        vec3 col = vHovered > 0.5 ? vec3(1.0) : vColor;
+        // Hover wins early — chunks under hover flip to solid white
+        // exactly like the previous behavior; lighting doesn't paint
+        // over the highlight.
+        if (vHovered > 0.5) {
+          gl_FragColor = vec4(1.0);
+          return;
+        }
+        vec3 col = vColor;
+
+        // Per-fragment sphere lighting — treat the chunk as a unit-disc-
+        // inscribed shape. Polygon silhouette already clips the
+        // rasterizer to the chunk's actual outline; the disc math just
+        // yields a smooth depth signal inside the polygon. chunkR floor
+        // at 1 px keeps the tiniest chunks (size = 2 px half-extent)
+        // from divide-by-zero on the normalize.
+        vec2 dLocal = gl_FragCoord.xy - vChunkCenter;
+        float chunkR = max(vChunkSize, 1.0);
+        float tSq = dot(dLocal, dLocal) / (chunkR * chunkR);
+        float nz = sqrt(max(0.0, 1.0 - tSq));
+        vec3 N = vec3(dLocal / chunkR, nz);
+        for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+          if (i >= uLightCount) break;
+          vec2 dir2d = normalize(uLightPos[i] - vChunkCenter);
+          vec3 L = normalize(vec3(dir2d, LIGHT_Z_BIAS));
+          float lam = max(0.0, dot(N, L)) * uLightIntensity[i];
+          float bL = bayer4(gl_FragCoord.xy + vec2(31.0 + float(i) * 7.0, 17.0 + float(i) * 11.0));
+          float ditheredMag = lam + (bL - 0.5) * 2.0 * LIGHT_DITHER_WIDTH;
+          if (ditheredMag > LIGHT_BAND_LOW) {
+            col = clamp(col + uLightColor[i] * LIGHT_TINT_STRENGTH, 0.0, 1.0);
+          }
+          if (ditheredMag > LIGHT_BAND_HIGH) {
+            col = clamp(col + uLightColor[i] * LIGHT_HOT_BOOST, 0.0, 1.0);
+          }
+        }
+
         gl_FragColor = vec4(col, 1.0);
       }
     `,

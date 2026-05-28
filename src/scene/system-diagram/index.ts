@@ -80,6 +80,7 @@ export class SystemDiagram {
     const lights = this.stars.getLightSources();
     this.planets.setLightSources(lights);
     this.moons.setLightSources(lights);
+    this.belts.setLightSources(lights);
   }
 
   // Hit-test the rendered discs at (x, y) in buffer-pixel coords. Walk
