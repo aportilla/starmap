@@ -93,8 +93,10 @@ function atmosphereLine(b) {
 }
 
 function biosphereLine(b) {
-  if (!b.biosphereTier || b.biosphereTier === 'none') return null;
-  return `${b.biosphereArchetype ?? '?'} ${b.biosphereTier}`;
+  if (!b.biosphereComplexity || b.biosphereComplexity === 'none') return null;
+  const impact = b.biosphereSurfaceImpact;
+  const impactStr = impact == null ? '' : `  surfaceImpact=${impact.toFixed(3)}`;
+  return `${b.biosphereArchetype ?? '?'} ${b.biosphereComplexity}${impactStr}`;
 }
 
 // ---- emit ------------------------------------------------------------------

@@ -47,7 +47,9 @@ import {
   BULK_VOLATILE_FRACTION_BY_ZONE,
   TRIPLE_POINT_BAR,
   BIOSPHERE_ARCHETYPES,
-  BIOSPHERE_TIERS,
+  BIOSPHERE_COMPLEXITY,
+  BIOSPHERE_IMPACT_LEVELS,
+  IMPACT_BUCKET_THRESHOLDS,
 } from './lib/procgen-priors.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -813,40 +815,132 @@ console.log();
 
 // --- 10. Biosphere distribution ---------------------------------------------
 
-console.log('=== Biosphere — archetype × tier matrix (procgen planets) ===');
-const bioMatrix = {};
-const tierTotals = {};
-const archTotals = {};
+// Population: planets + moons across all sources. Subsurface-aqueous
+// life lives overwhelmingly on moons (Europa/Enceladus-class), so a
+// planet-only matrix understates the actual catalog by ~6×. Curated
+// bodies (Sol's Earth, Europa, Enceladus, Titan) are included too —
+// they're hand-anchored ground truth, and excluding them would hide
+// the only Earth-class dominant carbon-aqueous in the catalog.
+console.log('=== Biosphere — archetype × complexity matrix (planets + moons, all sources) ===');
+const bioMatrix = {};               // [arch][complexity] across both kinds
+const bioMatrixByKind = {           // [kind][arch][complexity]
+  planet: {}, moon: {},
+};
 let aliveCount = 0;
-let totalProcgenAll = 0;
+let alivePlanets = 0, aliveMoons = 0;
+let totalHabitatBodies = 0;
+let planetCount = 0, moonCount = 0;
 for (const b of bodies) {
-  if (b.kind !== 'planet' || b.source !== 'procgen') continue;
-  totalProcgenAll += 1;
-  const t = b.biosphereTier ?? 'null';
+  if (b.kind !== 'planet' && b.kind !== 'moon') continue;
+  totalHabitatBodies += 1;
+  if (b.kind === 'planet') planetCount += 1; else moonCount += 1;
+  const c = b.biosphereComplexity ?? 'none';
   const a = b.biosphereArchetype ?? 'sterile';
-  if (t && t !== 'none') {
+  if (c !== 'none') {
     aliveCount += 1;
-    archTotals[a] = (archTotals[a] || 0) + 1;
+    if (b.kind === 'planet') alivePlanets += 1; else aliveMoons += 1;
     if (!bioMatrix[a]) bioMatrix[a] = {};
-    bioMatrix[a][t] = (bioMatrix[a][t] || 0) + 1;
+    bioMatrix[a][c] = (bioMatrix[a][c] || 0) + 1;
+    const byKind = bioMatrixByKind[b.kind];
+    if (!byKind[a]) byKind[a] = {};
+    byKind[a][c] = (byKind[a][c] || 0) + 1;
   }
-  tierTotals[t] = (tierTotals[t] || 0) + 1;
 }
-console.log('  total procgen planets: ' + totalProcgenAll);
-console.log('  with life:             ' + aliveCount + ' (' + (aliveCount / totalProcgenAll * 100).toFixed(2) + '%)');
+console.log('  total planets + moons: ' + totalHabitatBodies +
+            '   (planets ' + planetCount + ', moons ' + moonCount + ')');
+console.log('  with life:             ' + aliveCount +
+            ' (' + (aliveCount / totalHabitatBodies * 100).toFixed(2) + '%)' +
+            '   — ' + alivePlanets + ' planets, ' + aliveMoons + ' moons');
 console.log();
-const TIERS = BIOSPHERE_TIERS.filter(t => t !== 'none');
-console.log('  archetype           |' + TIERS.map(t => pad(t, 11, true)).join(' |') + ' |  total');
-console.log('  --------------------+' + TIERS.map(_ => '-'.repeat(12)).join('+') + '+--------');
+const COMPLEXITY_BUCKETS = BIOSPHERE_COMPLEXITY.filter(c => c !== 'none');
+function printMatrix(label, matrix) {
+  console.log('  ' + label);
+  console.log('  archetype           |' + COMPLEXITY_BUCKETS.map(c => pad(c, 11, true)).join(' |') + ' |  total');
+  console.log('  --------------------+' + COMPLEXITY_BUCKETS.map(_ => '-'.repeat(12)).join('+') + '+--------');
+  for (const a of BIOSPHERE_ARCHETYPES) {
+    const row = matrix[a] || {};
+    const cells = COMPLEXITY_BUCKETS.map(c => pad(row[c] || 0, 11, true));
+    const total = COMPLEXITY_BUCKETS.reduce((s, c) => s + (row[c] || 0), 0);
+    console.log('  ' + pad(a, 19) + ' |' + cells.join(' |') + ' | ' + pad(total, 6, true));
+  }
+}
+printMatrix('combined', bioMatrix);
+console.log();
+printMatrix('planets only', bioMatrixByKind.planet);
+console.log();
+printMatrix('moons only', bioMatrixByKind.moon);
+console.log();
+
+// --- 10b. Surface impact distribution ---------------------------------------
+//
+// Verifies the substrate-coupling + life-contribution model produces
+// the intended shape: carbon_aqueous should peak at `dominant` (Earth-
+// class biospheres run the atmosphere); subsurface_aqueous should peak
+// at `none/trace` (sealed by default) with a thin tail into modifying/
+// dominant (the rare-percentile plume worlds and surface-active complex
+// civilizations). Cryogenic / silicate / sulfur sit in between.
+
+function impactBucketFor(impact) {
+  if (impact == null || impact <  IMPACT_BUCKET_THRESHOLDS[0]) return 'none';
+  if (impact <  IMPACT_BUCKET_THRESHOLDS[1]) return 'trace';
+  if (impact <  IMPACT_BUCKET_THRESHOLDS[2]) return 'modifying';
+  return 'dominant';
+}
+
+console.log('=== Biosphere — archetype × surface-impact matrix (planets + moons, all sources) ===');
+const impactMatrix = {};
+const impactRawByArch = {};   // raw scalars for percentile reporting
+for (const b of bodies) {
+  if (b.kind !== 'planet' && b.kind !== 'moon') continue;
+  const a = b.biosphereArchetype;
+  if (a === null) continue;   // sterile — no archetype, no impact
+  const bucket = impactBucketFor(b.biosphereSurfaceImpact);
+  if (!impactMatrix[a]) impactMatrix[a] = {};
+  impactMatrix[a][bucket] = (impactMatrix[a][bucket] || 0) + 1;
+  if (!impactRawByArch[a]) impactRawByArch[a] = [];
+  impactRawByArch[a].push(b.biosphereSurfaceImpact ?? 0);
+}
+console.log('  archetype           |' + BIOSPHERE_IMPACT_LEVELS.map(b => pad(b, 11, true)).join(' |') + ' |  total');
+console.log('  --------------------+' + BIOSPHERE_IMPACT_LEVELS.map(_ => '-'.repeat(12)).join('+') + '+--------');
 for (const a of BIOSPHERE_ARCHETYPES) {
-  const row = bioMatrix[a] || {};
-  const cells = TIERS.map(t => pad(row[t] || 0, 11, true));
-  const total = TIERS.reduce((s, t) => s + (row[t] || 0), 0);
+  const row = impactMatrix[a] || {};
+  const cells = BIOSPHERE_IMPACT_LEVELS.map(b => pad(row[b] || 0, 11, true));
+  const total = BIOSPHERE_IMPACT_LEVELS.reduce((s, b) => s + (row[b] || 0), 0);
   console.log('  ' + pad(a, 19) + ' |' + cells.join(' |') + ' | ' + pad(total, 6, true));
 }
 console.log();
 
-console.log('=== Biotic productivity distribution (per archetype, procgen bodies) ===');
+// Per-archetype impact percentiles — surfaces the log-normal tail shape
+// directly. Subsurface_aqueous specifically should show median ≈ very
+// low, p99 substantially above (the "telescopes" tail).
+console.log('=== Surface impact percentiles (per archetype, non-sterile only) ===');
+console.log('  archetype           |    n      median     p75       p90       p95       p99      max');
+console.log('  --------------------+-------------------------------------------------------------------');
+function pctile(sorted, p) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return sorted[i];
+}
+for (const a of BIOSPHERE_ARCHETYPES) {
+  const arr = (impactRawByArch[a] || []).slice().sort((x, y) => x - y);
+  if (!arr.length) {
+    console.log('  ' + pad(a, 19) + ' |    0       —         —         —         —         —         —');
+    continue;
+  }
+  console.log(
+    '  ' + pad(a, 19) +
+    ' | ' + pad(arr.length, 5, true) +
+    '   ' + pad(pctile(arr, 0.50).toFixed(3), 6, true) +
+    '   ' + pad(pctile(arr, 0.75).toFixed(3), 6, true) +
+    '   ' + pad(pctile(arr, 0.90).toFixed(3), 6, true) +
+    '   ' + pad(pctile(arr, 0.95).toFixed(3), 6, true) +
+    '   ' + pad(pctile(arr, 0.99).toFixed(3), 6, true) +
+    '   ' + pad(arr[arr.length - 1].toFixed(3), 6, true),
+  );
+}
+console.log();
+
+console.log('=== Biotic productivity distribution (per archetype, planets + moons, all sources) ===');
 console.log('  archetype           |  n>0      mean     >0.3      >0.5      >0.75');
 console.log('  --------------------+----------------------------------------------');
 const BIOTIC_FIELD_BY_ARCH = {
@@ -861,7 +955,7 @@ for (const a of BIOSPHERE_ARCHETYPES) {
   const f = BIOTIC_FIELD_BY_ARCH[a];
   const vals = [];
   for (const b of bodies) {
-    if ((b.kind !== 'planet' && b.kind !== 'moon') || b.source !== 'procgen') continue;
+    if (b.kind !== 'planet' && b.kind !== 'moon') continue;
     const v = b[f];
     if (v != null && v > 0) vals.push(v);
   }

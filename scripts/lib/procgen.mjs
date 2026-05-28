@@ -59,17 +59,20 @@
 //   14. Post-atm biotic         bioticAerial (Sagan floaters on gas
 //                               giants), bioticCryogenic (Titan-class),
 //                               bioticSilicate (hot rocky), bioticSulfur
-//                               (Io / Venus cloud). Then labelsFrom-
-//                               Productivity collapses the six biotic
-//                               scalars into the legacy
-//                               biosphereArchetype / biosphereTier
-//                               fields for info-card display.
+//                               (Io / Venus cloud). Then the three
+//                               biosphere display fields derive off
+//                               the six scalars: biosphereArchetype
+//                               (argmax), biosphereComplexity (per-
+//                               archetype thresholds), and biosphere-
+//                               SurfaceImpact (productivity × per-body
+//                               coupling). See procgen-priors.mjs
+//                               biosphere section for the full model.
 //
 // Moons traverse the same passes as planets. Tidal heating only enters
 // via the step-8 surface-age lift for eccentric moons of giants; every
 // other input is shared between planets and moons.
 
-import { hash32, mulberry32, sampleTruncated, sampleLogTruncated, sampleMixture } from './prng.mjs';
+import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, sampleMixture } from './prng.mjs';
 import {
   PROCGEN_VERSION,
   ECCENTRICITY,
@@ -108,7 +111,28 @@ import {
   ICE_COVER_NOISE,
   WORLD_CLASS_THRESHOLDS,
   CONDENSABLES,
+  COMPLEXITY_THRESHOLDS,
+  ARCHETYPE_COUPLING_PRIOR,
+  LIFE_SURFACE_CONTRIBUTION,
+  MICROBIAL_SURFACE_CONTRIBUTION,
+  BIOSPHERE_ARCHETYPES,
+  BIOSPHERE_COMPLEXITY,
 } from './procgen-priors.mjs';
+
+// Per-archetype productivity field — used by the CSV-authored biosphere
+// path to scale impact off the body's measured productivity for the
+// authored archetype (the productivity scalars still describe what life
+// COULD exist; the authored value picks which one labels the body).
+const BIOTIC_FIELD_BY_ARCH = {
+  carbon_aqueous:     'bioticCarbonAqueous',
+  subsurface_aqueous: 'bioticSubsurfaceAqueous',
+  aerial:             'bioticAerial',
+  cryogenic:          'bioticCryogenic',
+  silicate:           'bioticSilicate',
+  sulfur:             'bioticSulfur',
+};
+const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
+const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
 import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
@@ -854,7 +878,6 @@ function atmosphereFor(body, S) {
   return out;
 }
 
-// BIOSPHERE_TIERS order; used in regime gate matching.
 // Surface opacity — 1 when the body has a solid surface the renderer
 // should paint underneath the cloud + haze stack (terrestrials), 0
 // when the bulk atm column shows through cloud rents instead (gas /
@@ -1287,10 +1310,11 @@ function resourcesFor(body, hostStar, hostBody) {
 // consumers can distinguish "this archetype can't exist here" from
 // "this archetype could but doesn't fire here."
 //
-// The legacy biosphereArchetype / biosphereTier labels are now derived
-// from these scalars via labelsFromProductivity (argmax + bucket), so
-// they're pure display classifications — nothing in the procgen
-// pipeline rolls a separate biosphere outcome.
+// The biosphereArchetype / biosphereComplexity / biosphereSurfaceImpact
+// fields are derived from these scalars (argmax + per-archetype
+// thresholds + per-body coupling sample), so they're pure display
+// classifications — nothing in the procgen pipeline rolls a separate
+// biosphere outcome.
 
 // PAR (Photosynthetically Active Radiation) availability by stellar
 // spectral class. G-class is the Sol baseline; cooler M-class stars
@@ -1535,14 +1559,11 @@ function productivityPostAtm(body, hostStar) {
   return { bioticAerial, bioticCryogenic, bioticSilicate, bioticSulfur };
 }
 
-// Argmax + bucket: collapse the per-archetype productivity scalars
-// into the legacy (archetype, tier) label pair. Used by the Filler
-// after `bioticProductivityFor` runs, so the legacy fields reflect
-// the productivity-driven physics rather than a separately-rolled
-// habitat outcome. The label is downstream of the scalars now.
-//
-// Thresholds match plans/BIOTIC-PRODUCTIVITY-REFACTOR.md.
-function labelsFromProductivity(productivity) {
+// Argmax over the per-archetype productivity scalars. Returns the
+// dominant archetype + its productivity, or `{ archetype: null, prod: 0 }`
+// when every entry is null/zero. Pure helper shared by the complexity
+// + coupling derivations below.
+function dominantArchetype(productivity) {
   let bestArch = null;
   let bestProd = 0;
   for (const [arch, prod] of Object.entries(productivity)) {
@@ -1550,17 +1571,57 @@ function labelsFromProductivity(productivity) {
     bestArch = arch;
     bestProd = prod;
   }
-  let tier;
-  if      (bestProd < 0.05) tier = 'none';
-  else if (bestProd < 0.20) tier = 'prebiotic';
-  else if (bestProd < 0.50) tier = 'microbial';
-  else if (bestProd < 0.75) tier = 'complex';
-  else                      tier = 'gaian';
-  // Below-threshold productivity → archetype null (matches the "sterile"
-  // semantics in the existing Body schema where tier='none' implies
-  // archetype=null).
-  if (tier === 'none') return { archetype: null, tier: 'none' };
-  return { archetype: bestArch, tier };
+  return { archetype: bestArch, prod: bestProd };
+}
+
+// Productivity → complexity bucket via per-archetype thresholds.
+// Steeper thresholds mean the archetype climbs the complexity ladder
+// more reluctantly; every archetype CAN reach `complex` in principle,
+// but only with high productivity. Thresholds are exclusive at the
+// lower bound, matching the prior labelsFromProductivity convention
+// (productivity == threshold falls into the lower bucket).
+function complexityFromProductivity(productivity, archetype) {
+  if (archetype == null || productivity == null) return 'none';
+  const [prebiotic, microbial, complex] = COMPLEXITY_THRESHOLDS[archetype];
+  if      (productivity <  prebiotic) return 'none';
+  else if (productivity <  microbial) return 'prebiotic';
+  else if (productivity <  complex)   return 'microbial';
+  else                                return 'complex';
+}
+
+// Sample a log-normal deviate from a {median, sigma} spec. Median is
+// the linear-space geometric mean; sigma is the log-space standard
+// deviation. Lives here rather than in prng.mjs because the coupling
+// pipeline is the only caller — sampleLogTruncated upstream takes a
+// different spec shape (mean / sd / clamp bounds) and would muddy
+// this call site.
+function sampleLognormal(prng, spec) {
+  return Math.exp(sampleNormal(prng, Math.log(spec.median), spec.sigma));
+}
+
+// Per-body surface coupling derivation. Composes substrate jitter
+// (archetype base × log-normal multiplicative noise) with an always-on
+// additive life contribution at the microbial / complex tiers. The
+// fat tail of the log-normal life contribution is where the "Enceladus
+// plume" through "telescopes poking out of the ice" range lives —
+// no discrete breakthrough event, just the natural distribution tail.
+// Returns the coupling scalar in [0..1].
+function surfaceCouplingForBody(body, archetype, complexity) {
+  if (archetype == null) return 0;
+  const prng = fieldPrng(body, 'surface_coupling');
+  const { base, sigma: substrateSigma } = ARCHETYPE_COUPLING_PRIOR[archetype];
+  // Substrate jitter — log-normal multiplier on archetype base. Mean
+  // log = 0 so the expected linear-space multiplier is e^(σ²/2),
+  // skewing slightly above 1 (acceptable; the audit verifies the
+  // distribution matches the calibration anchors).
+  let coupling = base * Math.exp(sampleNormal(prng, 0, substrateSigma));
+  if (complexity === 'complex') {
+    coupling += sampleLognormal(prng, LIFE_SURFACE_CONTRIBUTION[archetype]);
+  } else if (complexity === 'microbial' && MICROBIAL_SURFACE_CONTRIBUTION) {
+    const spec = MICROBIAL_SURFACE_CONTRIBUTION[archetype];
+    if (spec) coupling += sampleLognormal(prng, spec);
+  }
+  return Math.max(0, Math.min(1, coupling));
 }
 
 // =============================================================================
@@ -1618,7 +1679,7 @@ function fillBody(b, allBodies, stars) {
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     bioticCarbonAqueous, bioticSubsurfaceAqueous, bioticAerial,
     bioticCryogenic, bioticSilicate, bioticSulfur,
-    biosphereArchetype, biosphereTier,
+    biosphereArchetype, biosphereComplexity, biosphereSurfaceImpact,
     periodDays, semiMajorAu, eccentricity, inclinationDeg,
     axialTiltDeg, orbitalPhaseDeg,
   } = b;
@@ -1919,28 +1980,83 @@ function fillBody(b, allBodies, stars) {
     if (unknowns.has('bioticSulfur'))    bioticSulfur    = p.bioticSulfur;
   }
 
-  // Derive the legacy biosphereArchetype / biosphereTier labels from
-  // the productivity scalars (argmax + bucket thresholds). The labels
-  // are pure downstream classifications — they exist only to feed the
-  // info card display.
-  //
-  // Tier buckets:
-  //   < 0.05 → none
-  //   0.05–0.20 → prebiotic
-  //   0.20–0.50 → microbial
-  //   0.50–0.75 → complex
-  //   > 0.75 → gaian
+  // Derive the three biosphere display fields from the productivity
+  // scalars (see procgen-priors.mjs biosphere section for the model):
+  //   archetype       — argmax over the six scalars
+  //   complexity      — per-archetype thresholds bucket the dominant
+  //                     productivity; encodes probabilistic headwinds
+  //   surfaceImpact   — productivity × per-body surface coupling
+  //                     (substrate jitter + life-tier additive
+  //                     contribution); decouples "is alive" from
+  //                     "looks alive" so a complex subsurface biosphere
+  //                     reads as a sealed Europa rather than a Gaian.
+  // Two CSV-driven paths share one impact computation:
+  //   1. CSV-authored — biosphereArchetype + biosphereComplexity are
+  //      NOT in _unknowns (cell was 'n/a' → sterile, or a literal
+  //      value → use as authored). Curated systems (Sol) populate
+  //      these explicitly; catalog exoplanets leave them blank.
+  //   2. Procgen-derived — both fields ARE in _unknowns (cell was
+  //      empty). Default flow: argmax over productivity scalars +
+  //      per-archetype complexity threshold + per-body coupling.
+  // surfaceImpact is always derived (never CSV-authored) so the
+  // per-body coupling jitter applies uniformly.
   {
-    const labels = labelsFromProductivity({
+    const productivityByArch = {
       carbon_aqueous:     bioticCarbonAqueous,
       subsurface_aqueous: bioticSubsurfaceAqueous,
       aerial:             bioticAerial,
       cryogenic:          bioticCryogenic,
       silicate:           bioticSilicate,
       sulfur:             bioticSulfur,
-    });
-    biosphereArchetype = labels.archetype;
-    biosphereTier      = labels.tier;
+    };
+    const archIsAuthored = !unknowns.has('biosphereArchetype');
+    const cmplxIsAuthored = !unknowns.has('biosphereComplexity');
+    let resolvedArch = null;
+    let resolvedCmplx = 'none';
+    if (archIsAuthored || cmplxIsAuthored) {
+      // CSV-authored path. Both fields should travel together — an
+      // archetype without a complexity (or vice versa) is malformed;
+      // reject rather than silently filling in.
+      if (archIsAuthored !== cmplxIsAuthored) {
+        throw new Error(`${b.id}: biosphere_archetype and biosphere_complexity must both be authored or both blank`);
+      }
+      // Validate authored values against the enum sets. Null is
+      // legitimate (the 'n/a' cell semantic — body is sterile).
+      if (biosphereArchetype !== null && !VALID_ARCHETYPES.has(biosphereArchetype)) {
+        throw new Error(`${b.id}: invalid biosphere_archetype=${biosphereArchetype}`);
+      }
+      if (biosphereComplexity !== null && !VALID_COMPLEXITY.has(biosphereComplexity)) {
+        throw new Error(`${b.id}: invalid biosphere_complexity=${biosphereComplexity}`);
+      }
+      // n/a in either cell means sterile — both must be present or
+      // both absent for life to register. (Avoids a half-authored
+      // "complex with no archetype" or "carbon_aqueous with no
+      // complexity" sneaking through.)
+      if (biosphereArchetype === null || biosphereComplexity === null || biosphereComplexity === 'none') {
+        resolvedArch = null;
+        resolvedCmplx = 'none';
+      } else {
+        resolvedArch = biosphereArchetype;
+        resolvedCmplx = biosphereComplexity;
+      }
+    } else {
+      // Procgen-derived path — argmax + bucket.
+      const { archetype, prod } = dominantArchetype(productivityByArch);
+      const complexity = complexityFromProductivity(prod, archetype);
+      resolvedArch = complexity === 'none' ? null : archetype;
+      resolvedCmplx = complexity;
+    }
+    if (resolvedCmplx === 'none') {
+      biosphereArchetype     = null;
+      biosphereComplexity    = 'none';
+      biosphereSurfaceImpact = 0;
+    } else {
+      biosphereArchetype     = resolvedArch;
+      biosphereComplexity    = resolvedCmplx;
+      const coupling         = surfaceCouplingForBody(b, resolvedArch, resolvedCmplx);
+      const archProd         = productivityByArch[resolvedArch] ?? 0;
+      biosphereSurfaceImpact = Math.max(0, Math.min(1, archProd * coupling));
+    }
   }
 
   // Strip _unknowns; runtime sees only the public Body shape.
@@ -1958,7 +2074,7 @@ function fillBody(b, allBodies, stars) {
     resMetals, resSilicates, resVolatiles, resRareEarths, resRadioactives, resExotics,
     bioticCarbonAqueous, bioticSubsurfaceAqueous, bioticAerial,
     bioticCryogenic, bioticSilicate, bioticSulfur,
-    biosphereArchetype, biosphereTier,
+    biosphereArchetype, biosphereComplexity, biosphereSurfaceImpact,
     periodDays, semiMajorAu,
     eccentricity, inclinationDeg, axialTiltDeg, orbitalPhaseDeg,
   };

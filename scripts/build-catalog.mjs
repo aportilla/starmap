@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
-import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES } from './lib/procgen-priors.mjs';
+import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
 import { frostLineAU } from './lib/astrophysics.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -553,13 +553,6 @@ const BODY_SOURCES = new Set(['catalog', 'procgen']);
 // from the architect's shepherding-conditional largestBodyKm draw.
 // See the validators below.
 
-// Stars whose body list is hand-curated and authoritative — the moon
-// backfill pass skips planets hosted by these so missing moons read as
-// "really none / not yet curated" rather than as "we don't know, please
-// invent." Sol is the canonical reference; extend this set when other
-// systems get fully hand-tuned.
-const CURATED_SYSTEM_HOSTS = new Set(['sol']);
-
 // Columns split by handling: numeric cells get parsed via Number(), value
 // cells stay as strings (or null). Both paths fold empty + 'n/a' to null.
 const BODY_NUMERIC_FIELDS = [
@@ -610,6 +603,8 @@ const BODY_STRING_FIELDS = [
   ['atm1', 'atm1'],
   ['atm2', 'atm2'],
   ['atm3', 'atm3'],
+  ['biosphere_archetype',  'biosphereArchetype'],
+  ['biosphere_complexity', 'biosphereComplexity'],
 ];
 
 function cellOrNull(raw) {
@@ -691,10 +686,12 @@ function parseCsvBodies(text, label) {
     if (shepherdId !== null && kind !== 'belt') {
       throw new Error(`${label}: ${id} shepherd_id only valid on kind='belt' (got ${kind})`);
     }
-    // biosphereArchetype + biosphereTier are no longer CSV-authored —
-    // they're derived from the per-archetype productivity scalars in
-    // the Filler. Initialized null here; Filler will overwrite via
-    // labelsFromProductivity.
+    // biosphere_archetype + biosphere_complexity ride BODY_STRING_FIELDS
+    // (CSV-authored on curated rows, blank on procgen targets — the
+    // Filler honors empty-vs-n/a-vs-value via _unknowns). biosphere-
+    // SurfaceImpact is always derived in the Filler (never CSV-authored)
+    // so per-body coupling jitter applies uniformly. Init null here so
+    // the JSON shape carries the field; Filler overwrites.
     const body = {
       id,
       hostId: (row[ix.host_id] ?? '').trim(),
@@ -707,8 +704,7 @@ function parseCsvBodies(text, label) {
       worldClass,
       shepherdId,
       shepherdBodyIdx: null,
-      biosphereArchetype: null,
-      biosphereTier:      null,
+      biosphereSurfaceImpact: null,
       moons: [],
       ring: null,
     };

@@ -8,7 +8,7 @@
 // ephemeral; dismissal is the cursor leaving the disc.
 
 import { drawPixelText, getFont, measurePixelText } from '../../data/pixel-font';
-import { BODIES, STARS, type BiosphereArchetype, type BiosphereTier, type Body, type ResourceKey, type WorldClass } from '../../data/stars';
+import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey, type WorldClass } from '../../data/stars';
 import type { DiagramPick } from '../../scene/system-diagram';
 import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
@@ -45,12 +45,31 @@ const BIOSPHERE_ARCHETYPE_LABEL: Record<BiosphereArchetype, string> = {
   silicate:           'Silicate',
   sulfur:             'Sulfur',
 };
-const BIOSPHERE_TIER_LABEL: Record<Exclude<BiosphereTier, 'none'>, string> = {
+const BIOSPHERE_COMPLEXITY_LABEL: Record<Exclude<BiosphereComplexity, 'none'>, string> = {
   prebiotic: 'Prebiotic',
   microbial: 'Microbial',
   complex:   'Complex',
-  gaian:     'Gaian',
 };
+
+// Surface impact bucket suffix. Mirrors IMPACT_BUCKET_THRESHOLDS in
+// procgen-priors.mjs (`< 0.05` none / `0.05–0.20` trace / `0.20–0.50`
+// modifying / `>= 0.50` dominant). The 'none' impact level never paints
+// — it's only included for type completeness — because complex life
+// always contributes additive surface coupling per
+// LIFE_SURFACE_CONTRIBUTION, so anything that clears the complexity
+// 'none' gate carries a non-zero impact.
+const BIOSPHERE_IMPACT_LABEL: Record<Exclude<BiosphereImpactLevel, 'none'>, string> = {
+  trace:     'trace signature',
+  modifying: 'modifying surface',
+  dominant:  'dominant biosphere',
+};
+
+function impactBucket(impact: number): BiosphereImpactLevel {
+  if (impact <  0.05) return 'none';
+  if (impact <  0.20) return 'trace';
+  if (impact <  0.50) return 'modifying';
+  return 'dominant';
+}
 
 // Display label per resource. Each surviving top-N resource becomes its
 // own row in the info card, keyed by the label and valued by the body's
@@ -157,13 +176,25 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
   if (b.worldClass !== null) rows.push({ key: k('class'),    val: WORLD_CLASS_LABEL[b.worldClass] });
   if (b.avgSurfaceTempK !== null) rows.push({ key: k('temp'), val: `${Math.round(b.avgSurfaceTempK)} K` });
   if (b.surfacePressureBar !== null) rows.push({ key: k('pressure'), val: `${b.surfacePressureBar.toFixed(2)} bar` });
-  // Biosphere 'none' is the null-equivalent — skip; a planet with bacteria
-  // is what we want to surface, not a barren rock. When life exists, show
-  // both axes so the player sees what kind ("Aerial Microbial", etc.).
-  if (b.biosphereTier !== null && b.biosphereTier !== 'none' && b.biosphereArchetype !== null) {
-    const archLabel = BIOSPHERE_ARCHETYPE_LABEL[b.biosphereArchetype];
-    const tierLabel = BIOSPHERE_TIER_LABEL[b.biosphereTier];
-    rows.push({ key: k('life'), val: `${archLabel} ${tierLabel}` });
+  // Complexity 'none' is the null-equivalent — skip; a planet with
+  // bacteria is what we want to surface, not a barren rock. When life
+  // exists, the row carries archetype + complexity + impact bucket so
+  // the player sees what kind, how structured, and how visibly it
+  // alters the body ("Complex Subsurface · trace signature" reads as
+  // a sealed Europa; "Complex Aqueous · dominant biosphere" reads as
+  // Earth). One row to keep card density tight.
+  if (
+    b.biosphereComplexity !== null && b.biosphereComplexity !== 'none' &&
+    b.biosphereArchetype  !== null && b.biosphereSurfaceImpact !== null
+  ) {
+    const archLabel    = BIOSPHERE_ARCHETYPE_LABEL[b.biosphereArchetype];
+    const complexLabel = BIOSPHERE_COMPLEXITY_LABEL[b.biosphereComplexity];
+    const bucket       = impactBucket(b.biosphereSurfaceImpact);
+    const impactLabel  = bucket === 'none' ? null : BIOSPHERE_IMPACT_LABEL[bucket];
+    const val = impactLabel === null
+      ? `${complexLabel} ${archLabel}`
+      : `${complexLabel} ${archLabel} · ${impactLabel}`;
+    rows.push({ key: k('life'), val });
   }
   const gases = dominantGasLabels(b);
   if (gases.length > 0) rows.push({ key: k('gas'), val: gases.join(', ') });

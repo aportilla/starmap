@@ -93,9 +93,17 @@ export type WorldClass =
   | 'gas_dwarf' | 'hycean' | 'helium' | 'ice_giant' | 'gas_giant';
 // Biosphere is two orthogonal axes:
 //   - archetype: what kind of life (carbon/water, methane/cryogenic, etc.)
-//   - tier: how developed (prebiotic → microbial → complex → gaian)
-// Sterile bodies carry tier='none' and archetype=null. Anything else is
-// guaranteed to have both axes set.
+//   - complexity: how structured the life is (prebiotic → microbial → complex)
+//   - surfaceImpact: how visibly the biosphere alters the body [0..1]
+// Sterile bodies carry complexity='none' and archetype=null. Anything
+// else is guaranteed to have all three axes set.
+//
+// The complexity / surfaceImpact split exists because a single tier
+// ladder conflated two concepts that pull apart at the edges: Earth
+// between the GOE and the Cambrian ran a chemically dominant atmosphere
+// on entirely microbial life for ~2 Gyr; a complex Europa subsurface
+// biosphere never touches the surface. See procgen-priors.mjs biosphere
+// section for the full model.
 export type BiosphereArchetype =
   | 'carbon_aqueous'      // Earth-standard, water + carbon
   | 'subsurface_aqueous'  // ice-shell ocean (Europa, Enceladus)
@@ -103,12 +111,16 @@ export type BiosphereArchetype =
   | 'cryogenic'           // methane/ethane solvent (Titan-hypothesized)
   | 'silicate'            // crystalline mineral metabolism
   | 'sulfur';             // sulfur-cycle / thermal-vent biology
-export type BiosphereTier =
-  | 'none'        // sterile
-  | 'prebiotic'   // organic chemistry, no replicating life
+export type BiosphereComplexity =
+  | 'none'        // sterile — no replicating life
+  | 'prebiotic'   // organic chemistry, no replication
   | 'microbial'   // simple unicellular
-  | 'complex'     // multicellular ecosystems
-  | 'gaian';      // life has reshaped planet chemistry (Earth post-GOE)
+  | 'complex';    // multicellular ecosystems
+export type BiosphereImpactLevel =
+  | 'none'        // < 0.05 — sterile or undetectable
+  | 'trace'       // 0.05–0.20 — faint biomarkers (Enceladus-class plumes)
+  | 'modifying'   // 0.20–0.50 — biosphere alters chemistry (Venus clouds, K2-18b)
+  | 'dominant';   // ≥ 0.50 — biosphere runs the planetary system (Earth post-GOE)
 export type BodyKind = 'planet' | 'moon' | 'belt' | 'ring';
 export type BodySource = 'catalog' | 'procgen';
 
@@ -313,14 +325,17 @@ export interface Body {
   readonly bioticCryogenic: number | null;
   readonly bioticSilicate: number | null;
   readonly bioticSulfur: number | null;
-  // Legacy biosphere labels — DERIVED from the productivity scalars
-  // above (argmax + bucket thresholds). Still populated for backwards
-  // compat with the existing render path (BIOME_COVERAGE_BY_TIER,
-  // ATMOSPHERE_O2_BIOTIC_LIFT) and the info card. Will be removed in
-  // a follow-up phase once those consumers read productivity directly.
-  // Don't add new dependencies on these labels — read the scalars instead.
+  // Biosphere display fields — DERIVED from the productivity scalars
+  // above (archetype = argmax; complexity = per-archetype thresholds;
+  // surfaceImpact = productivity × per-body coupling). Decouples
+  // biological complexity from visible planetary signature so a
+  // sealed-Europa complex biosphere reads as no surface impact while
+  // remaining biologically distinct from a microbial ocean. Info card
+  // displays both axes; renderer reads surfaceImpact for biotic O₂
+  // lift / biome cover decisions.
   readonly biosphereArchetype: BiosphereArchetype | null;
-  readonly biosphereTier: BiosphereTier | null;
+  readonly biosphereComplexity: BiosphereComplexity | null;
+  readonly biosphereSurfaceImpact: number | null;
   // Indices into BODIES of moons orbiting this body, sorted by semi-major
   // axis ascending. Always empty when `kind === 'moon'` (no sub-moons modeled).
   readonly moons: readonly number[];
@@ -461,16 +476,19 @@ export const BIOME_STELLAR_SHIFT: Record<SpectralClass, { color: Color; amount: 
   BD: null,
 };
 
-// Productivity threshold below which biome stipple doesn't render at
-// all — eliminates noise from worlds with trace biotic activity
-// (productivity ≈ 0.01) that would paint a few stray pixels and read
-// as a bug.
+// Surface-impact threshold below which biome stipple doesn't render at
+// all — eliminates noise from worlds with trace biotic signature
+// (surfaceImpact ≈ 0.01) that would paint a few stray pixels and read
+// as a bug. Matches the lower bound of the BIOME_RENDER 'trace'
+// impact bucket so card label and rendered stipple flip on together.
 const BIOME_RENDER_THRESHOLD = 0.05;
 
-// Coverage scale factor — multiplies the body's biotic productivity to
-// produce the stipple coverage fraction. Earth at carbon_aqueous=0.85
-// productivity × scale=0.94 lands at ~0.80 coverage (matches the prior
-// gaian-bucketed value, preserving Earth's visual identity).
+// Coverage scale factor — multiplies the body's surfaceImpact to
+// produce the stipple coverage fraction. Earth at surfaceImpact ≈ 0.85
+// × scale=0.94 lands at ~0.80 coverage, preserving Earth's visual
+// identity. Subsurface-dominant worlds collapse to zero coverage via
+// the archetype filter below (no surface pigment defined) regardless
+// of their surfaceImpact tail.
 const BIOME_COVERAGE_SCALE = 0.94;
 
 // Channel-lerp helper local to the biome-paint pipeline. Mirrors the
@@ -485,49 +503,26 @@ function lerpColor(base: Color, target: Color, amount: number): Color {
   );
 }
 
-// Resolve a body's biome stipple paint by reading the productivity
-// scalars directly — no tier label lookup. Picks the dominant surface
-// archetype (carbon_aqueous, cryogenic, silicate, sulfur — the four
-// that paint a visible surface signal), uses its productivity as the
-// coverage scalar, and looks up its pigment hue × stellar shift for
-// the color. `subsurface_aqueous` and `aerial` don't paint a surface
-// stipple; subsurface gets a linea-tint pass and aerial amplifies
-// chromophore aerosols, both deferred.
+// Resolve a body's biome stipple paint by reading the body's derived
+// biosphere fields. The body's dominant archetype + its surfaceImpact
+// scalar already encode "what kind of life" and "how much it shows" —
+// the renderer just looks up the pigment hue × stellar shift and
+// scales coverage by surfaceImpact.
 //
-// Returns null when no stipple should render — sterile bodies (all
-// productivity below threshold), bodies whose dominant archetype is
-// pigment-null (subsurface, aerial), or hosts whose stellar class
-// can't support a biosphere.
+// Returns null when no stipple should render — sterile bodies (impact
+// below threshold), bodies whose dominant archetype is pigment-null
+// (subsurface, aerial), or hosts whose stellar class can't support a
+// biosphere.
 //
 // Resolves through the host chain: planet → its host star; moon → its
 // host planet → that planet's host star. Hostless bodies (procgen edge)
 // return null rather than guessing.
-const SURFACE_BIOME_ARCHETYPES: readonly BiosphereArchetype[] = [
-  'carbon_aqueous', 'cryogenic', 'silicate', 'sulfur',
-];
-const BIOTIC_FIELD_BY_ARCHETYPE: Record<BiosphereArchetype, keyof Body> = {
-  carbon_aqueous:     'bioticCarbonAqueous',
-  subsurface_aqueous: 'bioticSubsurfaceAqueous',
-  aerial:             'bioticAerial',
-  cryogenic:          'bioticCryogenic',
-  silicate:           'bioticSilicate',
-  sulfur:             'bioticSulfur',
-};
-
 export function biomePaintFor(body: Body): { color: Color; coverage: number } | null {
-  // Pick the dominant surface archetype by productivity.
-  let dominant: BiosphereArchetype | null = null;
-  let dominantProd = 0;
-  for (const arch of SURFACE_BIOME_ARCHETYPES) {
-    const prod = body[BIOTIC_FIELD_BY_ARCHETYPE[arch]] as number | null;
-    if (prod !== null && prod > dominantProd) {
-      dominantProd = prod;
-      dominant = arch;
-    }
-  }
-  if (dominant === null || dominantProd < BIOME_RENDER_THRESHOLD) return null;
+  const arch = body.biosphereArchetype;
+  const impact = body.biosphereSurfaceImpact;
+  if (arch === null || impact === null || impact < BIOME_RENDER_THRESHOLD) return null;
 
-  const base = BIOME_TINT_COLOR[dominant];
+  const base = BIOME_TINT_COLOR[arch];
   if (base === null) return null;
 
   let starIdx: number | null = null;
@@ -542,7 +537,7 @@ export function biomePaintFor(body: Body): { color: Color; coverage: number } | 
   if (shift === null) return null;
 
   const color = shift.amount > 0 ? lerpColor(base, shift.color, shift.amount) : base;
-  const coverage = Math.min(1, dominantProd * BIOME_COVERAGE_SCALE);
+  const coverage = Math.min(1, impact * BIOME_COVERAGE_SCALE);
   return { color, coverage };
 }
 

@@ -639,8 +639,8 @@ export interface DiscPalette {
   readonly iceFrac: number;
   // Biome stipple — pigment color (archetype × stellar shift; see
   // biomePaintFor in stars.ts) packed as [r,g,b], and coverage density
-  // [0..1] keyed to biosphereTier. Suppressed on no-surface bodies,
-  // tiny discs, and bodies with no biosphere.
+  // [0..1] scaled off biosphereSurfaceImpact. Suppressed on no-surface
+  // bodies, tiny discs, and bodies with no surface signature.
   readonly biomeColor: readonly [number, number, number];
   readonly biomeCoverage: number;
   // Cloud layers — up to MAX_CLOUD_LAYERS stratified decks, sorted

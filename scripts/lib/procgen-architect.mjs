@@ -282,7 +282,7 @@ const FILLER_TARGET_FIELDS = [
   'resRareEarths', 'resRadioactives', 'resExotics',
   'bioticCarbonAqueous', 'bioticSubsurfaceAqueous', 'bioticAerial',
   'bioticCryogenic', 'bioticSilicate', 'bioticSulfur',
-  'biosphereArchetype', 'biosphereTier',
+  'biosphereArchetype', 'biosphereComplexity',
   'rotationPeriodHours',
 ];
 
@@ -317,7 +317,7 @@ function makeBody(props) {
     resRareEarths: null, resRadioactives: null, resExotics: null,
     bioticCarbonAqueous: null, bioticSubsurfaceAqueous: null, bioticAerial: null,
     bioticCryogenic: null, bioticSilicate: null, bioticSulfur: null,
-    biosphereArchetype: null, biosphereTier: null,
+    biosphereArchetype: null, biosphereComplexity: null,
     rotationPeriodHours: null,
     innerAu: null, outerAu: null, innerPlanetRadii: null, outerPlanetRadii: null,
     moons: [],

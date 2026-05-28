@@ -1,232 +1,232 @@
-id,host_id,kind,formal_name,name,source,semi_major_au,formation_au,eccentricity,inclination_deg,period_days,orbital_phase_deg,rotation_period_hours,axial_tilt_deg,mass_earth,radius_earth,bulk_water_fraction,bulk_metal_fraction,bulk_volatile_fraction,world_class,avg_surface_temp_k,surface_temp_min_k,surface_temp_max_k,water_fraction,ice_fraction,surface_age,magnetic_field_gauss,tectonic_activity,surface_pressure_bar,atm1,atm1_frac,atm2,atm2_frac,atm3,atm3_frac,res_metals,res_silicates,res_volatiles,res_rare_earths,res_radioactives,res_exotics,biotic_carbon_aqueous,biotic_subsurface_aqueous,biotic_aerial,biotic_cryogenic,biotic_silicate,biotic_sulfur,belt_class,inner_au,outer_au,inner_planet_radii,outer_planet_radii,population_model,largest_body_km,shepherd_id
-mercury,sol,planet,Mercury,Mercury,catalog,0.387,0.387,0.2056,7.005,87.97,0,1407.5,0.034,0.0553,0.3829,0,0.7,0.001,iron,440,100,700,0,0.0001,0.05,0.003,0,0,n/a,n/a,n/a,n/a,n/a,n/a,8,4,1,1,0,0,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-venus,sol,planet,Venus,Venus,catalog,0.723,0.723,0.0068,3.395,224.7,45,5832.5,177.4,0.815,0.9499,2e-05,0.31,0.01,rocky,737,720,760,0,0,0.55,0,0.3,92,CO2,0.965,N2,0.035,SO2,0.00015,6,6,3,5,4,0,n/a,n/a,n/a,n/a,,0.25,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-earth,sol,planet,Earth,Earth,catalog,1.0,1.0,0.0167,0.0,365.25,90,23.93,23.44,1.0,1.0,0.00023,0.32,0.005,rocky,288,184,330,0.71,0.10,0.70,0.5,0.8,1.013,N2,0.781,O2,0.209,Ar,0.0093,5,6,7,5,4,0,0.85,,n/a,n/a,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-mars,sol,planet,Mars,Mars,catalog,1.524,1.524,0.0934,1.85,686.97,135,24.62,25.19,0.107,0.532,0.0001,0.24,0.003,desert,210,130,308,0,0.02,0.20,0,0.1,0.006,CO2,0.951,N2,0.027,Ar,0.016,5,4,3,7,4,0,,,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-jupiter,sol,planet,Jupiter,Jupiter,catalog,5.204,5.204,0.0489,1.303,4332.59,180,9.93,3.13,317.8,11.21,0.01,0.02,0.02,gas_giant,165,n/a,n/a,n/a,n/a,,4.28,n/a,n/a,H2,0.898,He,0.10,CH4,0.003,1,1,10,1,1,2,n/a,n/a,0.22,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-saturn,sol,planet,Saturn,Saturn,catalog,9.583,9.583,0.0565,2.485,10759,225,10.66,26.73,95.16,9.45,0.05,0.05,0.02,gas_giant,134,n/a,n/a,n/a,n/a,,0.21,n/a,n/a,H2,0.963,He,0.0325,CH4,0.0045,1,1,10,1,1,2,n/a,n/a,0.15,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-uranus,sol,planet,Uranus,Uranus,catalog,19.18,19.18,0.0457,0.773,30688,270,17.24,97.77,14.54,4.01,0.1,0.2,0.30,ice_giant,76,n/a,n/a,n/a,n/a,,0.23,n/a,n/a,H2,0.825,He,0.152,CH4,0.023,1,1,9,1,1,3,n/a,n/a,0.05,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-neptune,sol,planet,Neptune,Neptune,catalog,30.07,30.07,0.0113,1.770,60182,315,16.11,28.32,17.15,3.88,0.1,0.2,0.30,ice_giant,72,n/a,n/a,n/a,n/a,,0.14,n/a,n/a,H2,0.80,He,0.19,CH4,0.015,1,1,9,1,1,3,n/a,n/a,0.05,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-luna,earth,moon,Moon,Luna,catalog,0.00257,,0.0549,5.145,27.32,0,655.7,6.68,0.0123,0.273,1e-05,0.03,0.001,rocky,250,100,390,0,0.001,0.05,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,4,6,2,1,3,0,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-io,jupiter,moon,Io,Io,catalog,0.00282,,0.0041,0.05,1.769,0,42.46,0,0.015,0.286,0,0.2,0.01,lava,110,90,200,0,0,1.00,0,1.0,0,SO2,1.0,n/a,n/a,n/a,n/a,4,5,2,4,3,4,n/a,n/a,n/a,n/a,0.10,0.20,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-europa,jupiter,moon,Europa,Europa,catalog,0.00448,,0.0094,0.466,3.55,90,85.23,0.1,0.008,0.245,0.5,0.1,0.02,ocean,102,50,125,1.0,0.85,0.85,0.0001,0.3,0,O2,1.0,n/a,n/a,n/a,n/a,3,4,9,3,2,6,n/a,0.55,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ganymede,jupiter,moon,Ganymede,Ganymede,catalog,0.00716,,0.0013,0.177,7.155,180,171.7,0.33,0.025,0.413,0.45,0.2,0.02,ocean,110,70,152,1.0,0.60,0.30,0.0072,0.1,0,O2,1.0,n/a,n/a,n/a,n/a,4,4,8,3,2,4,n/a,0.20,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-callisto,jupiter,moon,Callisto,Callisto,catalog,0.01259,,0.0074,0.192,16.69,270,400.5,0,0.018,0.378,0.5,0.1,0.02,ice,134,80,165,0,0.70,0.05,0,0,0,CO2,1.0,n/a,n/a,n/a,n/a,3,5,6,3,2,3,n/a,0.15,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-titan,saturn,moon,Titan,Titan,catalog,0.00817,,0.0288,0.348,15.95,0,382.7,0.3,0.0225,0.404,0.5,0.1,0.05,rocky,94,90,100,0,0.4,0.50,0,0.2,1.45,N2,0.97,CH4,0.028,H2,0.001,2,4,10,3,2,7,n/a,0.25,n/a,0.50,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-enceladus,saturn,moon,Enceladus,Enceladus,catalog,0.00159,,0.0047,0.02,1.37,180,32.9,0,0.0000181,0.0395,0.6,0.05,0.05,ocean,75,50,145,1.0,0.95,0.95,0,0.6,0,H2O,0.91,N2,0.04,CO2,0.032,2,3,10,2,1,8,n/a,0.55,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ariel,uranus,moon,Ariel,Ariel,catalog,0.001276,,0.0012,0.260,2.520,60,60.48,0,0.000227,0.0909,0.5,0.1,0.05,rocky,60,40,84,0,0.6,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,4,9,2,1,5,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-titania,uranus,moon,Titania,Titania,catalog,0.002914,,0.0011,0.340,8.706,180,208.94,0,0.000591,0.1238,0.5,0.1,0.05,rocky,70,60,89,0,0.5,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,4,9,2,1,5,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-oberon,uranus,moon,Oberon,Oberon,catalog,0.003901,,0.0014,0.058,13.463,240,323.11,0,0.000505,0.1195,0.5,0.1,0.05,rocky,75,60,85,0,0.5,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,5,8,2,1,4,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-triton,neptune,moon,Triton,Triton,catalog,0.002372,,0.0000,156.885,5.877,90,141.05,0,0.00358,0.2124,0.5,0.15,0.10,ice,38,35,40,0,0.85,,0,0.5,0.000014,N2,0.999,CH4,0.001,n/a,n/a,2,3,10,2,1,7,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-18-scorpii-b,18-scorpii,planet,18 Scorpii b,18 Scorpii b,catalog,,,,,2528.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-20-leonis-minoris-a-b,20-leonis-minoris,planet,20 Leonis Minoris A b,20 Leonis Minoris A b,catalog,0.19,,,,31.2,,,,9.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-685-b,26-draconis-c,planet,Gliese 685 b,Gliese 685 b,catalog,0.13,,,,24.2,,,,9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-2mass-j1237-6526-b,2mass-j1237-6526,planet,2MASS J1237+6526 b,2MASS J1237+6526 b,catalog,0,,,,,,,,3179.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-2mass-j1507-1627-b,2mass-j1507-1627,planet,2MASS J1507-1627 b,2MASS J1507-1627 b,catalog,,,,,3652.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-40-eridani-a-b,40-eridani-a,planet,40 Eridani A b,40 Eridani A b,catalog,0.22,,,,42,,,,8.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-47-ursae-majoris-b,47-ursae-majoris,planet,47 Ursae Majoris b,47 Ursae Majoris b,catalog,2.1,,,,1078,,,,804.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-47-ursae-majoris-c,47-ursae-majoris,planet,47 Ursae Majoris c,47 Ursae Majoris c,catalog,3.6,,,,2391,,,,171.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-47-ursae-majoris-d,47-ursae-majoris,planet,47 Ursae Majoris d,47 Ursae Majoris d,catalog,11.6,,,,14002,,,,521.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-5-g-capricorni-b,5-g-capricorni,planet,5 G. Capricorni b,5 G. Capricorni b,catalog,0.32,,,,,,,,16.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-5-g-capricorni-c,5-g-capricorni,planet,5 G. Capricorni c,5 G. Capricorni c,catalog,1.18,,,,,,,,24,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-54-piscium-a-b,54-piscium-a,planet,54 Piscium A b,54 Piscium A b,catalog,0.1,,,,,,,,12.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-a-e,55-cancri-a,planet,55 Cancri A e,55 Cancri A e,catalog,0.02,,,,0.7,,,,8.6,1.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-a-b,55-cancri-a,planet,55 Cancri A b,55 Cancri A b,catalog,0.11,,,,14.7,,,,262.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-a-c,55-cancri-a,planet,55 Cancri A c,55 Cancri A c,catalog,0.24,,,,44.4,,,,54.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-a-f,55-cancri-a,planet,55 Cancri A f,55 Cancri A f,catalog,0.78,,,,260,,,,49.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-a-d,55-cancri-a,planet,55 Cancri A d,55 Cancri A d,catalog,5.45,,,,4867,,,,1227.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-b-b,55-cancri-b,planet,55 Cancri B b,55 Cancri B b,catalog,0.04,,,,6.8,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-55-cancri-b-c,55-cancri-b,planet,55 Cancri B c,55 Cancri B c,catalog,0.13,,,,33.7,,,,5.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-61-virginis-b,61-virginis,planet,61 Virginis b,61 Virginis b,catalog,0.05,,,,4.2,,,,6.4,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-61-virginis-c,61-virginis,planet,61 Virginis c,61 Virginis c,catalog,0.22,,,,38,,,,19.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-61-virginis-d,61-virginis,planet,61 Virginis d,61 Virginis d,catalog,0.48,,,,,,,,22.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-66-g-centauri-a-b,66-g-centauri-a,planet,66 G. Centauri A b,66 G. Centauri A b,catalog,0.46,,,,,,,,15.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-proxima-centauri-d,alpha-centauri-c,planet,Proxima Centauri d,Proxima Centauri d,catalog,0.03,,,,5.2,,,,0.3,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-proxima-centauri-b,alpha-centauri-c,planet,Proxima Centauri b,Proxima Centauri b,catalog,0.05,,,,11.2,,,,1.2,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-proxima-centauri-c,alpha-centauri-c,planet,Proxima Centauri c,Proxima Centauri c,catalog,1.48,,,,1928,,,,7.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-au-microscopii-d,au-microscopii,planet,AU Microscopii d,AU Microscopii d,catalog,,,,,33.4,,,,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-au-microscopii-e,au-microscopii,planet,AU Microscopii e,AU Microscopii e,catalog,,,,,12.7,,,,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-au-microscopii-b,au-microscopii,planet,AU Microscopii b,AU Microscopii b,catalog,0.08,,,,8.5,,,,11.7,4.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-au-microscopii-c,au-microscopii,planet,AU Microscopii c,AU Microscopii c,catalog,0.11,,,,18.9,,,,32.1,3.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-806-b,bd-44-3567,planet,Gliese 806 b,Gliese 806 b,catalog,0.01,,,,0.9,,,,1.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-806-c,bd-44-3567,planet,Gliese 806 c,Gliese 806 c,catalog,0.05,,,,6.7,,,,5.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-cd-48-12818-c,cd-48-12818,planet,CD-48 12818 c,CD-48 12818 c,catalog,,,,,138,,,,39,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-cd-48-12818-b,cd-48-12818,planet,CD-48 12818 b,CD-48 12818 b,catalog,0.21,,,,45.4,,,,9.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-cd-ceti-b,cd-ceti,planet,CD Ceti b,CD Ceti b,catalog,0.02,,,,,,,,3.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-cpd-69-177-b,cpd-69-177,planet,CPD-69 177 b,CPD-69 177 b,catalog,,,,,,,,,953.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-epsilon-indi-a-b,epsilon-indi-a,planet,Epsilon Indi A b,Epsilon Indi A b,catalog,11.08,,,,15676.5,,,,941,10.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-eq-pegasi-a-b,eq-pegasi-a,planet,EQ Pegasi A b,EQ Pegasi A b,catalog,0.64,,,,284.4,,,,718.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-eta-cephei-b,eta-cephei,planet,Eta Cephei b,Eta Cephei b,catalog,0.64,,,,163.6,,,,203.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-g-261-6-b,g-261-6,planet,G 261-6 b,G 261-6 b,catalog,0.03,,,,5.5,,,,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-g-32-5-b,g-32-5,planet,G 32-5 b,G 32-5 b,catalog,0.07,,,,12.8,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gamma-cephei-a-b,gammacepheia,planet,Gamma Cephei A b,Gamma Cephei A b,catalog,2.05,,,,903.3,,,,3525.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1028-b,gliese-1028,planet,Gliese 1028 b,Gliese 1028 b,catalog,0.01,,,,1.4,,,,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1132-b,gliese-1132,planet,Gliese 1132 b,Gliese 1132 b,catalog,0.02,,,,1.6,,,,1.7,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1132-c,gliese-1132,planet,Gliese 1132 c,Gliese 1132 c,catalog,0.05,,,,8.9,,,,2.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1132-d,gliese-1132,planet,Gliese 1132 d,Gliese 1132 d,catalog,0.35,,,,176.9,,,,9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1151-b,gliese-1151,planet,Gliese 1151 b,Gliese 1151 b,catalog,0.02,,,,2,,,,1,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1151-c,gliese-1151,planet,Gliese 1151 c,Gliese 1151 c,catalog,0.57,,,,389.7,,,,10.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1214-b,gliese-1214,planet,Gliese 1214 b,Gliese 1214 b,catalog,0.01,,,,1.6,,,,8.2,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1253-b,gliese-1253,planet,Gliese 1253 b,Gliese 1253 b,catalog,0.07,,,,15.6,,,,1.3,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1265-b,gliese-1265,planet,Gliese 1265 b,Gliese 1265 b,catalog,0.03,,,,3.7,,,,7.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-1289-b,gliese-1289,planet,Gliese 1289 b,Gliese 1289 b,catalog,0.27,,,,111.7,,,,6.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-163-b,gliese-163,planet,Gliese 163 b,Gliese 163 b,catalog,0.06,,,,8.6,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-163-c,gliese-163,planet,Gliese 163 c,Gliese 163 c,catalog,0.12,,,,25.6,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-163-f,gliese-163,planet,Gliese 163 f,Gliese 163 f,catalog,0.33,,,,109.5,,,,6.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-163-e,gliese-163,planet,Gliese 163 e,Gliese 163 e,catalog,0.7,,,,349,,,,13.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-163-d,gliese-163,planet,Gliese 163 d,Gliese 163 d,catalog,1.02,,,,604,,,,20.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-173-b,gliese-173,planet,Gliese 173 b,Gliese 173 b,catalog,0.2,,,,47.3,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-176-b,gliese-176,planet,Gliese 176 b,Gliese 176 b,catalog,0.07,,,,10.2,,,,9.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-176-c,gliese-176,planet,Gliese 176 c,Gliese 176 c,catalog,0.15,,,,,,,,7.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-180-b,gliese-180,planet,Gliese 180 b,Gliese 180 b,catalog,0.09,,,,17.1,,,,6.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-180-c,gliese-180,planet,Gliese 180 c,Gliese 180 c,catalog,0.13,,,,,,,,6.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-180-d,gliese-180,planet,Gliese 180 d,Gliese 180 d,catalog,0.31,,,,106.3,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-22-b-b,gliese-22-b,planet,Gliese 22 B b,Gliese 22 B b,catalog,,,,,5500,,,,5086.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-229-a-c,gliese-229-a,planet,Gliese 229 A c,Gliese 229 A c,catalog,0.34,,,,122,,,,7.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-229-a-b,gliese-229-a,planet,Gliese 229 A b,Gliese 229 A b,catalog,0.9,,,,,,,,10.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-239-b,gliese-239,planet,Gliese 239 b,Gliese 239 b,catalog,0.03,,,,2.8,,,,2.1,1.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-239-c,gliese-239,planet,Gliese 239 c,Gliese 239 c,catalog,0.05,,,,5.7,,,,3.1,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-300-b,gliese-300,planet,Gliese 300 b,Gliese 300 b,catalog,0.05,,,,8.3,,,,7.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3049-b,gliese-3049,planet,Gliese 3049 b,Gliese 3049 b,catalog,0.05,,,,8.8,,,,4.7,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-317-b,gliese-317,planet,Gliese 317 b,Gliese 317 b,catalog,1.15,,,,695.4,,,,589.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-317-c,gliese-317,planet,Gliese 317 c,Gliese 317 c,catalog,5.5,,,,7500,,,,531.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3192-a-c,gliese-3192-a,planet,Gliese 3192 A c,Gliese 3192 A c,catalog,0.03,,,,3.1,,,,1.4,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3192-a-b,gliese-3192-a,planet,Gliese 3192 A b,Gliese 3192 A b,catalog,0.04,,,,5.4,,,,2.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3192-a-d,gliese-3192-a,planet,Gliese 3192 A d,Gliese 3192 A d,catalog,0.09,,,,24.3,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3325-b,gliese-3325,planet,Gliese 3325 b,Gliese 3325 b,catalog,0.07,,,,,,,,11.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3378-b,gliese-3378,planet,Gliese 3378 b,Gliese 3378 b,catalog,0.11,,,,24.7,,,,5.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-338-b-b,gliese-338-b,planet,Gliese 338 B b,Gliese 338 B b,catalog,0.14,,,,24.5,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3380-b,gliese-3380,planet,Gliese 3380 b,Gliese 3380 b,catalog,0.02,,,,2.3,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3380-c,gliese-3380,planet,Gliese 3380 c,Gliese 3380 c,catalog,1.14,,,,1219,,,,14.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-341-b,gliese-341,planet,Gliese 341 b,Gliese 341 b,catalog,0.06,,,,7.6,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3512-b,gliese-3512,planet,Gliese 3512 b,Gliese 3512 b,catalog,0.34,,,,203.6,,,,147,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3512-c,gliese-3512,planet,Gliese 3512 c,Gliese 3512 c,catalog,1.2,,,,,,,,54,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-357-b,gliese-357,planet,Gliese 357 b,Gliese 357 b,catalog,0.04,,,,3.9,,,,1.8,1.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-357-c,gliese-357,planet,Gliese 357 c,Gliese 357 c,catalog,0.06,,,,9.1,,,,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-357-d,gliese-357,planet,Gliese 357 d,Gliese 357 d,catalog,0.2,,,,55.7,,,,6.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-367-c,gliese-367,planet,Gliese 367 c,Gliese 367 c,catalog,,,,,11.5,,,,4.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-367-d,gliese-367,planet,Gliese 367 d,Gliese 367 d,catalog,,,,,34.4,,,,5.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-367-b,gliese-367,planet,Gliese 367 b,Gliese 367 b,catalog,0.01,,,,0.3,,,,0.5,0.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-373-b,gliese-373,planet,Gliese 373 b,Gliese 373 b,catalog,0.11,,,,17.8,,,,22.9,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3779-b,gliese-3779,planet,Gliese 3779 b,Gliese 3779 b,catalog,0.03,,,,3,,,,8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-378-b,gliese-378,planet,Gliese 378 b,Gliese 378 b,catalog,0.04,,,,3.8,,,,13,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-393-b,gliese-393,planet,Gliese 393 b,Gliese 393 b,catalog,0.06,,,,7,,,,1.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-3988-b,gliese-3988,planet,Gliese 3988 b,Gliese 3988 b,catalog,0.04,,,,6.9,,,,3.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-414-a-b,gliese-414-a,planet,Gliese 414 A b,Gliese 414 A b,catalog,0.24,,,,50.8,,,,8.8,3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-414-a-c,gliese-414-a,planet,Gliese 414 A c,Gliese 414 A c,catalog,1.43,,,,748.3,,,,56.3,8.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-422-b,gliese-422,planet,Gliese 422 b,Gliese 422 b,catalog,0.11,,,,20.1,,,,11.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-433-b,gliese-433,planet,Gliese 433 b,Gliese 433 b,catalog,0.05,,,,7.4,,,,6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-433-d,gliese-433,planet,Gliese 433 d,Gliese 433 d,catalog,0.18,,,,36.1,,,,4.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-433-c,gliese-433,planet,Gliese 433 c,Gliese 433 c,catalog,4.69,,,,4874,,,,28.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-436-b,gliese-436,planet,Gliese 436 b,Gliese 436 b,catalog,0.03,,,,,,,,21.4,4.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-479-b,gliese-479,planet,Gliese 479 b,Gliese 479 b,catalog,0.07,,,,,,,,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-480-b,gliese-480,planet,Gliese 480 b,Gliese 480 b,catalog,0.07,,,,9.6,,,,13.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-486-b,gliese-486,planet,Gliese 486 b,Gliese 486 b,catalog,0.02,,,,1.5,,,,2.8,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-49-b,gliese-49,planet,Gliese 49 b,Gliese 49 b,catalog,0.09,,,,13.9,,,,5.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-514-b,gliese-514,planet,Gliese 514 b,Gliese 514 b,catalog,0.42,,,,140.4,,,,5.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-555-b,gliese-555,planet,Gliese 555 b,Gliese 555 b,catalog,0.14,,,,36.1,,,,5.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-555-c,gliese-555,planet,Gliese 555 c,Gliese 555 c,catalog,0.3,,,,113.5,,,,9.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-581-e,gliese-581,planet,Gliese 581 e,Gliese 581 e,catalog,0.03,,,,3.1,,,,1.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-581-b,gliese-581,planet,Gliese 581 b,Gliese 581 b,catalog,0.04,,,,5.4,,,,15.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-581-c,gliese-581,planet,Gliese 581 c,Gliese 581 c,catalog,0.07,,,,12.9,,,,5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-581-g,gliese-581,planet,Gliese 581 g,Gliese 581 g,catalog,0.13,,,,,,,,2.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-581-d,gliese-581,planet,Gliese 581 d,Gliese 581 d,catalog,0.22,,,,,,,,7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-617-a-b,gliese-617-a,planet,Gliese 617 A b,Gliese 617 A b,catalog,0.32,,,,,,,,10,5.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-625-b,gliese-625,planet,Gliese 625 b,Gliese 625 b,catalog,0.08,,,,14.6,,,,2.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-654-b,gliese-653-b,planet,Gliese 654 b,Gliese 654 b,catalog,,,,,15.4,,,,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-667-c-b,gliese-667-c,planet,Gliese 667 C b,Gliese 667 C b,catalog,0.05,,,,,,,,5.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-667-c-c,gliese-667-c,planet,Gliese 667 C c,Gliese 667 C c,catalog,0.13,,,,,,,,3.7,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-667-c-f,gliese-667-c,planet,Gliese 667 C f,Gliese 667 C f,catalog,0.16,,,,39,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-667-c-e,gliese-667-c,planet,Gliese 667 C e,Gliese 667 C e,catalog,0.21,,,,62.2,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-667-c-g,gliese-667-c,planet,Gliese 667 C g,Gliese 667 C g,catalog,0.55,,,,256.2,,,,4.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-686-b,gliese-686,planet,Gliese 686 b,Gliese 686 b,catalog,0.09,,,,,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-740-b,gliese-740,planet,Gliese 740 b,Gliese 740 b,catalog,0.03,,,,2.4,,,,3.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-740-c,gliese-740,planet,Gliese 740 c,Gliese 740 c,catalog,5,,,,,,,,98.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-752-a-ab,gliese-752-a,planet,Gliese 752 A Ab,Gliese 752 A Ab,catalog,0.34,,,,,,,,13.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-784-b,gliese-784,planet,Gliese 784 b,Gliese 784 b,catalog,0.06,,,,,,,,9.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-849-b,gliese-849,planet,Gliese 849 b,Gliese 849 b,catalog,2.32,,,,1925.3,,,,283.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-849-c,gliese-849,planet,Gliese 849 c,Gliese 849 c,catalog,4.95,,,,5990,,,,314.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-86-a-b,gliese-86-a,planet,Gliese 86 A b,Gliese 86 A b,catalog,0.12,,,,15.8,,,,2094.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-880-a-b,gliese-880-a,planet,Gliese 880 A b,Gliese 880 A b,catalog,0.19,,,,,,,,8.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-b,gliese-892,planet,Gliese 892 b,Gliese 892 b,catalog,0.04,,,,3.1,,,,4.7,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-c,gliese-892,planet,Gliese 892 c,Gliese 892 c,catalog,0.07,,,,6.8,,,,4.4,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-f,gliese-892,planet,Gliese 892 f,Gliese 892 f,catalog,0.15,,,,22.8,,,,7.3,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-d,gliese-892,planet,Gliese 892 d,Gliese 892 d,catalog,0.24,,,,46.9,,,,16.2,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-g,gliese-892,planet,Gliese 892 g,Gliese 892 g,catalog,0.38,,,,94.2,,,,10.8,2.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-e,gliese-892,planet,Gliese 892 e,Gliese 892 e,catalog,2.56,,,,1842,,,,70.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-892-h,gliese-892,planet,Gliese 892 h,Gliese 892 h,catalog,2.96,,,,2198,,,,108,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-96-b,gliese-96,planet,Gliese 96 b,Gliese 96 b,catalog,0.29,,,,73.9,,,,19.7,4.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-649-b,gliese649,planet,Gliese 649 b,Gliese 649 b,catalog,1.11,,,,600.1,,,,82,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-groombridge-34-a-b,groombridge-34-a,planet,Groombridge 34 A b,Groombridge 34 A b,catalog,0.07,,,,11.4,,,,4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-groombridge-34-a-c,groombridge-34-a,planet,Groombridge 34 A c,Groombridge 34 A c,catalog,5.4,,,,6694,,,,35,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-101581-b,hd-101581,planet,HD 101581 b,HD 101581 b,catalog,0.05,,,,4.5,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-101581-c,hd-101581,planet,HD 101581 c,HD 101581 c,catalog,0.06,,,,6.2,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-101581-d,hd-101581,planet,HD 101581 d,HD 101581 d,catalog,0.07,,,,7.9,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-10436-b,hd-10436,planet,HD 10436 b,HD 10436 b,catalog,0.04,,,,3.8,,,,8.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-122303-b,hd-122303,planet,HD 122303 b,HD 122303 b,catalog,0.07,,,,8.7,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-122303-c,hd-122303,planet,HD 122303 c,HD 122303 c,catalog,0.16,,,,32.8,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-140901-a-b,hd-140901,planet,HD 140901 A b,HD 140901 A b,catalog,0.09,,,,9,,,,15.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-140901-a-c,hd-140901,planet,HD 140901 A c,HD 140901 A c,catalog,7.42,,,,7417.5,,,,1997.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-147513-b,hd-147513,planet,HD 147513 b,HD 147513 b,catalog,1.32,,,,528.4,,,,384.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-176051-a-b,hd-176051a,planet,HD 176051 A b,HD 176051 A b,catalog,1.76,,,,1016,,,,476.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-190007-b,hd-190007,planet,HD 190007 b,HD 190007 b,catalog,0.09,,,,11.7,,,,16.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-211970-b,hd-211970,planet,HD 211970 b,HD 211970 b,catalog,0.14,,,,25.2,,,,13,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-222237-b,hd-222237,planet,HD 222237 b,HD 222237 b,catalog,10.8,,,,40.8,,,,1649.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-238090-b,hd-238090,planet,HD 238090 b,HD 238090 b,catalog,0.09,,,,13.7,,,,6.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-38858-b,hd-38858,planet,HD 38858 b,HD 38858 b,catalog,1.04,,,,407.2,,,,30.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-b,hd-40307,planet,HD 40307 b,HD 40307 b,catalog,0.05,,,,,,,,3.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-c,hd-40307,planet,HD 40307 c,HD 40307 c,catalog,0.08,,,,,,,,5.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-d,hd-40307,planet,HD 40307 d,HD 40307 d,catalog,0.13,,,,,,,,5.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-e,hd-40307,planet,HD 40307 e,HD 40307 e,catalog,0.19,,,,,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-f,hd-40307,planet,HD 40307 f,HD 40307 f,catalog,0.25,,,,,,,,5.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-40307-g,hd-40307,planet,HD 40307 g,HD 40307 g,catalog,0.6,,,,,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-69830-b,hd-69830,planet,HD 69830 b,HD 69830 b,catalog,0,,,,,,,,10.2,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-69830-c,hd-69830,planet,HD 69830 c,HD 69830 c,catalog,0.19,,,,,,,,11.8,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-69830-d,hd-69830,planet,HD 69830 d,HD 69830 d,catalog,0.63,,,,,,,,18.1,4.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hd-85512-b,hd-85512,planet,HD 85512 b,HD 85512 b,catalog,0.26,,,,,,,,3.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-hip-79431-b,hip-79431,planet,HIP 79431 b,HIP 79431 b,catalog,0.36,,,,111.7,,,,667.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-gliese-238-b,l-182-44,planet,Gliese 238 b,Gliese 238 b,catalog,0.02,,,,1.7,,,,,0.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lhs-475-b,l-22-69,planet,LHS 475 b,LHS 475 b,catalog,0.02,,,,2,,,,1,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-34-26-b,l-34-26,planet,L 34-26 b,L 34-26 b,catalog,7506,,,,37025355,,,,2002.8,12.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-762-51-b,l-762-51,planet,L 762-51 b,L 762-51 b,catalog,0.07,,,,10.9,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-98-59-b,l-98-59,planet,L 98-59 b,L 98-59 b,catalog,0.02,,,,2.3,,,,0.4,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-98-59-c,l-98-59,planet,L 98-59 c,L 98-59 c,catalog,0.03,,,,3.7,,,,2.2,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-98-59-d,l-98-59,planet,L 98-59 d,L 98-59 d,catalog,0.05,,,,7.5,,,,2.3,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-98-59-e,l-98-59,planet,L 98-59 e,L 98-59 e,catalog,0.07,,,,12.8,,,,3.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-l-98-59-f,l-98-59,planet,L 98-59 f,L 98-59 f,catalog,0.11,,,,23.1,,,,3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lambda-serpentis-b,lambda-serpentis,planet,Lambda Serpentis b,Lambda Serpentis b,catalog,0.12,,,,,,,,0.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lhs-1140-c,lhs-1140,planet,LHS 1140 c,LHS 1140 c,catalog,0.03,,,,3.8,,,,1.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lhs-1140-b,lhs-1140,planet,LHS 1140 b,LHS 1140 b,catalog,0.09,,,,24.7,,,,5.6,1.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lhs-1140-d,lhs-1140,planet,LHS 1140 d,LHS 1140 d,catalog,0.21,,,,,,,,3.9,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-lhs-3844-b,lhs-3844,planet,LHS 3844 b,LHS 3844 b,catalog,0.01,,,,0.5,,,,2.3,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-luyten-726-8-a-b,luyten-726-8-a,planet,Luyten 726-8 A b,Luyten 726-8 A b,catalog,,,,,156,,,,36,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-nu2-lupi-b,nu2-lupi,planet,Nu2 Lupi b,Nu2 Lupi b,catalog,0.1,,,,11.6,,,,4.6,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-nu2-lupi-c,nu2-lupi,planet,Nu2 Lupi c,Nu2 Lupi c,catalog,0.17,,,,27.6,,,,11.3,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-nu2-lupi-d,nu2-lupi,planet,Nu2 Lupi d,Nu2 Lupi d,catalog,0.42,,,,107.1,,,,8.7,2.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-pollux-b,pollux,planet,Pollux b,Pollux b,catalog,1.64,,,,,,,,731.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ross-1003-b,ross-1003,planet,Ross 1003 b,Ross 1003 b,catalog,0.17,,,,,,,,96.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ross-1003-c,ross-1003,planet,Ross 1003 c,Ross 1003 c,catalog,0.91,,,,,,,,68,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ross-508-b,ross-508,planet,Ross 508 b,Ross 508 b,catalog,0.05,,,,10.8,,,,4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-struve-2398-a-b,struve-2398-a,planet,Struve 2398 A b,Struve 2398 A b,catalog,0.07,,,,11.2,,,,2.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-struve-2398-b-b,struve-2398-b,planet,Struve 2398 B b,Struve 2398 B b,catalog,0.04,,,,4.8,,,,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-struve-2398-b-c,struve-2398-b,planet,Struve 2398 B c,Struve 2398 B c,catalog,0.14,,,,37.9,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-toi-540-b,toi-540,planet,TOI-540 b,TOI-540 b,catalog,0.01,,,,1.2,,,,,0.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-b,trappist-1,planet,TRAPPIST-1 b,TRAPPIST-1 b,catalog,0.01,,,,1.5,,,,0.9,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-c,trappist-1,planet,TRAPPIST-1 c,TRAPPIST-1 c,catalog,0.02,,,,2.4,,,,1.4,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-d,trappist-1,planet,TRAPPIST-1 d,TRAPPIST-1 d,catalog,0.02,,,,4,,,,0.4,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-e,trappist-1,planet,TRAPPIST-1 e,TRAPPIST-1 e,catalog,0.03,,,,6.1,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-f,trappist-1,planet,TRAPPIST-1 f,TRAPPIST-1 f,catalog,0.04,,,,9.2,,,,0.7,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-g,trappist-1,planet,TRAPPIST-1 g,TRAPPIST-1 g,catalog,0.05,,,,12.4,,,,1.3,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-trappist-1-h,trappist-1,planet,TRAPPIST-1 h,TRAPPIST-1 h,catalog,0.06,,,,20,,,,0.3,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-tvlm-513-46-b,tvlm-513-46,planet,TVLM 513-46 b,TVLM 513-46 b,catalog,0.3,,,,221,,,,127.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-upsilon-andromedae-a-b,upsilon-andromedae-a,planet,Upsilon Andromedae A b,Upsilon Andromedae A b,catalog,0.06,,,,,,,,540.4,14.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-upsilon-andromedae-a-c,upsilon-andromedae-a,planet,Upsilon Andromedae A c,Upsilon Andromedae A c,catalog,0.83,,,,,,,,4444.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-upsilon-andromedae-a-d,upsilon-andromedae-a,planet,Upsilon Andromedae A d,Upsilon Andromedae A d,catalog,2.53,,,,,,,,3258.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-upsilon-andromedae-a-e,upsilon-andromedae-a,planet,Upsilon Andromedae A e,Upsilon Andromedae A e,catalog,5.25,,,,,,,,336.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-ds-leonis-b,v*-ds-leo,planet,DS Leonis b,DS Leonis b,catalog,0.05,,,,6,,,,7.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-vega-b,vega,planet,Vega b,Vega b,catalog,0.05,,,,2.4,,,,21.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-wise-j0336-0143-b,wise-j03360505-0143504,planet,WISE J0336-0143 b,WISE J0336-0143 b,catalog,0.97,,,,2560,,,,2543.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-wolf-1539-c,wolf-1539,planet,Wolf 1539 c,Wolf 1539 c,catalog,0.03,,,,3.5,,,,4.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-wolf-1539-b,wolf-1539,planet,Wolf 1539 b,Wolf 1539 b,catalog,2.41,,,,2288,,,,260.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
-sol-main-belt,sol,belt,Sol Main Asteroid Belt,Main Belt,catalog,2.7,,n/a,n/a,n/a,n/a,n/a,n/a,0.0005,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,8,7,1,5,3,1,n/a,n/a,n/a,n/a,n/a,n/a,n/a,2.1,3.3,n/a,n/a,n/a,940,jupiter
-saturn-ring,saturn,ring,Saturn Ring System,Rings,catalog,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,0,1,8,0,0,1,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,1.11,2.27,n/a,n/a,n/a
+id,host_id,kind,formal_name,name,source,semi_major_au,formation_au,eccentricity,inclination_deg,period_days,orbital_phase_deg,rotation_period_hours,axial_tilt_deg,mass_earth,radius_earth,bulk_water_fraction,bulk_metal_fraction,bulk_volatile_fraction,world_class,avg_surface_temp_k,surface_temp_min_k,surface_temp_max_k,water_fraction,ice_fraction,surface_age,magnetic_field_gauss,tectonic_activity,surface_pressure_bar,atm1,atm1_frac,atm2,atm2_frac,atm3,atm3_frac,res_metals,res_silicates,res_volatiles,res_rare_earths,res_radioactives,res_exotics,biotic_carbon_aqueous,biotic_subsurface_aqueous,biotic_aerial,biotic_cryogenic,biotic_silicate,biotic_sulfur,belt_class,inner_au,outer_au,inner_planet_radii,outer_planet_radii,population_model,largest_body_km,shepherd_id,biosphere_archetype,biosphere_complexity
+mercury,sol,planet,Mercury,Mercury,catalog,0.387,0.387,0.2056,7.005,87.97,0,1407.5,0.034,0.0553,0.3829,0,0.7,0.001,iron,440,100,700,0,0.0001,0.05,0.003,0,0,n/a,n/a,n/a,n/a,n/a,n/a,8,4,1,1,0,0,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+venus,sol,planet,Venus,Venus,catalog,0.723,0.723,0.0068,3.395,224.7,45,5832.5,177.4,0.815,0.9499,2e-05,0.31,0.01,rocky,737,720,760,0,0,0.55,0,0.3,92,CO2,0.965,N2,0.035,SO2,0.00015,6,6,3,5,4,0,n/a,n/a,n/a,n/a,,0.25,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+earth,sol,planet,Earth,Earth,catalog,1.0,1.0,0.0167,0.0,365.25,90,23.93,23.44,1.0,1.0,0.00023,0.32,0.005,rocky,288,184,330,0.71,0.10,0.70,0.5,0.8,1.013,N2,0.781,O2,0.209,Ar,0.0093,5,6,7,5,4,0,0.85,,n/a,n/a,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,carbon_aqueous,complex
+mars,sol,planet,Mars,Mars,catalog,1.524,1.524,0.0934,1.85,686.97,135,24.62,25.19,0.107,0.532,0.0001,0.24,0.003,desert,210,130,308,0,0.02,0.20,0,0.1,0.006,CO2,0.951,N2,0.027,Ar,0.016,5,4,3,7,4,0,,,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+jupiter,sol,planet,Jupiter,Jupiter,catalog,5.204,5.204,0.0489,1.303,4332.59,180,9.93,3.13,317.8,11.21,0.01,0.02,0.02,gas_giant,165,n/a,n/a,n/a,n/a,,4.28,n/a,n/a,H2,0.898,He,0.10,CH4,0.003,1,1,10,1,1,2,n/a,n/a,0.22,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+saturn,sol,planet,Saturn,Saturn,catalog,9.583,9.583,0.0565,2.485,10759,225,10.66,26.73,95.16,9.45,0.05,0.05,0.02,gas_giant,134,n/a,n/a,n/a,n/a,,0.21,n/a,n/a,H2,0.963,He,0.0325,CH4,0.0045,1,1,10,1,1,2,n/a,n/a,0.15,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+uranus,sol,planet,Uranus,Uranus,catalog,19.18,19.18,0.0457,0.773,30688,270,17.24,97.77,14.54,4.01,0.1,0.2,0.30,ice_giant,76,n/a,n/a,n/a,n/a,,0.23,n/a,n/a,H2,0.825,He,0.152,CH4,0.023,1,1,9,1,1,3,n/a,n/a,0.05,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+neptune,sol,planet,Neptune,Neptune,catalog,30.07,30.07,0.0113,1.770,60182,315,16.11,28.32,17.15,3.88,0.1,0.2,0.30,ice_giant,72,n/a,n/a,n/a,n/a,,0.14,n/a,n/a,H2,0.80,He,0.19,CH4,0.015,1,1,9,1,1,3,n/a,n/a,0.05,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+luna,earth,moon,Moon,Luna,catalog,0.00257,,0.0549,5.145,27.32,0,655.7,6.68,0.0123,0.273,1e-05,0.03,0.001,rocky,250,100,390,0,0.001,0.05,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,4,6,2,1,3,0,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+io,jupiter,moon,Io,Io,catalog,0.00282,,0.0041,0.05,1.769,0,42.46,0,0.015,0.286,0,0.2,0.01,lava,110,90,200,0,0,1.00,0,1.0,0,SO2,1.0,n/a,n/a,n/a,n/a,4,5,2,4,3,4,n/a,n/a,n/a,n/a,0.10,0.20,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+europa,jupiter,moon,Europa,Europa,catalog,0.00448,,0.0094,0.466,3.55,90,85.23,0.1,0.008,0.245,0.5,0.1,0.02,ocean,102,50,125,1.0,0.85,0.85,0.0001,0.3,0,O2,1.0,n/a,n/a,n/a,n/a,3,4,9,3,2,6,n/a,0.55,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+ganymede,jupiter,moon,Ganymede,Ganymede,catalog,0.00716,,0.0013,0.177,7.155,180,171.7,0.33,0.025,0.413,0.45,0.2,0.02,ocean,110,70,152,1.0,0.60,0.30,0.0072,0.1,0,O2,1.0,n/a,n/a,n/a,n/a,4,4,8,3,2,4,n/a,0.20,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+callisto,jupiter,moon,Callisto,Callisto,catalog,0.01259,,0.0074,0.192,16.69,270,400.5,0,0.018,0.378,0.5,0.1,0.02,ice,134,80,165,0,0.70,0.05,0,0,0,CO2,1.0,n/a,n/a,n/a,n/a,3,5,6,3,2,3,n/a,0.15,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+titan,saturn,moon,Titan,Titan,catalog,0.00817,,0.0288,0.348,15.95,0,382.7,0.3,0.0225,0.404,0.5,0.1,0.05,rocky,94,90,100,0,0.4,0.50,0,0.2,1.45,N2,0.97,CH4,0.028,H2,0.001,2,4,10,3,2,7,n/a,0.25,n/a,0.50,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+enceladus,saturn,moon,Enceladus,Enceladus,catalog,0.00159,,0.0047,0.02,1.37,180,32.9,0,0.0000181,0.0395,0.6,0.05,0.05,ocean,75,50,145,1.0,0.95,0.95,0,0.6,0,H2O,0.91,N2,0.04,CO2,0.032,2,3,10,2,1,8,n/a,0.55,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,subsurface_aqueous,prebiotic
+ariel,uranus,moon,Ariel,Ariel,catalog,0.001276,,0.0012,0.260,2.520,60,60.48,0,0.000227,0.0909,0.5,0.1,0.05,rocky,60,40,84,0,0.6,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,4,9,2,1,5,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+titania,uranus,moon,Titania,Titania,catalog,0.002914,,0.0011,0.340,8.706,180,208.94,0,0.000591,0.1238,0.5,0.1,0.05,rocky,70,60,89,0,0.5,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,4,9,2,1,5,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+oberon,uranus,moon,Oberon,Oberon,catalog,0.003901,,0.0014,0.058,13.463,240,323.11,0,0.000505,0.1195,0.5,0.1,0.05,rocky,75,60,85,0,0.5,,0,0,0,n/a,n/a,n/a,n/a,n/a,n/a,2,5,8,2,1,4,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+triton,neptune,moon,Triton,Triton,catalog,0.002372,,0.0000,156.885,5.877,90,141.05,0,0.00358,0.2124,0.5,0.15,0.10,ice,38,35,40,0,0.85,,0,0.5,0.000014,N2,0.999,CH4,0.001,n/a,n/a,2,3,10,2,1,7,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a
+18-scorpii-b,18-scorpii,planet,18 Scorpii b,18 Scorpii b,catalog,,,,,2528.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+20-leonis-minoris-a-b,20-leonis-minoris,planet,20 Leonis Minoris A b,20 Leonis Minoris A b,catalog,0.19,,,,31.2,,,,9.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-685-b,26-draconis-c,planet,Gliese 685 b,Gliese 685 b,catalog,0.13,,,,24.2,,,,9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+2mass-j1237-6526-b,2mass-j1237-6526,planet,2MASS J1237+6526 b,2MASS J1237+6526 b,catalog,0,,,,,,,,3179.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+2mass-j1507-1627-b,2mass-j1507-1627,planet,2MASS J1507-1627 b,2MASS J1507-1627 b,catalog,,,,,3652.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+40-eridani-a-b,40-eridani-a,planet,40 Eridani A b,40 Eridani A b,catalog,0.22,,,,42,,,,8.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+47-ursae-majoris-b,47-ursae-majoris,planet,47 Ursae Majoris b,47 Ursae Majoris b,catalog,2.1,,,,1078,,,,804.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+47-ursae-majoris-c,47-ursae-majoris,planet,47 Ursae Majoris c,47 Ursae Majoris c,catalog,3.6,,,,2391,,,,171.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+47-ursae-majoris-d,47-ursae-majoris,planet,47 Ursae Majoris d,47 Ursae Majoris d,catalog,11.6,,,,14002,,,,521.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+5-g-capricorni-b,5-g-capricorni,planet,5 G. Capricorni b,5 G. Capricorni b,catalog,0.32,,,,,,,,16.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+5-g-capricorni-c,5-g-capricorni,planet,5 G. Capricorni c,5 G. Capricorni c,catalog,1.18,,,,,,,,24,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+54-piscium-a-b,54-piscium-a,planet,54 Piscium A b,54 Piscium A b,catalog,0.1,,,,,,,,12.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-a-e,55-cancri-a,planet,55 Cancri A e,55 Cancri A e,catalog,0.02,,,,0.7,,,,8.6,1.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-a-b,55-cancri-a,planet,55 Cancri A b,55 Cancri A b,catalog,0.11,,,,14.7,,,,262.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-a-c,55-cancri-a,planet,55 Cancri A c,55 Cancri A c,catalog,0.24,,,,44.4,,,,54.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-a-f,55-cancri-a,planet,55 Cancri A f,55 Cancri A f,catalog,0.78,,,,260,,,,49.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-a-d,55-cancri-a,planet,55 Cancri A d,55 Cancri A d,catalog,5.45,,,,4867,,,,1227.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-b-b,55-cancri-b,planet,55 Cancri B b,55 Cancri B b,catalog,0.04,,,,6.8,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+55-cancri-b-c,55-cancri-b,planet,55 Cancri B c,55 Cancri B c,catalog,0.13,,,,33.7,,,,5.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+61-virginis-b,61-virginis,planet,61 Virginis b,61 Virginis b,catalog,0.05,,,,4.2,,,,6.4,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+61-virginis-c,61-virginis,planet,61 Virginis c,61 Virginis c,catalog,0.22,,,,38,,,,19.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+61-virginis-d,61-virginis,planet,61 Virginis d,61 Virginis d,catalog,0.48,,,,,,,,22.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+66-g-centauri-a-b,66-g-centauri-a,planet,66 G. Centauri A b,66 G. Centauri A b,catalog,0.46,,,,,,,,15.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+proxima-centauri-d,alpha-centauri-c,planet,Proxima Centauri d,Proxima Centauri d,catalog,0.03,,,,5.2,,,,0.3,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+proxima-centauri-b,alpha-centauri-c,planet,Proxima Centauri b,Proxima Centauri b,catalog,0.05,,,,11.2,,,,1.2,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+proxima-centauri-c,alpha-centauri-c,planet,Proxima Centauri c,Proxima Centauri c,catalog,1.48,,,,1928,,,,7.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+au-microscopii-d,au-microscopii,planet,AU Microscopii d,AU Microscopii d,catalog,,,,,33.4,,,,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+au-microscopii-e,au-microscopii,planet,AU Microscopii e,AU Microscopii e,catalog,,,,,12.7,,,,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+au-microscopii-b,au-microscopii,planet,AU Microscopii b,AU Microscopii b,catalog,0.08,,,,8.5,,,,11.7,4.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+au-microscopii-c,au-microscopii,planet,AU Microscopii c,AU Microscopii c,catalog,0.11,,,,18.9,,,,32.1,3.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-806-b,bd-44-3567,planet,Gliese 806 b,Gliese 806 b,catalog,0.01,,,,0.9,,,,1.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-806-c,bd-44-3567,planet,Gliese 806 c,Gliese 806 c,catalog,0.05,,,,6.7,,,,5.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+cd-48-12818-c,cd-48-12818,planet,CD-48 12818 c,CD-48 12818 c,catalog,,,,,138,,,,39,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+cd-48-12818-b,cd-48-12818,planet,CD-48 12818 b,CD-48 12818 b,catalog,0.21,,,,45.4,,,,9.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+cd-ceti-b,cd-ceti,planet,CD Ceti b,CD Ceti b,catalog,0.02,,,,,,,,3.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+cpd-69-177-b,cpd-69-177,planet,CPD-69 177 b,CPD-69 177 b,catalog,,,,,,,,,953.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+epsilon-indi-a-b,epsilon-indi-a,planet,Epsilon Indi A b,Epsilon Indi A b,catalog,11.08,,,,15676.5,,,,941,10.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+eq-pegasi-a-b,eq-pegasi-a,planet,EQ Pegasi A b,EQ Pegasi A b,catalog,0.64,,,,284.4,,,,718.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+eta-cephei-b,eta-cephei,planet,Eta Cephei b,Eta Cephei b,catalog,0.64,,,,163.6,,,,203.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+g-261-6-b,g-261-6,planet,G 261-6 b,G 261-6 b,catalog,0.03,,,,5.5,,,,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+g-32-5-b,g-32-5,planet,G 32-5 b,G 32-5 b,catalog,0.07,,,,12.8,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gamma-cephei-a-b,gammacepheia,planet,Gamma Cephei A b,Gamma Cephei A b,catalog,2.05,,,,903.3,,,,3525.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1028-b,gliese-1028,planet,Gliese 1028 b,Gliese 1028 b,catalog,0.01,,,,1.4,,,,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1132-b,gliese-1132,planet,Gliese 1132 b,Gliese 1132 b,catalog,0.02,,,,1.6,,,,1.7,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1132-c,gliese-1132,planet,Gliese 1132 c,Gliese 1132 c,catalog,0.05,,,,8.9,,,,2.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1132-d,gliese-1132,planet,Gliese 1132 d,Gliese 1132 d,catalog,0.35,,,,176.9,,,,9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1151-b,gliese-1151,planet,Gliese 1151 b,Gliese 1151 b,catalog,0.02,,,,2,,,,1,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1151-c,gliese-1151,planet,Gliese 1151 c,Gliese 1151 c,catalog,0.57,,,,389.7,,,,10.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1214-b,gliese-1214,planet,Gliese 1214 b,Gliese 1214 b,catalog,0.01,,,,1.6,,,,8.2,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1253-b,gliese-1253,planet,Gliese 1253 b,Gliese 1253 b,catalog,0.07,,,,15.6,,,,1.3,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1265-b,gliese-1265,planet,Gliese 1265 b,Gliese 1265 b,catalog,0.03,,,,3.7,,,,7.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-1289-b,gliese-1289,planet,Gliese 1289 b,Gliese 1289 b,catalog,0.27,,,,111.7,,,,6.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-163-b,gliese-163,planet,Gliese 163 b,Gliese 163 b,catalog,0.06,,,,8.6,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-163-c,gliese-163,planet,Gliese 163 c,Gliese 163 c,catalog,0.12,,,,25.6,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-163-f,gliese-163,planet,Gliese 163 f,Gliese 163 f,catalog,0.33,,,,109.5,,,,6.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-163-e,gliese-163,planet,Gliese 163 e,Gliese 163 e,catalog,0.7,,,,349,,,,13.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-163-d,gliese-163,planet,Gliese 163 d,Gliese 163 d,catalog,1.02,,,,604,,,,20.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-173-b,gliese-173,planet,Gliese 173 b,Gliese 173 b,catalog,0.2,,,,47.3,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-176-b,gliese-176,planet,Gliese 176 b,Gliese 176 b,catalog,0.07,,,,10.2,,,,9.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-176-c,gliese-176,planet,Gliese 176 c,Gliese 176 c,catalog,0.15,,,,,,,,7.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-180-b,gliese-180,planet,Gliese 180 b,Gliese 180 b,catalog,0.09,,,,17.1,,,,6.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-180-c,gliese-180,planet,Gliese 180 c,Gliese 180 c,catalog,0.13,,,,,,,,6.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-180-d,gliese-180,planet,Gliese 180 d,Gliese 180 d,catalog,0.31,,,,106.3,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-22-b-b,gliese-22-b,planet,Gliese 22 B b,Gliese 22 B b,catalog,,,,,5500,,,,5086.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-229-a-c,gliese-229-a,planet,Gliese 229 A c,Gliese 229 A c,catalog,0.34,,,,122,,,,7.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-229-a-b,gliese-229-a,planet,Gliese 229 A b,Gliese 229 A b,catalog,0.9,,,,,,,,10.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-239-b,gliese-239,planet,Gliese 239 b,Gliese 239 b,catalog,0.03,,,,2.8,,,,2.1,1.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-239-c,gliese-239,planet,Gliese 239 c,Gliese 239 c,catalog,0.05,,,,5.7,,,,3.1,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-300-b,gliese-300,planet,Gliese 300 b,Gliese 300 b,catalog,0.05,,,,8.3,,,,7.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3049-b,gliese-3049,planet,Gliese 3049 b,Gliese 3049 b,catalog,0.05,,,,8.8,,,,4.7,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-317-b,gliese-317,planet,Gliese 317 b,Gliese 317 b,catalog,1.15,,,,695.4,,,,589.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-317-c,gliese-317,planet,Gliese 317 c,Gliese 317 c,catalog,5.5,,,,7500,,,,531.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3192-a-c,gliese-3192-a,planet,Gliese 3192 A c,Gliese 3192 A c,catalog,0.03,,,,3.1,,,,1.4,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3192-a-b,gliese-3192-a,planet,Gliese 3192 A b,Gliese 3192 A b,catalog,0.04,,,,5.4,,,,2.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3192-a-d,gliese-3192-a,planet,Gliese 3192 A d,Gliese 3192 A d,catalog,0.09,,,,24.3,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3325-b,gliese-3325,planet,Gliese 3325 b,Gliese 3325 b,catalog,0.07,,,,,,,,11.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3378-b,gliese-3378,planet,Gliese 3378 b,Gliese 3378 b,catalog,0.11,,,,24.7,,,,5.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-338-b-b,gliese-338-b,planet,Gliese 338 B b,Gliese 338 B b,catalog,0.14,,,,24.5,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3380-b,gliese-3380,planet,Gliese 3380 b,Gliese 3380 b,catalog,0.02,,,,2.3,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3380-c,gliese-3380,planet,Gliese 3380 c,Gliese 3380 c,catalog,1.14,,,,1219,,,,14.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-341-b,gliese-341,planet,Gliese 341 b,Gliese 341 b,catalog,0.06,,,,7.6,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3512-b,gliese-3512,planet,Gliese 3512 b,Gliese 3512 b,catalog,0.34,,,,203.6,,,,147,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3512-c,gliese-3512,planet,Gliese 3512 c,Gliese 3512 c,catalog,1.2,,,,,,,,54,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-357-b,gliese-357,planet,Gliese 357 b,Gliese 357 b,catalog,0.04,,,,3.9,,,,1.8,1.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-357-c,gliese-357,planet,Gliese 357 c,Gliese 357 c,catalog,0.06,,,,9.1,,,,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-357-d,gliese-357,planet,Gliese 357 d,Gliese 357 d,catalog,0.2,,,,55.7,,,,6.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-367-c,gliese-367,planet,Gliese 367 c,Gliese 367 c,catalog,,,,,11.5,,,,4.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-367-d,gliese-367,planet,Gliese 367 d,Gliese 367 d,catalog,,,,,34.4,,,,5.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-367-b,gliese-367,planet,Gliese 367 b,Gliese 367 b,catalog,0.01,,,,0.3,,,,0.5,0.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-373-b,gliese-373,planet,Gliese 373 b,Gliese 373 b,catalog,0.11,,,,17.8,,,,22.9,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3779-b,gliese-3779,planet,Gliese 3779 b,Gliese 3779 b,catalog,0.03,,,,3,,,,8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-378-b,gliese-378,planet,Gliese 378 b,Gliese 378 b,catalog,0.04,,,,3.8,,,,13,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-393-b,gliese-393,planet,Gliese 393 b,Gliese 393 b,catalog,0.06,,,,7,,,,1.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-3988-b,gliese-3988,planet,Gliese 3988 b,Gliese 3988 b,catalog,0.04,,,,6.9,,,,3.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-414-a-b,gliese-414-a,planet,Gliese 414 A b,Gliese 414 A b,catalog,0.24,,,,50.8,,,,8.8,3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-414-a-c,gliese-414-a,planet,Gliese 414 A c,Gliese 414 A c,catalog,1.43,,,,748.3,,,,56.3,8.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-422-b,gliese-422,planet,Gliese 422 b,Gliese 422 b,catalog,0.11,,,,20.1,,,,11.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-433-b,gliese-433,planet,Gliese 433 b,Gliese 433 b,catalog,0.05,,,,7.4,,,,6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-433-d,gliese-433,planet,Gliese 433 d,Gliese 433 d,catalog,0.18,,,,36.1,,,,4.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-433-c,gliese-433,planet,Gliese 433 c,Gliese 433 c,catalog,4.69,,,,4874,,,,28.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-436-b,gliese-436,planet,Gliese 436 b,Gliese 436 b,catalog,0.03,,,,,,,,21.4,4.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-479-b,gliese-479,planet,Gliese 479 b,Gliese 479 b,catalog,0.07,,,,,,,,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-480-b,gliese-480,planet,Gliese 480 b,Gliese 480 b,catalog,0.07,,,,9.6,,,,13.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-486-b,gliese-486,planet,Gliese 486 b,Gliese 486 b,catalog,0.02,,,,1.5,,,,2.8,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-49-b,gliese-49,planet,Gliese 49 b,Gliese 49 b,catalog,0.09,,,,13.9,,,,5.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-514-b,gliese-514,planet,Gliese 514 b,Gliese 514 b,catalog,0.42,,,,140.4,,,,5.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-555-b,gliese-555,planet,Gliese 555 b,Gliese 555 b,catalog,0.14,,,,36.1,,,,5.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-555-c,gliese-555,planet,Gliese 555 c,Gliese 555 c,catalog,0.3,,,,113.5,,,,9.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-581-e,gliese-581,planet,Gliese 581 e,Gliese 581 e,catalog,0.03,,,,3.1,,,,1.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-581-b,gliese-581,planet,Gliese 581 b,Gliese 581 b,catalog,0.04,,,,5.4,,,,15.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-581-c,gliese-581,planet,Gliese 581 c,Gliese 581 c,catalog,0.07,,,,12.9,,,,5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-581-g,gliese-581,planet,Gliese 581 g,Gliese 581 g,catalog,0.13,,,,,,,,2.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-581-d,gliese-581,planet,Gliese 581 d,Gliese 581 d,catalog,0.22,,,,,,,,7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-617-a-b,gliese-617-a,planet,Gliese 617 A b,Gliese 617 A b,catalog,0.32,,,,,,,,10,5.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-625-b,gliese-625,planet,Gliese 625 b,Gliese 625 b,catalog,0.08,,,,14.6,,,,2.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-654-b,gliese-653-b,planet,Gliese 654 b,Gliese 654 b,catalog,,,,,15.4,,,,5.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-667-c-b,gliese-667-c,planet,Gliese 667 C b,Gliese 667 C b,catalog,0.05,,,,,,,,5.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-667-c-c,gliese-667-c,planet,Gliese 667 C c,Gliese 667 C c,catalog,0.13,,,,,,,,3.7,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-667-c-f,gliese-667-c,planet,Gliese 667 C f,Gliese 667 C f,catalog,0.16,,,,39,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-667-c-e,gliese-667-c,planet,Gliese 667 C e,Gliese 667 C e,catalog,0.21,,,,62.2,,,,2.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-667-c-g,gliese-667-c,planet,Gliese 667 C g,Gliese 667 C g,catalog,0.55,,,,256.2,,,,4.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-686-b,gliese-686,planet,Gliese 686 b,Gliese 686 b,catalog,0.09,,,,,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-740-b,gliese-740,planet,Gliese 740 b,Gliese 740 b,catalog,0.03,,,,2.4,,,,3.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-740-c,gliese-740,planet,Gliese 740 c,Gliese 740 c,catalog,5,,,,,,,,98.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-752-a-ab,gliese-752-a,planet,Gliese 752 A Ab,Gliese 752 A Ab,catalog,0.34,,,,,,,,13.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-784-b,gliese-784,planet,Gliese 784 b,Gliese 784 b,catalog,0.06,,,,,,,,9.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-849-b,gliese-849,planet,Gliese 849 b,Gliese 849 b,catalog,2.32,,,,1925.3,,,,283.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-849-c,gliese-849,planet,Gliese 849 c,Gliese 849 c,catalog,4.95,,,,5990,,,,314.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-86-a-b,gliese-86-a,planet,Gliese 86 A b,Gliese 86 A b,catalog,0.12,,,,15.8,,,,2094.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-880-a-b,gliese-880-a,planet,Gliese 880 A b,Gliese 880 A b,catalog,0.19,,,,,,,,8.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-b,gliese-892,planet,Gliese 892 b,Gliese 892 b,catalog,0.04,,,,3.1,,,,4.7,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-c,gliese-892,planet,Gliese 892 c,Gliese 892 c,catalog,0.07,,,,6.8,,,,4.4,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-f,gliese-892,planet,Gliese 892 f,Gliese 892 f,catalog,0.15,,,,22.8,,,,7.3,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-d,gliese-892,planet,Gliese 892 d,Gliese 892 d,catalog,0.24,,,,46.9,,,,16.2,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-g,gliese-892,planet,Gliese 892 g,Gliese 892 g,catalog,0.38,,,,94.2,,,,10.8,2.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-e,gliese-892,planet,Gliese 892 e,Gliese 892 e,catalog,2.56,,,,1842,,,,70.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-892-h,gliese-892,planet,Gliese 892 h,Gliese 892 h,catalog,2.96,,,,2198,,,,108,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-96-b,gliese-96,planet,Gliese 96 b,Gliese 96 b,catalog,0.29,,,,73.9,,,,19.7,4.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-649-b,gliese649,planet,Gliese 649 b,Gliese 649 b,catalog,1.11,,,,600.1,,,,82,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+groombridge-34-a-b,groombridge-34-a,planet,Groombridge 34 A b,Groombridge 34 A b,catalog,0.07,,,,11.4,,,,4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+groombridge-34-a-c,groombridge-34-a,planet,Groombridge 34 A c,Groombridge 34 A c,catalog,5.4,,,,6694,,,,35,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-101581-b,hd-101581,planet,HD 101581 b,HD 101581 b,catalog,0.05,,,,4.5,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-101581-c,hd-101581,planet,HD 101581 c,HD 101581 c,catalog,0.06,,,,6.2,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-101581-d,hd-101581,planet,HD 101581 d,HD 101581 d,catalog,0.07,,,,7.9,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-10436-b,hd-10436,planet,HD 10436 b,HD 10436 b,catalog,0.04,,,,3.8,,,,8.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-122303-b,hd-122303,planet,HD 122303 b,HD 122303 b,catalog,0.07,,,,8.7,,,,7.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-122303-c,hd-122303,planet,HD 122303 c,HD 122303 c,catalog,0.16,,,,32.8,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-140901-a-b,hd-140901,planet,HD 140901 A b,HD 140901 A b,catalog,0.09,,,,9,,,,15.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-140901-a-c,hd-140901,planet,HD 140901 A c,HD 140901 A c,catalog,7.42,,,,7417.5,,,,1997.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-147513-b,hd-147513,planet,HD 147513 b,HD 147513 b,catalog,1.32,,,,528.4,,,,384.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-176051-a-b,hd-176051a,planet,HD 176051 A b,HD 176051 A b,catalog,1.76,,,,1016,,,,476.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-190007-b,hd-190007,planet,HD 190007 b,HD 190007 b,catalog,0.09,,,,11.7,,,,16.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-211970-b,hd-211970,planet,HD 211970 b,HD 211970 b,catalog,0.14,,,,25.2,,,,13,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-222237-b,hd-222237,planet,HD 222237 b,HD 222237 b,catalog,10.8,,,,40.8,,,,1649.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-238090-b,hd-238090,planet,HD 238090 b,HD 238090 b,catalog,0.09,,,,13.7,,,,6.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-38858-b,hd-38858,planet,HD 38858 b,HD 38858 b,catalog,1.04,,,,407.2,,,,30.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-b,hd-40307,planet,HD 40307 b,HD 40307 b,catalog,0.05,,,,,,,,3.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-c,hd-40307,planet,HD 40307 c,HD 40307 c,catalog,0.08,,,,,,,,5.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-d,hd-40307,planet,HD 40307 d,HD 40307 d,catalog,0.13,,,,,,,,5.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-e,hd-40307,planet,HD 40307 e,HD 40307 e,catalog,0.19,,,,,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-f,hd-40307,planet,HD 40307 f,HD 40307 f,catalog,0.25,,,,,,,,5.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-40307-g,hd-40307,planet,HD 40307 g,HD 40307 g,catalog,0.6,,,,,,,,7.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-69830-b,hd-69830,planet,HD 69830 b,HD 69830 b,catalog,0,,,,,,,,10.2,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-69830-c,hd-69830,planet,HD 69830 c,HD 69830 c,catalog,0.19,,,,,,,,11.8,3.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-69830-d,hd-69830,planet,HD 69830 d,HD 69830 d,catalog,0.63,,,,,,,,18.1,4.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hd-85512-b,hd-85512,planet,HD 85512 b,HD 85512 b,catalog,0.26,,,,,,,,3.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+hip-79431-b,hip-79431,planet,HIP 79431 b,HIP 79431 b,catalog,0.36,,,,111.7,,,,667.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+gliese-238-b,l-182-44,planet,Gliese 238 b,Gliese 238 b,catalog,0.02,,,,1.7,,,,,0.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lhs-475-b,l-22-69,planet,LHS 475 b,LHS 475 b,catalog,0.02,,,,2,,,,1,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-34-26-b,l-34-26,planet,L 34-26 b,L 34-26 b,catalog,7506,,,,37025355,,,,2002.8,12.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-762-51-b,l-762-51,planet,L 762-51 b,L 762-51 b,catalog,0.07,,,,10.9,,,,10,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-98-59-b,l-98-59,planet,L 98-59 b,L 98-59 b,catalog,0.02,,,,2.3,,,,0.4,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-98-59-c,l-98-59,planet,L 98-59 c,L 98-59 c,catalog,0.03,,,,3.7,,,,2.2,1.4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-98-59-d,l-98-59,planet,L 98-59 d,L 98-59 d,catalog,0.05,,,,7.5,,,,2.3,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-98-59-e,l-98-59,planet,L 98-59 e,L 98-59 e,catalog,0.07,,,,12.8,,,,3.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+l-98-59-f,l-98-59,planet,L 98-59 f,L 98-59 f,catalog,0.11,,,,23.1,,,,3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lambda-serpentis-b,lambda-serpentis,planet,Lambda Serpentis b,Lambda Serpentis b,catalog,0.12,,,,,,,,0.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lhs-1140-c,lhs-1140,planet,LHS 1140 c,LHS 1140 c,catalog,0.03,,,,3.8,,,,1.9,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lhs-1140-b,lhs-1140,planet,LHS 1140 b,LHS 1140 b,catalog,0.09,,,,24.7,,,,5.6,1.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lhs-1140-d,lhs-1140,planet,LHS 1140 d,LHS 1140 d,catalog,0.21,,,,,,,,3.9,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+lhs-3844-b,lhs-3844,planet,LHS 3844 b,LHS 3844 b,catalog,0.01,,,,0.5,,,,2.3,1.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+luyten-726-8-a-b,luyten-726-8-a,planet,Luyten 726-8 A b,Luyten 726-8 A b,catalog,,,,,156,,,,36,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+nu2-lupi-b,nu2-lupi,planet,Nu2 Lupi b,Nu2 Lupi b,catalog,0.1,,,,11.6,,,,4.6,1.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+nu2-lupi-c,nu2-lupi,planet,Nu2 Lupi c,Nu2 Lupi c,catalog,0.17,,,,27.6,,,,11.3,2.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+nu2-lupi-d,nu2-lupi,planet,Nu2 Lupi d,Nu2 Lupi d,catalog,0.42,,,,107.1,,,,8.7,2.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+pollux-b,pollux,planet,Pollux b,Pollux b,catalog,1.64,,,,,,,,731.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+ross-1003-b,ross-1003,planet,Ross 1003 b,Ross 1003 b,catalog,0.17,,,,,,,,96.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+ross-1003-c,ross-1003,planet,Ross 1003 c,Ross 1003 c,catalog,0.91,,,,,,,,68,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+ross-508-b,ross-508,planet,Ross 508 b,Ross 508 b,catalog,0.05,,,,10.8,,,,4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+struve-2398-a-b,struve-2398-a,planet,Struve 2398 A b,Struve 2398 A b,catalog,0.07,,,,11.2,,,,2.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+struve-2398-b-b,struve-2398-b,planet,Struve 2398 B b,Struve 2398 B b,catalog,0.04,,,,4.8,,,,1.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+struve-2398-b-c,struve-2398-b,planet,Struve 2398 B c,Struve 2398 B c,catalog,0.14,,,,37.9,,,,3.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+toi-540-b,toi-540,planet,TOI-540 b,TOI-540 b,catalog,0.01,,,,1.2,,,,,0.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-b,trappist-1,planet,TRAPPIST-1 b,TRAPPIST-1 b,catalog,0.01,,,,1.5,,,,0.9,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-c,trappist-1,planet,TRAPPIST-1 c,TRAPPIST-1 c,catalog,0.02,,,,2.4,,,,1.4,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-d,trappist-1,planet,TRAPPIST-1 d,TRAPPIST-1 d,catalog,0.02,,,,4,,,,0.4,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-e,trappist-1,planet,TRAPPIST-1 e,TRAPPIST-1 e,catalog,0.03,,,,6.1,,,,0.7,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-f,trappist-1,planet,TRAPPIST-1 f,TRAPPIST-1 f,catalog,0.04,,,,9.2,,,,0.7,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-g,trappist-1,planet,TRAPPIST-1 g,TRAPPIST-1 g,catalog,0.05,,,,12.4,,,,1.3,1.1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+trappist-1-h,trappist-1,planet,TRAPPIST-1 h,TRAPPIST-1 h,catalog,0.06,,,,20,,,,0.3,0.8,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+tvlm-513-46-b,tvlm-513-46,planet,TVLM 513-46 b,TVLM 513-46 b,catalog,0.3,,,,221,,,,127.2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+upsilon-andromedae-a-b,upsilon-andromedae-a,planet,Upsilon Andromedae A b,Upsilon Andromedae A b,catalog,0.06,,,,,,,,540.4,14.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+upsilon-andromedae-a-c,upsilon-andromedae-a,planet,Upsilon Andromedae A c,Upsilon Andromedae A c,catalog,0.83,,,,,,,,4444.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+upsilon-andromedae-a-d,upsilon-andromedae-a,planet,Upsilon Andromedae A d,Upsilon Andromedae A d,catalog,2.53,,,,,,,,3258.5,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+upsilon-andromedae-a-e,upsilon-andromedae-a,planet,Upsilon Andromedae A e,Upsilon Andromedae A e,catalog,5.25,,,,,,,,336.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+ds-leonis-b,v*-ds-leo,planet,DS Leonis b,DS Leonis b,catalog,0.05,,,,6,,,,7.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+vega-b,vega,planet,Vega b,Vega b,catalog,0.05,,,,2.4,,,,21.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+wise-j0336-0143-b,wise-j03360505-0143504,planet,WISE J0336-0143 b,WISE J0336-0143 b,catalog,0.97,,,,2560,,,,2543.3,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+wolf-1539-c,wolf-1539,planet,Wolf 1539 c,Wolf 1539 c,catalog,0.03,,,,3.5,,,,4.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+wolf-1539-b,wolf-1539,planet,Wolf 1539 b,Wolf 1539 b,catalog,2.41,,,,2288,,,,260.7,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,
+sol-main-belt,sol,belt,Sol Main Asteroid Belt,Main Belt,catalog,2.7,,n/a,n/a,n/a,n/a,n/a,n/a,0.0005,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,8,7,1,5,3,1,n/a,n/a,n/a,n/a,n/a,n/a,n/a,2.1,3.3,n/a,n/a,n/a,940,jupiter,n/a,n/a
+saturn-ring,saturn,ring,Saturn Ring System,Rings,catalog,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,0,1,8,0,0,1,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,1.11,2.27,n/a,n/a,n/a,n/a,n/a

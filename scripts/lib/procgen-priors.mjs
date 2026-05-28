@@ -1820,20 +1820,36 @@ export const CONDENSABLES = [
 // No class-keyed table.
 
 // ---------------------------------------------------------------------------
-// Biosphere — two orthogonal axes: archetype × tier
+// Biosphere — three orthogonal derived fields: archetype × complexity × surface impact
 // ---------------------------------------------------------------------------
 //
-// Both axes are now DERIVED from per-archetype productivity scalars
-// computed in the Filler (productivityPreAtm + productivityPostAtm in
-// procgen.mjs). The legacy `biosphereFor` habitat-walk has been
-// removed — labels are pure downstream classifications of physics.
-// These exports remain as enum-iteration helpers (audit reports,
-// info-card display) but don't drive any procgen rolls.
-
-// Tiers form an ordered ladder (none < prebiotic < microbial < complex
-// < gaian). Bucket thresholds for productivity → tier live in
-// `labelsFromProductivity` in procgen.mjs.
-export const BIOSPHERE_TIERS = ['none', 'prebiotic', 'microbial', 'complex', 'gaian'];
+// All three are DERIVED from per-archetype productivity scalars computed
+// in the Filler (productivityPreAtm + productivityPostAtm in procgen.mjs).
+// Labels are pure downstream classifications of physics — no procgen
+// rolls live here.
+//
+// The split exists because the legacy single `tier` ladder conflated
+// two distinct concepts: how *structured* the life is (single-celled
+// vs multicellular) and how much it *visibly alters* the body (atm
+// chemistry, biome coloration). Earth between the GOE and the Cambrian
+// ran a chemically dominant atmosphere on entirely microbial life for
+// ~2 Gyr; Europa's hypothetical complex subsurface biosphere never
+// touches the surface. One ladder can't represent both at once.
+//
+// Axes:
+//   biosphereArchetype       — argmax archetype label (this list)
+//   biosphereComplexity      — bucketed off productivity using
+//                              per-archetype thresholds; encodes
+//                              probabilistic headwinds (silicate must
+//                              climb a steeper ladder than carbon_aq
+//                              to reach the same complexity tier)
+//   biosphereSurfaceImpact   — scalar [0..1] = productivity × coupling,
+//                              where coupling is per-body sampled from
+//                              archetype substrate base (jittered log-
+//                              normally) plus an always-on additive
+//                              contribution at the microbial/complex
+//                              tiers. Continuous, never identically zero
+//                              once life is present.
 
 // All recognized archetypes — each describes a distinct biochemistry /
 // habitat combination. Productivity formulas in procgen.mjs derive a
@@ -1847,5 +1863,117 @@ export const BIOSPHERE_ARCHETYPES = [
   'silicate',            // crystalline mineral metabolism (speculative SF)
   'sulfur',              // sulfur-cycle / thermal vent biology
 ];
+
+// Complexity tiers — describe the life itself. `gaian` is intentionally
+// not on this axis (it was never a complexity descriptor; it surfaces
+// instead as the high-end of biosphereSurfaceImpact below). Ordered
+// ladder (none < prebiotic < microbial < complex).
+export const BIOSPHERE_COMPLEXITY = ['none', 'prebiotic', 'microbial', 'complex'];
+
+// Per-archetype productivity thresholds for reaching each complexity
+// tier. Steeper thresholds = harder ladder; every archetype CAN reach
+// `complex` in principle, but only with high productivity. Anchors:
+//   Earth     productivity 0.85 carbon_aq → complex
+//   Mars      productivity 0.02 carbon_aq → none
+//   K2-18b    productivity 0.30 carbon_aq → microbial
+//   Venus     productivity 0.25 sulfur    → microbial
+//   Io        productivity 0.20 sulfur    → microbial
+//   Jupiter   productivity 0.22 aerial    → microbial
+//   Europa    productivity 0.55 sub_aq    → complex
+//   Titan     productivity 0.50 cryogenic → complex
+// Each entry: [prebiotic, microbial, complex]. < prebiotic → none;
+// >= complex → complex. Thresholds are exclusive at the lower bound
+// (matches the existing labelsFromProductivity convention).
+export const COMPLEXITY_THRESHOLDS = {
+  carbon_aqueous:     [0.05, 0.20, 0.50],   // baseline
+  sulfur:             [0.05, 0.20, 0.50],   // energy-rich chemistry
+  aerial:             [0.05, 0.20, 0.60],   // no surface anchor; harder complex
+  subsurface_aqueous: [0.10, 0.30, 0.50],   // mild headwind on lower tiers
+  cryogenic:          [0.10, 0.30, 0.50],   // slow cold-solvent chemistry
+  silicate:           [0.15, 0.35, 0.65],   // hardest ladder; speculative substrate
+};
+
+// Surface-impact buckets for display. Scalar biosphereSurfaceImpact
+// thresholds — `< 0.05 → none`, `0.05–0.20 → trace`, `0.20–0.50 →
+// modifying`, `>= 0.50 → dominant`. Cutoffs exposed here so the audit,
+// the info card, and any other reader share one source.
+export const BIOSPHERE_IMPACT_LEVELS = ['none', 'trace', 'modifying', 'dominant'];
+export const IMPACT_BUCKET_THRESHOLDS = [0.05, 0.20, 0.50];
+
+// Substrate surface coupling — per-body multiplier on productivity that
+// produces biosphereSurfaceImpact before life contribution is added.
+// `base` is the archetype's typical coupling; `sigma` is the log-space
+// jitter (multiplicative — large sigma produces a fat upper tail). For
+// subsurface_aqueous specifically, base is low (sealed by default) but
+// sigma is wide — Enceladus-class plume worlds exist alongside sealed
+// Europas, and the log-normal tail naturally produces both.
+// Calibration note: the procgen productivity distribution is right-skewed
+// (most archetypes' >0.5 productivity tail is fatter than the plan's
+// anchor table assumed), so base coupling is set conservatively for the
+// non-carbon archetypes — only carbon_aqueous gets the uncapped path to
+// `dominant`, matching the science framing that surface-light-coupled
+// photosynthesis is the unique route to atmosphere-running biospheres.
+// cryogenic / sulfur / silicate cap at `modifying` in practice.
+export const ARCHETYPE_COUPLING_PRIOR = {
+  carbon_aqueous:     { base: 1.00, sigma: 0.10 },   // surface biosphere by definition
+  aerial:             { base: 1.00, sigma: 0.10 },   // lives in the atmosphere; bounded by low productivity
+  sulfur:             { base: 0.50, sigma: 0.20 },   // Venus/Io atm coupling; capped below dominant
+  cryogenic:          { base: 0.40, sigma: 0.25 },   // Titan-class slow-chemistry surface
+  silicate:           { base: 0.20, sigma: 0.40 },   // speculative; mostly substrate-bound
+  subsurface_aqueous: { base: 0.05, sigma: 0.60 },   // sealed default, fat tail for plumes
+};
+
+// Additive life contribution to coupling once the body crosses into
+// the COMPLEX complexity tier. Log-normal: median anchors the typical
+// addition; sigma controls the upper tail. Always-on (never zero) so
+// complex biospheres always leave at least a faint signature. The fat
+// tail is where the "telescopes poking out of the ice" case lives —
+// no discrete breakthrough roll, just the natural log-normal tail
+// (~3-in-1000 bodies clear contribution > 0.30 for subsurface_aqueous).
+// Sigma tuning rationale: subsurface_aqueous keeps the widest tail
+// because the "telescopes poking through ice" case is the user-facing
+// narrative point; cryogenic / sulfur / silicate get tighter tails
+// because their archetypes shouldn't routinely reach `dominant`
+// (only carbon_aqueous gets that path). Carbon_aqueous keeps a
+// moderate sigma — Earth's productivity is already near the dominant
+// floor; extra tail width here would over-paint complex Earths.
+export const LIFE_SURFACE_CONTRIBUTION = {
+  carbon_aqueous:     { median: 0.08, sigma: 0.6 },
+  aerial:             { median: 0.10, sigma: 0.5 },
+  sulfur:             { median: 0.05, sigma: 0.5 },
+  cryogenic:          { median: 0.04, sigma: 0.5 },
+  silicate:           { median: 0.03, sigma: 0.6 },
+  subsurface_aqueous: { median: 0.03, sigma: 1.0 },
+};
+
+// Smaller, tighter version of LIFE_SURFACE_CONTRIBUTION applied at the
+// MICROBIAL tier. Biosignature work (methanogen trace gases, pre-
+// Cambrian O₂) supports microbial biospheres being faintly detectable
+// in principle; medians 3–5× smaller than the complex tier keep this
+// honest without flooding the catalog with weakly-flagged microbial
+// worlds. Set null on any archetype if microbial signatures should
+// stay invisible — current calibration enables it everywhere.
+export const MICROBIAL_SURFACE_CONTRIBUTION = {
+  carbon_aqueous:     { median: 0.020, sigma: 0.4 },
+  aerial:             { median: 0.025, sigma: 0.4 },
+  sulfur:             { median: 0.015, sigma: 0.5 },
+  cryogenic:          { median: 0.012, sigma: 0.5 },
+  silicate:           { median: 0.010, sigma: 0.5 },
+  subsurface_aqueous: { median: 0.008, sigma: 0.6 },
+};
+
+// Stars whose body list is hand-curated and authoritative. Curated
+// systems bypass procgen backfill (architect overlay, moon/ring
+// derivation); their CSV silence reads as "really none / not yet
+// curated" rather than "we don't know, please invent." Sol is the
+// canonical reference; extend this set when other systems get fully
+// hand-tuned.
+//
+// Biosphere labels for curated bodies travel through bodies.csv via
+// the `biosphere_archetype` + `biosphere_complexity` columns (Earth
+// authors `carbon_aqueous, complex`; sterile Sol bodies author `n/a,
+// n/a`; etc.) — same cell-semantics convention as the rest of the
+// CSV, no separate override map.
+export const CURATED_SYSTEM_HOSTS = new Set(['sol']);
 
 // Per-(worldClass, archetype) rolls. `gate` constrains which insolation
