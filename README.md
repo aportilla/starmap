@@ -132,7 +132,7 @@ The build script runs the full derivation pipeline that used to live in `src/dat
 
 ### Body procgen pipeline
 
-The catalog gives us a hand-anchored core (catalog exoplanets + hand-seeded Sol). For a 4X game every star needs to be explorable, so the build runs procgen on top of the catalog before emitting the JSON. Net output is on the order of ~12k bodies across ~1.4k stars, deterministic across builds.
+The catalog gives us a hand-anchored core (catalog exoplanets + hand-seeded Sol). For a 4X game every star needs to be explorable, so the build runs procgen on top of the catalog before emitting the JSON, deterministic across builds.
 
 Four layers, run in order. The detailed mechanics live in each file's module header — read those when working on a specific layer. This README only sketches the high-level shape and how the layers compose.
 
@@ -152,6 +152,8 @@ Four layers, run in order. The detailed mechanics live in each file's module hea
 **Determinism.** Each procgen value uses a per-(body, field, version) seed via `mulberry32(hash32(body.id + ':' + field + ':' + PROCGEN_VERSION))` (the PRNG helpers live in `scripts/lib/prng.mjs`). Two consecutive builds produce byte-identical output. Bumping `PROCGEN_VERSION` in `procgen-priors.mjs` reseeds the entire galaxy without touching CSV ids. Per-generator suffixes can be layered on top by individual rules that want to be re-rollable independently.
 
 **Bias model.** The catalog is treated as dramatically incomplete for every star. Three procgen passes close the gaps against an unobserved-detection-bias model: the overlay adds outer planets RV/transit couldn't surface, the moon and ring backfill synthesizes per-planet satellites detection methods don't reach, and the overlay also rolls system-level belts so a catalog-anchored star isn't structurally barren next to its zero-catalog neighbor. Curated systems (Sol) bypass every backfill — their CSV silence is "really none," not "we don't know."
+
+**Empty-system invariant.** A 4X game with thousands of "click to confirm nothing" stars feels barren, so after the architect + overlay passes run, `generateFloorBelt` (in `procgen-architect.mjs`) emits one trace cold debris belt for any non-curated star that ended up with both zero planets and zero belts. Physical framing: planet formation rarely sweeps a disc clean down to vacuum — a trace residual band of cold dust + km-scale parent bodies is the default end-state of every protoplanetary disc that doesn't get aggressively cleared. Mass is sampled in the lower half of the cold placement range and the parent-body scale is pinned to the dust-cascade `freeFloat` band, so the floor reads as "ancient trace debris" rather than competing with shepherded belts as a strategic mining target.
 
 **Cell semantics.** Three states travel from CSV to JSON: empty (procgen target — Filler fills if anchors support it), `n/a` (not applicable — gas giants have no `water_fraction`, airless worlds have no atmosphere composition), value (canonical, untouched). Empty and `n/a` both serialize as `null` at runtime; the distinction lives only in build time via a temporary `_unknowns` marker that `parseCsvBodies` attaches to each body, the Filler reads, and `fillBody` strips before emit.
 

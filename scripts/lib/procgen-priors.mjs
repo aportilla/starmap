@@ -119,9 +119,13 @@ const PLANET_COUNT_BY_CLASS_REALISTIC = {
   K:  { mean: 5,   sd: 2,   min: 1, max: 10 },
   M:  { mean: 4,   sd: 1.5, min: 1, max: 8  },  // TRAPPIST-1 = 7, compact common
   // WD: post-main-sequence ejection + tidal disruption destroys most
-  // planets; surviving systems are very rare (~10 confirmed in the
-  // literature). Debris disks are common but those aren't planets.
-  WD: { mean: 0.1, sd: 0.4, min: 0, max: 3  },
+  // primary-formation planets, but theory + accumulating discoveries
+  // support survivor populations the literature only partially samples:
+  // chthonian cores (envelope-stripped giants), iron-rich red-giant
+  // survivors, and second-generation rocks formed from accretion-disk
+  // material. 0.6 mean produces a system that usually has a husk world
+  // or two without contradicting the rarity of detection.
+  WD: { mean: 0.6, sd: 0.5, min: 0, max: 2  },
   BD: { mean: 1,   sd: 1,   min: 0, max: 4  },  // compact, tight orbits when present
 };
 
@@ -840,9 +844,13 @@ export const BELT_CONTEXTS = ['warm', 'cold'];
 // Rates are the union of the old discrete + collisional rates (a
 // system used to roll each independently — same total occurrence,
 // minus the small double-belt overlap). Survey anchors: Spitzer/
-// Herschel debris statistics (Su 2006, Thureau 2014, Chen 2014); WD
-// captures metal-pollution-evidence disks (Zuckerman 2010 — ~25–50%
-// of WDs accrete tidally-disrupted debris).
+// Herschel debris statistics (Su 2006, Thureau 2014, Chen 2014).
+// WD/BD rates are theory-anchored rather than detection-anchored:
+// metal-pollution evidence puts 25–50% of WDs accreting tidally-
+// disrupted debris (Zuckerman 2010), and BDs show protoplanetary
+// discs across surveys of young clusters — the in-game framing is
+// "what could a remnant disc look like," not "what fraction has been
+// confirmed at multi-kpc distances."
 const BELT_OCCURRENCE_BY_CLASS_REALISTIC = {
   O:  { warm: 0.15, cold: 0.19 },
   B:  { warm: 0.21, cold: 0.26 },
@@ -851,8 +859,8 @@ const BELT_OCCURRENCE_BY_CLASS_REALISTIC = {
   G:  { warm: 0.26, cold: 0.19 },
   K:  { warm: 0.25, cold: 0.18 },
   M:  { warm: 0.22, cold: 0.14 },
-  WD: { warm: 0.11, cold: 0.11 },
-  BD: { warm: 0.06, cold: 0.06 },
+  WD: { warm: 0.35, cold: 0.35 },
+  BD: { warm: 0.25, cold: 0.25 },
 };
 
 // No gameplay tunes on belt occurrence today — the realistic rates above
@@ -992,25 +1000,40 @@ export const BELT_GIANT_ADJACENCY = {
   cold: { innerFrac: 1.30, outerFrac: 1.85 },
 };
 
-// Occurrence multiplier applied when the system has no gas/ice giant.
+// Occurrence multiplier applied when the system has no shepherding body.
 // Without a shepherd, belts can still form but are rarer (Wyatt 2008
 // estimates <20% of the giant-shepherded rate for primordial belts;
 // dust cascades are less affected because they don't depend on
-// resonance trapping). Halfway between the old discrete-only penalty
-// (0.15–0.25) and collisional-only no-penalty (1.0) to represent the
-// blended physical likelihood.
+// resonance trapping). 0.50/0.60 lands between the primordial-only
+// extreme and the dust-cascade-only no-penalty, weighting toward
+// "many real belts have at least some collisional component."
+//
+// Per-class to express the physics of each stellar archetype: WD belts
+// are tidally-disrupted-planet rubble (Zuckerman 2010), not shepherded
+// primordials, so a Jupiter-shepherd-or-nothing model is the wrong
+// physics — set 1.0 (no penalty). BD belts are scaled-down protoplanetary
+// discs around sub-stellar masses; they don't depend on internal-giant
+// resonance trapping either — set 1.0.
 export const GIANTLESS_BELT_PENALTY = {
-  warm: 0.30,
-  cold: 0.40,
+  O:  { warm: 0.50, cold: 0.60 },
+  B:  { warm: 0.50, cold: 0.60 },
+  A:  { warm: 0.50, cold: 0.60 },
+  F:  { warm: 0.50, cold: 0.60 },
+  G:  { warm: 0.50, cold: 0.60 },
+  K:  { warm: 0.50, cold: 0.60 },
+  M:  { warm: 0.50, cold: 0.60 },
+  WD: { warm: 1.00, cold: 1.00 },
+  BD: { warm: 1.00, cold: 1.00 },
 };
 
-// Mass threshold for "giant enough to shepherd a belt". Sub-Neptune-class
-// bodies (~7 M⊕ and up) are heavy enough to dominate orbital resonances
-// the way Sol's Jupiter does for the Main Belt and Neptune does for the
-// Kuiper Belt. The threshold is mass-based rather than type-keyed so
-// migrated giants stripped of their envelopes (chthonian-class survivors)
-// still anchor belts if they retain enough core mass.
-export const SHEPHERD_MIN_MASS_EARTH = 7;
+// Mass threshold for "big enough to shepherd a belt". In compact systems
+// a super-Earth at 0.05 AU dominates orbital resonances the way Jupiter
+// does at 5 AU around the Sun — shepherding tracks architecture, not
+// absolute mass. 3 M⊕ admits super-Earths (and chthonian-class envelope-
+// stripped survivors that retain a multi-Earth core) into the shepherd
+// role, which matters most for M-dwarf systems where gas giants are rare
+// but super-Earths are typical.
+export const SHEPHERD_MIN_MASS_EARTH = 3;
 
 // ---------------------------------------------------------------------------
 // Rings — per-planet ring systems (0 or 1)

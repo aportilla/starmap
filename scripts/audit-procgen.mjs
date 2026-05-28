@@ -14,9 +14,13 @@
 //     since their CSV is the source of truth there. They also include
 //     non-curated catalog planets, since those go through ring/moon
 //     backfill in build-catalog.mjs.
-//   - Belt comparisons restrict to stars with zero catalog planets,
-//     since the Architect only fires belt rolls on those today (the
-//     partial-system overlay that would extend it is deferred).
+//   - Belt comparisons cover every non-curated star (both architect
+//     and overlay paths fire belt rolls). The cold context can also
+//     include floor belts emitted by generateFloorBelt for empty
+//     systems, which inflates the cold rate vs. its base prior for
+//     classes that would otherwise often roll zero of either context
+//     (WD, BD, K). Treat cold over-shoots in those classes as the
+//     content-floor backstop firing, not a calibration miss.
 //
 // Mostly procgen rates won't match the prior `p` exactly — sample
 // noise on 100–5000 rolls is real — but a 2× or larger drift usually

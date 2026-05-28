@@ -78,21 +78,31 @@
 // RING_RESOURCE_ROCKY keyed on whether the host formed past the H2O
 // frost line; extent from RING_EXTENT in planet-radius units.
 //
-// ─── Belts (generateBelts) ──────────────────────────────────────────
+// ─── Belts (generateBelts, generateFloorBelt) ──────────────────────
 //
 // Per-star independent rolls per BELT_CONTEXTS entry (warm, cold) via
 // BELT_OCCURRENCE_BY_CLASS, with BELT_GIANT_ADJACENCY anchoring warm
-// bands inward of the innermost giant and cold bands past the
+// bands inward of the innermost shepherd and cold bands past the
 // outermost (Sol's Main Belt at 0.4–0.7× Jupiter's a; Kuiper Belt at
-// 1.3–1.85× Neptune's). Giantless systems eat the GIANTLESS_BELT_PENALTY
-// multiplier and fall back to a system-edge band — physically possible
-// but rarer than shepherded belts. Belt size character emerges from
+// 1.3–1.85× Neptune's). Shepherd qualification is mass-gated at
+// SHEPHERD_MIN_MASS_EARTH (super-Earth-class and up — compact systems
+// resonance-anchor on super-Earths the way Sol does on Jupiter).
+// Shepherdless systems eat the GIANTLESS_BELT_PENALTY[cls] multiplier
+// and fall back to a system-edge band; per-class so WD and BD (whose
+// belts are tidally-disrupted-planet rubble and scaled-down
+// protoplanetary discs respectively, neither shepherding-dependent)
+// bypass the penalty entirely. Belt size character emerges from
 // shepherding: shepherded belts pull largestBodyKm from the parent-body
 // range (BELT_LARGEST_BODY_KM.{warm,cold}.shepherded — Ceres / Pluto
 // class), free-float belts pull from the dust-cascade range (tens of
 // km max). Belt and ring composition lives in a six-resource grid
 // rather than a discrete class enum, so renderers and gameplay both
 // read mining yields from the same data.
+//
+// generateFloorBelt runs as a post-pass from build-catalog.mjs: any
+// non-curated star that finished the architect + overlay phases with
+// both zero planets and zero belts gets one trace cold free-float
+// belt so the "no fully empty systems" gameplay invariant holds.
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson, sampleBinomial } from './prng.mjs';
 import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';
@@ -462,11 +472,12 @@ function describeBeltComposition(resources) {
   return v > rocky ? 'Icy' : 'Rocky';
 }
 
-// Identify the giant(s) in a placed-planet list (innermost + outermost).
-// Mass gates membership at SHEPHERD_MIN_MASS_EARTH; sub-Neptune mass is
-// enough to anchor a belt's resonances even without a Jupiter-equivalent.
-// Returns null fields when no giants exist, signaling generateBelts to
-// apply the giantless penalty path.
+// Identify the shepherd candidates in a placed-planet list (innermost +
+// outermost). Mass gates membership at SHEPHERD_MIN_MASS_EARTH; in
+// compact systems even a super-Earth dominates the resonance structure
+// the way Sol's Jupiter does for the Main Belt. Returns null fields
+// when no candidates exist, signaling generateBelts to apply the
+// per-class giantless penalty path (or bypass it for WD / BD).
 function findGiants(placedPlanets) {
   const giants = placedPlanets
     .filter(p => p.kind === 'planet' && p.massEarth != null && p.massEarth >= SHEPHERD_MIN_MASS_EARTH && p.semiMajorAu != null)
@@ -481,12 +492,14 @@ function findGiants(placedPlanets) {
 // (warm, cold). Returns Body[] ready to concatenate with the planet
 // stream. `placedPlanets` is the list of planets already laid down for
 // this system (architect + catalog combined for the overlay path) —
-// belts use it to anchor adjacent to the system's giants and record a
-// shepherd. Without a giant the occurrence is multiplied by
-// GIANTLESS_BELT_PENALTY[context] before the roll, and placement falls
-// back to BELT_PLACEMENT's system-edge-scaled band. Shepherded belts
-// get a larger-parent-body size draw; free-float belts get a dust-
-// cascade-scale size draw — see BELT_LARGEST_BODY_KM.
+// belts use it to anchor adjacent to the system's shepherd candidates
+// and record a shepherd. Without one the occurrence is multiplied by
+// GIANTLESS_BELT_PENALTY[cls][context] before the roll, and placement
+// falls back to BELT_PLACEMENT's system-edge-scaled band. WD and BD
+// classes have penalty 1.0 (no penalty) since their belts aren't
+// primordial-shepherded. Shepherded belts get a larger-parent-body
+// size draw; free-float belts get a dust-cascade-scale size draw —
+// see BELT_LARGEST_BODY_KM.
 //
 // Exported so the catalog backfill in build-catalog.mjs could add belts
 // to partially-observed catalog stars later (v1 only emits during
@@ -506,7 +519,7 @@ export function generateBelts(star, placedPlanets = []) {
     // (shepherded → parent-body scale; free-float → dust-cascade scale).
     const shepherd = context === 'warm' ? innerGiant : outerGiant;
     const hasShepherd = !!shepherd;
-    const penalty = hasShepherd ? 1.0 : GIANTLESS_BELT_PENALTY[context];
+    const penalty = hasShepherd ? 1.0 : GIANTLESS_BELT_PENALTY[cls][context];
     const effectiveRate = occurrence[context] * penalty;
 
     const rollPrng = beltPrng(star.id, context, 'occur');
@@ -575,6 +588,71 @@ export function generateBelts(star, placedPlanets = []) {
     }));
   }
   return belts;
+}
+
+// Universal content-floor belt for systems that rolled both zero planets
+// and zero belts. Guarantees the gameplay invariant that no system is
+// fully empty — every star has at least one cold remnant disc the player
+// can mine. Physical framing: planet formation rarely sweeps a disc
+// clean down to vacuum; a trace residual band of cold, volatile-rich
+// dust + km-scale parent bodies is the default end-state of every
+// protoplanetary disc that doesn't get aggressively cleared by a
+// migrating giant. Always free-float (no shepherd by definition — the
+// system has no qualifying planet) and small-mass: this is "trace
+// debris," not a Sol-Main-Belt-class strategic target.
+//
+// Called from build-catalog.mjs after the architect + overlay passes
+// determine which stars ended up empty. Deterministic via the star id.
+export function generateFloorBelt(star) {
+  const cls = star.cls;
+  const geom = ORBITAL_GEOMETRY_BY_CLASS[cls];
+  if (!geom) return null;
+
+  const placement = BELT_PLACEMENT.cold;
+  const innerAu = geom.outerEdgeAu * placement.innerFrac;
+  const outerAu = geom.outerEdgeAu * placement.outerFrac;
+  const centerAu = (innerAu + outerAu) / 2;
+
+  // Mass log-uniform in the lower half of the cold placement range so the
+  // floor belt reads as trace rather than as a primary mining target.
+  const massPrng = beltPrng(star.id, 'cold', 'floor_mass');
+  const logMin = Math.log10(placement.mass.min);
+  const logMax = Math.log10(placement.mass.max);
+  const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin) * 0.5);
+
+  // Resources: regular cold prior (volatile-dominant).
+  const resPriors = BELT_RESOURCE_PRIORS.cold;
+  const resources = {};
+  for (const field of Object.keys(resPriors)) {
+    const prng = beltPrng(star.id, 'cold', `floor_${field}`);
+    resources[field] = Math.round(sampleTruncated(prng, resPriors[field]));
+  }
+
+  // Free-float dust-cascade parent-body scale.
+  const kmRange = BELT_LARGEST_BODY_KM.cold.freeFloat;
+  const sizePrng = beltPrng(star.id, 'cold', 'floor_largest');
+  const logKmMin = Math.log10(kmRange.min);
+  const logKmMax = Math.log10(kmRange.max);
+  const largestBodyKm = Math.pow(10, logKmMin + sizePrng() * (logKmMax - logKmMin));
+
+  const composition = describeBeltComposition(resources);
+  const formal = `${star.name} ${describeBeltLocation(centerAu)} ${composition} Belt`;
+  return makeBody({
+    id: `${star.id}-belt-cold`,
+    hostId: star.id,
+    kind: 'belt',
+    formalName: formal,
+    name: formal,
+    source: 'procgen',
+    largestBodyKm: Number(largestBodyKm.toFixed(1)),
+    shepherdId: null,
+    semiMajorAu: Number(centerAu.toFixed(3)),
+    innerAu: Number(innerAu.toFixed(3)),
+    outerAu: Number(outerAu.toFixed(3)),
+    massEarth: Number(massEarth.toFixed(5)),
+    ...resources,
+    _unknowns: [],
+  });
 }
 
 // =============================================================================

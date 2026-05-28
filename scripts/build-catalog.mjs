@@ -17,7 +17,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
-import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor } from './lib/procgen-architect.mjs';
+import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES } from './lib/procgen-priors.mjs';
 import { frostLineAU } from './lib/astrophysics.mjs';
 
@@ -1026,6 +1026,35 @@ async function main() {
     }
   }
 
+  // Universal content floor — for any star that ended up with zero
+  // planets AND zero belts after the architect + overlay passes, emit
+  // one trace cold belt so the gameplay invariant "no fully empty
+  // systems" holds. Curated systems are exempt (Sol's authored content
+  // is the source of truth). Catalog-anchored stars are exempt by
+  // construction since they already have catalog planets.
+  const planetHostIds = new Set();
+  const beltHostIds = new Set();
+  for (const b of rawBodies) {
+    if (b.kind === 'planet') planetHostIds.add(b.hostId);
+    if (b.kind === 'belt') beltHostIds.add(b.hostId);
+  }
+  for (const b of procgenBodies) {
+    if (b.kind === 'planet') planetHostIds.add(b.hostId);
+    if (b.kind === 'belt') beltHostIds.add(b.hostId);
+  }
+  for (const b of overlayBodies) {
+    if (b.kind === 'planet') planetHostIds.add(b.hostId);
+    if (b.kind === 'belt') beltHostIds.add(b.hostId);
+  }
+  const floorBelts = [];
+  for (const star of placedStars) {
+    if (CURATED_SYSTEM_HOSTS.has(star.id)) continue;
+    if (planetHostIds.has(star.id)) continue;
+    if (beltHostIds.has(star.id)) continue;
+    const belt = generateFloorBelt(star);
+    if (belt) floorBelts.push(belt);
+  }
+
   const starById = new Map(placedStars.map(s => [s.id, s]));
 
   // Partial-anchor synthesis — catalog rows that arrived with a host
@@ -1146,7 +1175,7 @@ async function main() {
     }
   }
 
-  const allBodies = [...rawBodies, ...procgenBodies, ...overlayBodies, ...backfillMoons, ...backfillRings];
+  const allBodies = [...rawBodies, ...procgenBodies, ...overlayBodies, ...floorBelts, ...backfillMoons, ...backfillRings];
 
   const { stars, bodies: resolvedBodies } = attachBodies(placedStars, allBodies);
   // Body Filler — fills `_unknowns` cells from physics + seeded PRNG;
