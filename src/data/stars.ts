@@ -91,19 +91,19 @@ export type WorldClass =
   | 'iron' | 'lava' | 'magma_ocean' | 'chthonian'
   // Gaseous taxonomy
   | 'gas_dwarf' | 'hycean' | 'helium' | 'ice_giant' | 'gas_giant';
-// Biosphere is two orthogonal axes:
+// Biosphere is three orthogonal fields:
 //   - archetype: what kind of life (carbon/water, methane/cryogenic, etc.)
 //   - complexity: how structured the life is (prebiotic → microbial → complex)
 //   - surfaceImpact: how visibly the biosphere alters the body [0..1]
-// Sterile bodies carry complexity='none' and archetype=null. Anything
-// else is guaranteed to have all three axes set.
+// Sterile bodies carry complexity='none', archetype=null, impact=0.
+// Anything else has all three fields set.
 //
-// The complexity / surfaceImpact split exists because a single tier
-// ladder conflated two concepts that pull apart at the edges: Earth
-// between the GOE and the Cambrian ran a chemically dominant atmosphere
-// on entirely microbial life for ~2 Gyr; a complex Europa subsurface
-// biosphere never touches the surface. See procgen-priors.mjs biosphere
-// section for the full model.
+// Complexity and surfaceImpact are split because they pull apart at the
+// edges. Earth between the GOE and the Cambrian was chemically dominant
+// in atmosphere for ~2 Gyr on entirely microbial life — high impact,
+// low complexity. A complex Europa subsurface biosphere never touches
+// the surface — high complexity, no impact. One ladder can't represent
+// both. See procgen-priors.mjs biosphere section for the full model.
 export type BiosphereArchetype =
   | 'carbon_aqueous'      // Earth-standard, water + carbon
   | 'subsurface_aqueous'  // ice-shell ocean (Europa, Enceladus)

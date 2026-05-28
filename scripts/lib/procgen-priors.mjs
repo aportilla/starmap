@@ -1823,20 +1823,27 @@ export const CONDENSABLES = [
 // Biosphere — three orthogonal derived fields: archetype × complexity × surface impact
 // ---------------------------------------------------------------------------
 //
-// All three are DERIVED from per-archetype productivity scalars computed
-// in the Filler (productivityPreAtm + productivityPostAtm in procgen.mjs).
-// Labels are pure downstream classifications of physics — no procgen
-// rolls live here.
+// Two paths populate the three fields:
+//   1. CSV-authored — bodies.csv carries `biosphere_archetype` and
+//      `biosphere_complexity` columns. Curated rows (Sol's bodies)
+//      author values verbatim (Earth = `carbon_aqueous, complex`;
+//      Mars = `n/a, n/a` for sterile; etc.). The Filler uses these
+//      as-is and computes surfaceImpact from the body's measured
+//      productivity × per-body coupling for the authored archetype.
+//   2. Procgen-derived — both cells blank on a CSV row means
+//      "procgen target." The Filler runs argmax over the six
+//      productivity scalars (productivityPreAtm + productivityPostAtm)
+//      to pick archetype, applies per-archetype complexity thresholds
+//      to bucket complexity, then derives surfaceImpact the same way
+//      as the authored path.
 //
-// The split exists because the legacy single `tier` ladder conflated
-// two distinct concepts: how *structured* the life is (single-celled
-// vs multicellular) and how much it *visibly alters* the body (atm
-// chemistry, biome coloration). Earth between the GOE and the Cambrian
-// ran a chemically dominant atmosphere on entirely microbial life for
-// ~2 Gyr; Europa's hypothetical complex subsurface biosphere never
-// touches the surface. One ladder can't represent both at once.
+// Complexity and surfaceImpact are split because they pull apart at the
+// edges. Earth was chemically dominant in atmosphere for ~2 Gyr (post-
+// GOE, pre-Cambrian) on entirely microbial life — high impact, low
+// complexity. A complex Europa subsurface biosphere never touches the
+// surface — high complexity, no impact. One ladder can't represent both.
 //
-// Axes:
+// Fields:
 //   biosphereArchetype       — argmax archetype label (this list)
 //   biosphereComplexity      — bucketed off productivity using
 //                              per-archetype thresholds; encodes

@@ -60,13 +60,17 @@
 //                               giants), bioticCryogenic (Titan-class),
 //                               bioticSilicate (hot rocky), bioticSulfur
 //                               (Io / Venus cloud). Then the three
-//                               biosphere display fields derive off
-//                               the six scalars: biosphereArchetype
-//                               (argmax), biosphereComplexity (per-
-//                               archetype thresholds), and biosphere-
-//                               SurfaceImpact (productivity × per-body
-//                               coupling). See procgen-priors.mjs
-//                               biosphere section for the full model.
+//                               biosphere display fields resolve via
+//                               one of two paths: CSV-authored (the
+//                               row populated `biosphere_archetype` +
+//                               `biosphere_complexity` — used as-is),
+//                               or procgen-derived (both cells blank
+//                               — argmax over the six scalars + per-
+//                               archetype complexity thresholds).
+//                               surfaceImpact is always derived from
+//                               productivity × per-body coupling.
+//                               See procgen-priors.mjs biosphere
+//                               section for the full model.
 //
 // Moons traverse the same passes as planets. Tidal heating only enters
 // via the step-8 surface-age lift for eccentric moons of giants; every
