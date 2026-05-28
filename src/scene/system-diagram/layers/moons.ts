@@ -12,8 +12,8 @@ import {
 import { BODIES } from '../../../data/stars';
 import {
   ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_COLOR_BASE_OFFSET,
-  makePlanetMaterial, MAX_CLOUD_LAYERS, OCEAN_COLOR_TEXEL_OFFSET,
-  SCATTER_COLOR_TEXEL_OFFSET,
+  LAVA_TINT_TEXEL_OFFSET, makePlanetMaterial, MAX_CLOUD_LAYERS,
+  OCEAN_COLOR_TEXEL_OFFSET, SCATTER_COLOR_TEXEL_OFFSET,
 } from '../../materials';
 import { buildDiscPalette } from '../disc-palette';
 import {
@@ -326,14 +326,17 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
     cloudLayerData[scatOff + 0] = disc.scatterColor[0];
     cloudLayerData[scatOff + 1] = disc.scatterColor[1];
     cloudLayerData[scatOff + 2] = disc.scatterColor[2];
+    // Lava composition signal — sulfur fraction in .r (gba reserved).
+    const lavaOff = rowBase + LAVA_TINT_TEXEL_OFFSET * 4;
+    cloudLayerData[lavaOff + 0] = disc.lavaSulfurFrac;
     surfaceScalars[i * 4 + 0] = disc.waterFrac;
     surfaceScalars[i * 4 + 1] = disc.iceFrac;
     surfaceScalars[i * 4 + 2] = disc.surfaceAge;
     surfaceScalars[i * 4 + 3] = disc.globalness;
     atmoScalars[i * 4 + 0] = disc.hazeOpacity;
     atmoScalars[i * 4 + 1] = disc.rimWidthPx;
-    atmoScalars[i * 4 + 2] = 0;
-    atmoScalars[i * 4 + 3] = 0;
+    atmoScalars[i * 4 + 2] = disc.moltenCoverage;
+    atmoScalars[i * 4 + 3] = disc.emissionTempNorm;
     biomeColors[i * 4 + 0] = disc.biomeColor[0];
     biomeColors[i * 4 + 1] = disc.biomeColor[1];
     biomeColors[i * 4 + 2] = disc.biomeColor[2];
