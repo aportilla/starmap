@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
-import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
-import { frostLineAU, keplerSemiMajorAu } from './lib/astrophysics.mjs';
+import { MAX_PLANETS_PER_CLUSTER, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
+import { frostLineTrio, keplerSemiMajorAu } from './lib/astrophysics.mjs';
 import { parseCsv } from './lib/catalog-index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1122,11 +1122,7 @@ async function main() {
     // to the host's current semiMajorAu as the in-situ formation proxy.
     // Frost lines are deterministic from host mass.
     const hostFormationAu = planet.formationAu ?? aBackfill;
-    const frostLinesAu = {
-      H2O: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.H2O),
-      NH3: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.NH3),
-      CH4: frostLineAU(host.mass, SNOW_LINE_TEMPERATURES.CH4),
-    };
+    const frostLinesAu = frostLineTrio(host.mass);
     if (!catalogMoonHosts.has(planet.id)) {
       backfillMoons.push(...generateMoons(planet, host, hostFormationAu, frostLinesAu));
     }

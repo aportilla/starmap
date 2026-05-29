@@ -107,14 +107,13 @@
 // belt so the "no fully empty systems" gameplay invariant holds.
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, sampleBinomial, drawWeightedDeposits } from './prng.mjs';
-import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu, keplerPeriodDays, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
+import { insolation, frostLineTrio, moonRadiusFromMass, solidSurfaceDensity, isolationMass, hillRadiusAu, keplerPeriodDays, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
 import { radiusFromMass } from './procgen.mjs';
 import {
   PROCGEN_VERSION,
   PLANET_COUNT_BY_CLASS,
   COMPANION_PLANET_SUPPRESSION,
   ORBITAL_GEOMETRY_BY_CLASS,
-  SNOW_LINE_TEMPERATURES,
   SNOW_LINE_BOOSTS,
   MMSN_NORMALIZATION,
   DISK_GAS_LIFETIME_MYR,
@@ -252,11 +251,7 @@ function buildStarDiskContext(star) {
   const gasPrng = slotPrng(star.id, -1, 'disk_gas_lifetime');
   const diskGasLifetimeMyr = sampleTruncated(gasPrng, gasSpec);
   return {
-    frostLines: {
-      H2O: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.H2O),
-      NH3: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.NH3),
-      CH4: frostLineAU(star.mass, SNOW_LINE_TEMPERATURES.CH4),
-    },
+    frostLines: frostLineTrio(star.mass),
     diskGasLifetimeMyr,
   };
 }
@@ -409,7 +404,7 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
       max:  Math.min(MOON_MASS_LOG_EARTH.max, hostCapLog),
     };
     const massEarth = Math.pow(10, sampleTruncated(massPrng, massSpec));
-    const radiusEarth = Math.pow(massEarth * 5.5 / 3.0, 1 / 3);  // ρ≈3 g/cm³ vs Earth's 5.5
+    const radiusEarth = moonRadiusFromMass(massEarth);
 
     // Orbital distance: starts inside Roche-ish, spreads out with each slot
     // by ~factor 1.6. Galilean spacing is ~1.4–1.8x consecutive.

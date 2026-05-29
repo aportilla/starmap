@@ -4,6 +4,8 @@
 // Architect's slot-zone choice doesn't match what the Filler reads when
 // classifying world_class later.
 
+import { SNOW_LINE_TEMPERATURES } from './procgen-priors.mjs';
+
 // Earth masses per solar mass — the canonical Earth↔solar mass ratio,
 // shared so the Architect, Filler, and these helpers all spell it once.
 export const EARTH_PER_SOLAR_MASS = 333000;
@@ -127,6 +129,29 @@ export function frostLineAU(starMassSun, volatileTempK) {
   const S = frostLineS(volatileTempK);
   if (S == null || S <= 0) return null;
   return Math.sqrt(L / S);
+}
+
+// The three condensation-front radii (AU) a star's disk presents — H2O,
+// NH3, CH4 frost lines, each at its SNOW_LINE_TEMPERATURES anchor. The
+// per-star formation-zone classifier and every bulk-composition draw key
+// off this trio, so the Architect, Filler, and moon/ring backfill all
+// build it the same way.
+export function frostLineTrio(starMassSun) {
+  return {
+    H2O: frostLineAU(starMassSun, SNOW_LINE_TEMPERATURES.H2O),
+    NH3: frostLineAU(starMassSun, SNOW_LINE_TEMPERATURES.NH3),
+    CH4: frostLineAU(starMassSun, SNOW_LINE_TEMPERATURES.CH4),
+  };
+}
+
+// Radius (Earth radii) of a constant-density moon of the given mass. Moons
+// are less compressed and more volatile-rich than the Otegi rocky line
+// (radiusFromMass), so they take a simple cube-root scaling at a typical
+// icy-rock bulk density (~3 g/cm³) against Earth's 5.5 g/cm³.
+export function moonRadiusFromMass(massEarth) {
+  const EARTH_DENSITY_GCC = 5.5;
+  const MOON_DENSITY_GCC = 3.0;
+  return Math.pow(massEarth * EARTH_DENSITY_GCC / MOON_DENSITY_GCC, 1 / 3);
 }
 
 // Solid surface density Σ_solid in g/cm² at orbital distance a around a

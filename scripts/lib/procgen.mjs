@@ -89,7 +89,6 @@ import {
   HAZE_GATES,
   DUST_GATE,
   BIOSPHERE_PRODUCTIVITY,
-  SNOW_LINE_TEMPERATURES,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
   BULK_VOLATILE_FRACTION_BY_ZONE,
@@ -143,7 +142,7 @@ const BIOTIC_FIELD_BY_ARCH = {
 };
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
-import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
+import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
   return mulberry32(hash32(`${body.id}:${field}:${PROCGEN_VERSION}`));
@@ -1679,11 +1678,7 @@ function fillBody(b, allBodies, stars) {
   // Frost-line trio for the four-zone bulk-composition gate. Deterministic
   // from host star mass — no PRNG draw, computed once per body. Null when
   // the host star is missing; bulk* fillers fall through to null.
-  const frostLinesAu = hostStar ? {
-    H2O: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.H2O),
-    NH3: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.NH3),
-    CH4: frostLineAU(hostStar.mass, SNOW_LINE_TEMPERATURES.CH4),
-  } : null;
+  const frostLinesAu = hostStar ? frostLineTrio(hostStar.mass) : null;
   const lockProxy = (b.kind === 'planet' && hostStar)
     ? tidalLockProxy(hostStar.mass, semiMajorAu)
     : (b.kind === 'moon' ? tidalLockProxy(hostMassSolar, semiMajorAu) : null);
