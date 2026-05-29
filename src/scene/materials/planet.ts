@@ -9,7 +9,7 @@
 import { Color, ShaderMaterial, Vector2 } from 'three';
 import { RING_MINOR_OVER_MAJOR } from '../system-diagram/layout/constants';
 import { glsl, RASTER_PAD, snappedMaterials } from './shared';
-import { MAX_LIGHTS, BAYER4_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
+import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
 
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
 // is a layered composite, bottom to top:
@@ -833,12 +833,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // amount; set it to 0 to disable the hue shift.
       const float RIM_RAYLEIGH_STRENGTH = 1.0;
 
-      float hash11(float x) {
-        return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
-      }
-      float hash21(vec2 p) {
-        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-      }
+      ${HASH_GLSL}
 
       // 4x4 Bayer matrix lookup keyed on env-pixel coords, returns
       // value in {0/16, 1/16, ..., 15/16}. Built recursively from the

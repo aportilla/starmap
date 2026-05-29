@@ -30,6 +30,22 @@ export const BAYER4_GLSL = /* glsl */ `
         return (4.0 * bInner + bOuter) / 16.0;
       }`;
 
+// Canonical sin-fract value hashes — the project's hash primitives,
+// used by every worley / region / crater / lava / cloud pass to seed
+// jittered cell centers and per-cell coverage gates. hash11 maps a
+// scalar → [0,1); hash21 maps a 2D cell coord → [0,1). The classic
+// fract(sin(·) * 43758.5453) construction: cheap, stateless, no
+// texture. Stippling the results against the Bayer dither hides the
+// well-known diagonal banding of sin-hashes at our pixel scale.
+// Interpolate before any chunk (or main) that hashes.
+export const HASH_GLSL = /* glsl */ `
+      float hash11(float x) {
+        return fract(sin(x * 12.9898 + 78.233) * 43758.5453);
+      }
+      float hash21(vec2 p) {
+        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+      }`;
+
 // Hue-direction operator: normalize a color so its max channel is 1,
 // giving a pure-hue unit vector. Raising it to a power crushes the minor
 // channels while leaving the dominant one untouched — a saturation
