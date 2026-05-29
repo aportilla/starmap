@@ -1014,6 +1014,108 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         return mix(c3, c4, (t - 0.75) / 0.25);
       }
 
+      // ── Lava emission ── (see the LAVA_* constant block + emberRamp)
+      // Composes a molten incandescent surface onto the crust. Coexists
+      // with the passes above without a gate: a molten body has
+      // surfaceAge ≈ 1 → no craters, and iceFrac = 0 → no linea/ice, so
+      // the field is clear exactly where lava belongs. The
+      // emitNorm > 0 guard is the Draper-point floor: a body whose
+      // emission temperature never reaches ~800 K (a warm-but-solid
+      // world, or a cryovolcanic body whose vent material is cold)
+      // never paints, regardless of how much coverage it carries.
+      vec3 lavaPass(vec3 col, float lon, float lat, float vBodyV,
+                    float minDist2, float secondMinDist2, vec2 winnerCell, vec2 secondCell,
+                    out vec3 lavaEmissive) {
+        lavaEmissive = vec3(0.0);
+        if (vMoltenCoverage > 0.0 && vEmissionTempNorm > 0.0) {
+          // Tier 1 — cooled-lava crust backdrop. Warm the whole molten
+          // surface toward dusky basalt, fading in with coverage so a
+          // barely-melted hot world keeps its native palette. Molten
+          // features paint over this below.
+          float crustTint = LAVA_CRUST_TINT_MAX * smoothstep(0.0, LAVA_CRUST_TINT_COV, vMoltenCoverage);
+          col = mix(col, LAVA_CRUST_COLOR, crustTint);
+
+          // Tier 2 — fissure network. Distance to the F1/F2 cell boundary,
+          // widened by coverage² toward LAVA_CRACK_WIDTH_MAX (capped well
+          // below 1 so the web never floods the disc). The square keeps
+          // low-coverage bodies (Io, magma ocean) as hairline fissures
+          // while a hot world gets a denser web (lavaEdge only reaches
+          // ~0.3-0.5 at cell centers, so a linear ramp would over-fill).
+          float lavaEdge = sqrt(secondMinDist2) - sqrt(minDist2);
+          float crackW   = mix(LAVA_CRACK_WIDTH_MIN, LAVA_CRACK_WIDTH_MAX, vMoltenCoverage * vMoltenCoverage);
+          float crack    = 1.0 - smoothstep(crackW * 0.5, crackW, lavaEdge);
+          // Per-fissure hot/cool class, keyed on the shared edge cell so a
+          // whole segment is one temperature (not per-pixel noise). Most
+          // fissures are cooled (dull); a sparse fraction run fresh/hot.
+          vec2  edgeKey      = winnerCell + secondCell;
+          float crackHotH    = hash21(edgeKey + vec2(vSeed * 853.0, vSeed * 857.0));
+          float crackTempMul = (crackHotH < LAVA_CRACK_HOT_FRAC) ? 1.0 : LAVA_CRACK_TEMP_MUL;
+
+          // Tier 3 — calderas / lava lakes on a COARSER grid than the fine
+          // surface worley (patch grows with coverage), so lakes read as a
+          // few coherent pools rather than per-cell confetti — and a near-
+          // fully-molten world becomes large lava lakes between dark crust
+          // islands instead of speckle. Uses the shared worleyF1F2 scan in
+          // the coarse frame (F1 only — the lake cell that contains the
+          // fragment) for round blobby lakes. Sparse cells (coverage²) so
+          // they read as a handful of volcanic centers; core hotter than
+          // the rim via distance to the coarse cell center. Salts 859/863,
+          // 877/881 (jitter), 883/887 (existence) distinct from every
+          // other surface-pass salt.
+          float poolPatch = SURFACE_PATCH_PX * mix(LAVA_POOL_PATCH_MIN, LAVA_POOL_PATCH_MAX, vMoltenCoverage);
+          vec2  pCellPos  = vec2(lon, lat) * vRadius / poolPatch;
+          vec2  pCellId   = floor(pCellPos);
+          vec2  pFrac     = pCellPos - pCellId;
+          float pBestD2, pIgnoreD2;
+          vec2  pWinner, pIgnoreCell;
+          worleyF1F2(pCellId, pFrac,
+                     vSeed * vec2(859.0, 863.0), vSeed * vec2(877.0, 881.0),
+                     pWinner, pIgnoreCell, pBestD2, pIgnoreD2);
+          float poolH    = hash21(pWinner + vec2(vSeed * 883.0, vSeed * 887.0));
+          float isPool   = step(poolH, min(vMoltenCoverage * vMoltenCoverage, LAVA_POOL_MAX_COVER));
+          float poolDist = sqrt(pBestD2);
+          float poolCore = 1.0 - smoothstep(0.0, LAVA_POOL_RADIUS, poolDist);
+          float pool     = isPool * poolCore;
+
+          // Presence (which fragments are molten) — binarized against a
+          // Bayer threshold for a pixel-crisp edge; the step(0.001, …)
+          // floor keeps the crust between features exactly solid.
+          float meltSoft = max(crack, pool);
+          float bLava    = bayer4(gl_FragCoord.xy + vec2(53.0, 19.0));
+          float meltBin  = step(0.001, meltSoft) * step(bLava, meltSoft);
+          if (meltBin > 0.0) {
+            // Temperature per tier: a caldera (where present) wins with
+            // its core-boosted hot norm; otherwise the fissure norm
+            // (dull, unless this segment hashed hot).
+            float poolNorm  = min(1.0, vEmissionTempNorm + LAVA_POOL_CORE_BOOST * (1.0 - vEmissionTempNorm) * poolCore);
+            float crackNorm = vEmissionTempNorm * crackTempMul;
+            float localNorm = (pool >= crack) ? poolNorm : crackNorm;
+            vec3  ember     = emberRamp(localNorm);
+            // Composition hue nudge — sulfurous volcanism reads yellower.
+            // Lift green proportional to red so orange → yellow without
+            // bleaching toward white; scaled by the body's sulfur frac.
+            float sulfurU    = (float(${LAVA_TINT_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+            float sulfurFrac = texture2D(uCloudLayerData, vec2(sulfurU, vBodyV)).r;
+            if (sulfurFrac > 0.0) {
+              vec3 sulfurEmber = clamp(ember + vec3(0.0, ember.r * LAVA_SULFUR_GREEN_LIFT, 0.0), 0.0, 1.0);
+              ember = mix(ember, sulfurEmber, sulfurFrac * LAVA_SULFUR_STRENGTH);
+            }
+            // Molten material fully obscures the crust beneath (solid
+            // replace, matching the crater-interior convention).
+            col = ember;
+            // Emissive lifts molten zones above the reflectance crescent.
+            // pow(focus) keeps dull fissures from blooming; the (1 -
+            // localNorm·falloff) term then tapers the bloom back DOWN at
+            // the hot end, where the ember is already bright and extra
+            // additive would only clip the channels toward white.
+            lavaEmissive = ember * LAVA_EMISSIVE_GAIN
+                         * pow(localNorm, LAVA_EMISSIVE_FOCUS)
+                         * (1.0 - localNorm * LAVA_EMISSIVE_FALLOFF);
+          }
+        }
+        return col;
+      }
+
       // Surface (or atm-column) base color for one fragment. Composes the
       // full terrestrial surface stack — worley patches, ice/cap regime,
       // ocean + coastal fringe, region palette election, biome stipple,
@@ -1462,101 +1564,11 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             }
           }
 
-          // ── Lava emission ── (see the LAVA_* constant block + emberRamp)
-          // Composes a molten incandescent surface onto the crust. Coexists
-          // with the passes above without a gate: a molten body has
-          // surfaceAge ≈ 1 → no craters, and iceFrac = 0 → no linea/ice, so
-          // the field is clear exactly where lava belongs. The
-          // emitNorm > 0 guard is the Draper-point floor: a body whose
-          // emission temperature never reaches ~800 K (a warm-but-solid
-          // world, or a cryovolcanic body whose vent material is cold)
-          // never paints, regardless of how much coverage it carries.
-          if (vMoltenCoverage > 0.0 && vEmissionTempNorm > 0.0) {
-            // Tier 1 — cooled-lava crust backdrop. Warm the whole molten
-            // surface toward dusky basalt, fading in with coverage so a
-            // barely-melted hot world keeps its native palette. Molten
-            // features paint over this below.
-            float crustTint = LAVA_CRUST_TINT_MAX * smoothstep(0.0, LAVA_CRUST_TINT_COV, vMoltenCoverage);
-            col = mix(col, LAVA_CRUST_COLOR, crustTint);
-
-            // Tier 2 — fissure network. Distance to the F1/F2 cell boundary,
-            // widened by coverage² toward LAVA_CRACK_WIDTH_MAX (capped well
-            // below 1 so the web never floods the disc). The square keeps
-            // low-coverage bodies (Io, magma ocean) as hairline fissures
-            // while a hot world gets a denser web (lavaEdge only reaches
-            // ~0.3-0.5 at cell centers, so a linear ramp would over-fill).
-            float lavaEdge = sqrt(secondMinDist2) - sqrt(minDist2);
-            float crackW   = mix(LAVA_CRACK_WIDTH_MIN, LAVA_CRACK_WIDTH_MAX, vMoltenCoverage * vMoltenCoverage);
-            float crack    = 1.0 - smoothstep(crackW * 0.5, crackW, lavaEdge);
-            // Per-fissure hot/cool class, keyed on the shared edge cell so a
-            // whole segment is one temperature (not per-pixel noise). Most
-            // fissures are cooled (dull); a sparse fraction run fresh/hot.
-            vec2  edgeKey      = winnerCell + secondCell;
-            float crackHotH    = hash21(edgeKey + vec2(vSeed * 853.0, vSeed * 857.0));
-            float crackTempMul = (crackHotH < LAVA_CRACK_HOT_FRAC) ? 1.0 : LAVA_CRACK_TEMP_MUL;
-
-            // Tier 3 — calderas / lava lakes on a COARSER grid than the fine
-            // surface worley (patch grows with coverage), so lakes read as a
-            // few coherent pools rather than per-cell confetti — and a near-
-            // fully-molten world becomes large lava lakes between dark crust
-            // islands instead of speckle. Uses the shared worleyF1F2 scan in
-            // the coarse frame (F1 only — the lake cell that contains the
-            // fragment) for round blobby lakes. Sparse cells (coverage²) so
-            // they read as a handful of volcanic centers; core hotter than
-            // the rim via distance to the coarse cell center. Salts 859/863,
-            // 877/881 (jitter), 883/887 (existence) distinct from every
-            // other surface-pass salt.
-            float poolPatch = SURFACE_PATCH_PX * mix(LAVA_POOL_PATCH_MIN, LAVA_POOL_PATCH_MAX, vMoltenCoverage);
-            vec2  pCellPos  = vec2(lon, lat) * vRadius / poolPatch;
-            vec2  pCellId   = floor(pCellPos);
-            vec2  pFrac     = pCellPos - pCellId;
-            float pBestD2, pIgnoreD2;
-            vec2  pWinner, pIgnoreCell;
-            worleyF1F2(pCellId, pFrac,
-                       vSeed * vec2(859.0, 863.0), vSeed * vec2(877.0, 881.0),
-                       pWinner, pIgnoreCell, pBestD2, pIgnoreD2);
-            float poolH    = hash21(pWinner + vec2(vSeed * 883.0, vSeed * 887.0));
-            float isPool   = step(poolH, min(vMoltenCoverage * vMoltenCoverage, LAVA_POOL_MAX_COVER));
-            float poolDist = sqrt(pBestD2);
-            float poolCore = 1.0 - smoothstep(0.0, LAVA_POOL_RADIUS, poolDist);
-            float pool     = isPool * poolCore;
-
-            // Presence (which fragments are molten) — binarized against a
-            // Bayer threshold for a pixel-crisp edge; the step(0.001, …)
-            // floor keeps the crust between features exactly solid.
-            float meltSoft = max(crack, pool);
-            float bLava    = bayer4(gl_FragCoord.xy + vec2(53.0, 19.0));
-            float meltBin  = step(0.001, meltSoft) * step(bLava, meltSoft);
-            if (meltBin > 0.0) {
-              // Temperature per tier: a caldera (where present) wins with
-              // its core-boosted hot norm; otherwise the fissure norm
-              // (dull, unless this segment hashed hot).
-              float poolNorm  = min(1.0, vEmissionTempNorm + LAVA_POOL_CORE_BOOST * (1.0 - vEmissionTempNorm) * poolCore);
-              float crackNorm = vEmissionTempNorm * crackTempMul;
-              float localNorm = (pool >= crack) ? poolNorm : crackNorm;
-              vec3  ember     = emberRamp(localNorm);
-              // Composition hue nudge — sulfurous volcanism reads yellower.
-              // Lift green proportional to red so orange → yellow without
-              // bleaching toward white; scaled by the body's sulfur frac.
-              float sulfurU    = (float(${LAVA_TINT_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-              float sulfurFrac = texture2D(uCloudLayerData, vec2(sulfurU, vBodyV)).r;
-              if (sulfurFrac > 0.0) {
-                vec3 sulfurEmber = clamp(ember + vec3(0.0, ember.r * LAVA_SULFUR_GREEN_LIFT, 0.0), 0.0, 1.0);
-                ember = mix(ember, sulfurEmber, sulfurFrac * LAVA_SULFUR_STRENGTH);
-              }
-              // Molten material fully obscures the crust beneath (solid
-              // replace, matching the crater-interior convention).
-              col = ember;
-              // Emissive lifts molten zones above the reflectance crescent.
-              // pow(focus) keeps dull fissures from blooming; the (1 -
-              // localNorm·falloff) term then tapers the bloom back DOWN at
-              // the hot end, where the ember is already bright and extra
-              // additive would only clip the channels toward white.
-              lavaEmissive = ember * LAVA_EMISSIVE_GAIN
-                           * pow(localNorm, LAVA_EMISSIVE_FOCUS)
-                           * (1.0 - localNorm * LAVA_EMISSIVE_FALLOFF);
-            }
-          }
+          // ── Lava emission ── composite molten incandescence onto the
+          // crust and accumulate the post-lighting emissive (see lavaPass()).
+          col = lavaPass(col, lon, lat, vBodyV,
+                         minDist2, secondMinDist2, winnerCell, secondCell,
+                         lavaEmissive);
 
         } else {
           // No surface — gas / ice giant. Paint the atm column tint
