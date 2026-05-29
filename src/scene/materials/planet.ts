@@ -351,6 +351,17 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       const float BAND2_LAT_PX = 2.0;
       const float DETAIL_COVERAGE = 0.5;
 
+      // Cloud-deck wind→banding curve (consumed by the cloud-layer loop;
+      // see its comment for the full derivation). bandness smoothsteps
+      // from WIND_BANDNESS_LOW_MS (Earth jet stream, patchy) to
+      // WIND_BANDNESS_HIGH_MS (Jupiter-class, lat-strip aligned); the
+      // east-west cell pitch stretches via sqrt(windSpeed /
+      // WIND_STRETCH_REFERENCE_MS) toward BAND_MAX_LON_PX at full bandness.
+      const float WIND_BANDNESS_LOW_MS      = 30.0;
+      const float WIND_BANDNESS_HIGH_MS     = 150.0;
+      const float WIND_STRETCH_REFERENCE_MS = 600.0;
+      const float BAND_MAX_LON_PX           = 120.0;
+
       // Surface-mode worley cell pitch — equivalent screen-pixels at
       // disc center. Cells live in sphere-space (lon, lat) scaled by
       // vRadius / SURFACE_PATCH_PX, so a 60-px planet disc still gets
@@ -384,6 +395,14 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // squares), so continents have ragged Earth-like coasts at no
       // extra shader cost beyond one hash. 4 → ~16 px continents.
       const float CONTINENT_GROUP = 4.0;
+
+      // Coastal-fringe highlight deltas (consumed by the two-ring coast
+      // logic in the surface block). Ring 1 (one worley cell from land)
+      // paints a solid +COAST_LIGHT_DELTA shoreline; ring 2 (two cells
+      // out) dithers that same highlight at COAST_R2_COVERAGE density so
+      // the band fades into the deep ocean instead of ending hard.
+      const float COAST_LIGHT_DELTA = 0.14;
+      const float COAST_R2_COVERAGE = 0.35;
 
       // Ocean fill color is per-body and read from vOceanColor (sampled
       // from uCloudLayerData), derived in disc-palette/ocean.ts so two
@@ -425,6 +444,30 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // read as wind-swept streaks rather than axis-aligned grid squares.
       const float CLOUD_LON_PX = 12.0;
       const float CLOUD_LAT_PX = 5.0;
+
+      // Env-pixel width of the Bayer-dither fringe at cloud cell edges
+      // (consumed by the cloud-layer loop). Fragments inside a firing
+      // cell, within CLOUD_EDGE_DITHER_PX of the boundary to a non-firing
+      // neighbor, stipple against the layer beneath; cell interiors stay
+      // perfectly crisp. The fringe is what distinguishes cloud
+      // silhouettes from same-tone surface (or same-tone deeper deck) —
+      // a hard worley edge can otherwise disappear into a same-tone
+      // neighbor and the cell reads as part of the underlying texture.
+      const float CLOUD_EDGE_DITHER_PX = 1.5;
+
+      // Heavy-haze surface dither (consumed by the haze-blanket block).
+      // A saturated haze lerp otherwise flattens a surface body to a
+      // featureless tinted disc (Venus / magma-ocean class); a small
+      // ±HAZE_DITHER_AMP luminance jitter — Bayer ordered dither mixed
+      // HAZE_DITHER_HASH_MIX toward a per-pixel hash so the 4×4 tile
+      // doesn't read as a crosshatch — breaks the flat fill. Gated by
+      // smoothstep(GATE_LOW, GATE_HIGH, hazeOpacity) so light-haze bodies
+      // (Earth / Mars, visible surface texture) don't pick up a pattern
+      // they don't need.
+      const float HAZE_DITHER_AMP       = 0.06;
+      const float HAZE_DITHER_GATE_LOW  = 0.3;
+      const float HAZE_DITHER_GATE_HIGH = 0.7;
+      const float HAZE_DITHER_HASH_MIX  = 0.4;
 
       // Outward atmospheric halo — paints OUTSIDE the disc, 0..3 px wide
       // driven by atmospheric column depth (see rimWidthFor* in
@@ -1214,7 +1257,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // 110 K, iceFraction=0) would otherwise render as a solid
           // ICE_COLOR disc because the cold-→global rule overrode its
           // actual zero ice content.
-          float frozenBoost    = smoothstep(0.8, 1.0, vGlobalness) * step(0.01, vIceFrac);
+          float frozenBoost    = smoothstep(CAP_GLOBALNESS_MAX, 1.0, vGlobalness) * step(0.01, vIceFrac);
           float effectiveIceFrac = mix(vIceFrac, 1.0, frozenBoost);
           bool  globalIcyHere  = !capActive && cellHashIce > (1.0 - effectiveIceFrac);
           bool  icyHere        = capIcyHere || globalIcyHere;
@@ -1274,7 +1317,6 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             bool ring1 = (n1E >= vWaterFrac) || (n1W >= vWaterFrac)
                       || (n1N >= vWaterFrac) || (n1S >= vWaterFrac);
 
-            const float COAST_LIGHT_DELTA = 0.14;
             if (ring1) {
               oceanCol = clamp(vOceanColor * (1.0 + COAST_LIGHT_DELTA), 0.0, 1.0);
             } else {
@@ -1285,7 +1327,6 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
               bool ring2 = (n2E >= vWaterFrac) || (n2W >= vWaterFrac)
                         || (n2N >= vWaterFrac) || (n2S >= vWaterFrac);
               if (ring2) {
-                const float COAST_R2_COVERAGE = 0.35;
                 float dH = hash21(floor(d) + vec2(vSeed * 257.0, vSeed * 379.0));
                 if (dH < COAST_R2_COVERAGE) {
                   oceanCol = clamp(vOceanColor * (1.0 + COAST_LIGHT_DELTA), 0.0, 1.0);
@@ -1676,18 +1717,9 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         // a uniform mix would crush the structure.
         if (vHazeOpacity > 0.0 && vSurfaceOpacity > 0.5) {
           col = mix(col, vHazeColor, vHazeOpacity);
-          // Heavily-hazed surface bodies otherwise paint as a perfectly
-          // flat tinted disc (Venus / magma-ocean class — haze saturation
-          // hides every surface texture beneath the lerp). Stamp a small
-          // luminance jitter via Bayer ordered dither plus a hash
-          // perturbation so the 4x4 tile doesn't read as a crosshatch.
-          // Gated by smoothstep on vHazeOpacity so Earth / Mars class
-          // bodies (light haze, visible surface texture) don't pick up
-          // an artificial pattern they don't need.
-          const float HAZE_DITHER_AMP       = 0.06;
-          const float HAZE_DITHER_GATE_LOW  = 0.3;
-          const float HAZE_DITHER_GATE_HIGH = 0.7;
-          const float HAZE_DITHER_HASH_MIX  = 0.4;
+          // Break the flat tinted disc a saturated haze lerp leaves
+          // behind with a gated luminance jitter (see the HAZE_DITHER_*
+          // const block for the rationale + tuning).
           float bayerT = bayer4(gl_FragCoord.xy);
           float hashT  = hash21(floor(gl_FragCoord.xy));
           float ditherT = mix(bayerT, hashT, HAZE_DITHER_HASH_MIX) - 0.5;
@@ -1726,21 +1758,6 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         //     linear because real wind speeds span an order of
         //     magnitude across the gas giants and a linear curve
         //     leaves Jupiter under-stretched relative to its bands.
-        const float WIND_BANDNESS_LOW_MS    = 30.0;
-        const float WIND_BANDNESS_HIGH_MS   = 150.0;
-        const float WIND_STRETCH_REFERENCE_MS = 600.0;
-        const float BAND_MAX_LON_PX         = 120.0;
-
-        // Env-pixel width of the Bayer-dither fringe at cell edges.
-        // Fragments inside a firing cell, within CLOUD_EDGE_DITHER_PX
-        // of the boundary to a non-firing neighbor, stipple against the
-        // layer beneath; cell interiors stay perfectly crisp. The fringe
-        // is what distinguishes cloud silhouettes from same-tone surface
-        // (or same-tone deeper deck) — a hard worley edge can otherwise
-        // disappear into a same-tone neighbor and the cell reads as part
-        // of the underlying texture.
-        const float CLOUD_EDGE_DITHER_PX = 1.5;
-
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
           vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
