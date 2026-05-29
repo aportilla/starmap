@@ -703,8 +703,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // FOCUS so it concentrates on the hottest fragments — dull cooled
       // fissures sit just above the crust without blooming, while caldera
       // cores punch bright and survive the reflectance lighting pass.
-      // Salts: 829/839 (pool cell hash), 853/857 (per-fissure hot/cool)
-      // distinct from every other surface-pass salt.
+      // Salts: SALT_LAVA_POOL_* (calderas), SALT_LAVA_CRACK_HOT (per-
+      // fissure hot/cool). See the hash-salt budget block.
       const float LAVA_CRACK_WIDTH_MIN = 0.04;
       // Capped well below 1.0 so even a fully-molten world keeps the fissure
       // network reading as a NETWORK over a partly-visible dusky crust,
@@ -876,6 +876,52 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // amount; set it to 0 to disable the hue shift.
       const float RIM_RAYLEIGH_STRENGTH = 1.0;
 
+      // ── Hash-salt budget ──
+      // Every per-body hash salt lives here so the whole budget is grep-able
+      // in one place and a collision (two passes sharing a pair) is visible at
+      // a glance — the doc-only budget in PLANET-RENDER-PLAN.md couldn't catch
+      // a silent reuse. Each SALT_* is the (x, y) offset pair added to a cell
+      // before its two decorrelated jitter hashes; call sites multiply it by
+      // the per-body vSeed (or, in pickRegionSlots, the seed param) so each
+      // body re-rolls independently. The LAYER_SALT_* pairs fold the per-deck
+      // layerSeed into the cloud hashes so each deck's cells differ.
+      //
+      // The crater set deliberately reuses 547/569/587 across existence,
+      // jitter X/Y, and radius as distinct ORDERED pairs — distinct ordered
+      // pairs still decorrelate, and 5 draws needed more pairs than 547/569
+      // alone gave. The paint pass (crater interior + ray fill) re-derives a
+      // crater's center, so it reuses SALT_CRATER_JITTER_X/_Y by design.
+      const vec2 SALT_SURFACE_JITTER_A = vec2(13.0, 19.0);
+      const vec2 SALT_SURFACE_JITTER_B = vec2(23.0, 29.0);
+      const vec2 SALT_CONTINENT        = vec2(113.0, 127.0);
+      const vec2 SALT_COAST_DITHER     = vec2(257.0, 379.0);
+      const vec2 SALT_BIOME_STIPPLE    = vec2(197.0, 311.0);
+      const vec2 SALT_CAP_JITTER       = vec2(233.0, 239.0);
+      const vec2 SALT_ICE_PRIORITY     = vec2(701.0, 719.0);
+      const vec2 SALT_REGION_PRIMARY   = vec2(401.0, 419.0);
+      const vec2 SALT_REGION_SECONDARY = vec2(431.0, 433.0);
+      const vec2 SALT_RESOURCE_PICK    = vec2(1009.0, 2017.0);
+      const vec2 SALT_CRATER_EXIST     = vec2(547.0, 569.0);
+      const vec2 SALT_CRATER_JITTER_X  = vec2(587.0, 547.0);
+      const vec2 SALT_CRATER_JITTER_Y  = vec2(569.0, 587.0);
+      const vec2 SALT_CRATER_RADIUS    = vec2(569.0, 547.0);
+      const vec2 SALT_CRATER_AGE       = vec2(631.0, 641.0);
+      const vec2 SALT_RAY_ANGLE        = vec2(653.0, 659.0);
+      const vec2 SALT_RAY_PERRAY       = vec2(677.0, 683.0);
+      const vec2 SALT_LINEA_EDGE       = vec2(743.0, 761.0);
+      const vec2 SALT_LAVA_CRACK_HOT   = vec2(853.0, 857.0);
+      const vec2 SALT_LAVA_POOL_JIT_A  = vec2(859.0, 863.0);
+      const vec2 SALT_LAVA_POOL_JIT_B  = vec2(877.0, 881.0);
+      const vec2 SALT_LAVA_POOL_EXIST  = vec2(883.0, 887.0);
+      const vec2 SALT_CLOUD_JITTER_A   = vec2(991.0, 997.0);
+      const vec2 SALT_CLOUD_JITTER_B   = vec2(1013.0, 1019.0);
+      const vec2 SALT_CLOUD_EXIST      = vec2(1031.0, 1033.0);
+      const vec2 LAYER_SALT_CLOUD_JIT_A = vec2(13.0, 17.0);
+      const vec2 LAYER_SALT_CLOUD_JIT_B = vec2(19.0, 23.0);
+      const vec2 LAYER_SALT_CLOUD_EXIST = vec2(29.0, 31.0);
+      const float SALT_BAND_LIGHTNESS  = 67.0;
+      const float LAYER_SALT_BAND      = 13.0;
+
       ${HASH_GLSL}
 
       // 4x4 Bayer matrix lookup keyed on env-pixel coords, returns
@@ -936,14 +982,13 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // (1,0,0) flat-fill weight case so a 1-slot body collapses
       // cleanly.
       //
-      // Salt budget: primary 401/419, secondary 431/433. Both 401/419
-      // and the surface-resource cell hash (1009/2017) are reused below
-      // — keeping the seed map stable across this election + per-cell
-      // pick.
+      // Salts: SALT_REGION_PRIMARY / SALT_REGION_SECONDARY. This election
+      // re-runs for the crater-paint reveal below (same regionCell math),
+      // keeping the seed map stable across the surface + crater passes.
       ivec3 pickRegionSlots(vec2 regionCell, vec3 weights, float seed) {
         float wT = weights.x + weights.y + weights.z;
         if (wT <= 0.0) return ivec3(0, 0, 0);
-        float pH = hash21(regionCell + vec2(seed * 401.0, seed * 419.0));
+        float pH = hash21(regionCell + seed * SALT_REGION_PRIMARY);
         float t = pH * wT;
         int primary;
         if      (t < weights.x)              primary = 0;
@@ -956,7 +1001,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         float wT2 = secW.x + secW.y + secW.z;
         int secondary = primary;
         if (wT2 > 0.0) {
-          float sH = hash21(regionCell + vec2(seed * 431.0, seed * 433.0));
+          float sH = hash21(regionCell + seed * SALT_REGION_SECONDARY);
           float t2 = sH * wT2;
           if      (t2 < secW.x)            secondary = 0;
           else if (t2 < secW.x + secW.y)   secondary = 1;
@@ -1048,7 +1093,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // whole segment is one temperature (not per-pixel noise). Most
           // fissures are cooled (dull); a sparse fraction run fresh/hot.
           vec2  edgeKey      = winnerCell + secondCell;
-          float crackHotH    = hash21(edgeKey + vec2(vSeed * 853.0, vSeed * 857.0));
+          float crackHotH    = hash21(edgeKey + vSeed * SALT_LAVA_CRACK_HOT);
           float crackTempMul = (crackHotH < LAVA_CRACK_HOT_FRAC) ? 1.0 : LAVA_CRACK_TEMP_MUL;
 
           // Tier 3 — calderas / lava lakes on a COARSER grid than the fine
@@ -1059,9 +1104,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // the coarse frame (F1 only — the lake cell that contains the
           // fragment) for round blobby lakes. Sparse cells (coverage²) so
           // they read as a handful of volcanic centers; core hotter than
-          // the rim via distance to the coarse cell center. Salts 859/863,
-          // 877/881 (jitter), 883/887 (existence) distinct from every
-          // other surface-pass salt.
+          // the rim via distance to the coarse cell center. Salts
+          // SALT_LAVA_POOL_JIT_A/_B (jitter), SALT_LAVA_POOL_EXIST.
           float poolPatch = SURFACE_PATCH_PX * mix(LAVA_POOL_PATCH_MIN, LAVA_POOL_PATCH_MAX, vMoltenCoverage);
           vec2  pCellPos  = vec2(lon, lat) * vRadius / poolPatch;
           vec2  pCellId   = floor(pCellPos);
@@ -1069,9 +1113,9 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           float pBestD2, pIgnoreD2;
           vec2  pWinner, pIgnoreCell;
           worleyF1F2(pCellId, pFrac,
-                     vSeed * vec2(859.0, 863.0), vSeed * vec2(877.0, 881.0),
+                     vSeed * SALT_LAVA_POOL_JIT_A, vSeed * SALT_LAVA_POOL_JIT_B,
                      pWinner, pIgnoreCell, pBestD2, pIgnoreD2);
-          float poolH    = hash21(pWinner + vec2(vSeed * 883.0, vSeed * 887.0));
+          float poolH    = hash21(pWinner + vSeed * SALT_LAVA_POOL_EXIST);
           float isPool   = step(poolH, min(vMoltenCoverage * vMoltenCoverage, LAVA_POOL_MAX_COVER));
           float poolDist = sqrt(pBestD2);
           float poolCore = 1.0 - smoothstep(0.0, LAVA_POOL_RADIUS, poolDist);
@@ -1162,12 +1206,11 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           vec2 cellFrac = cellPos - cellId;
           // Track F1 (closest) AND F2 (second-closest) cells. The F2-F1
           // worley distance is the cell-boundary distance the 1.5d linea
-          // pass draws cracks along. Salts 13/19, 23/29 distinct from
-          // every other surface-pass salt.
+          // pass draws cracks along. Salts SALT_SURFACE_JITTER_A/_B.
           float minDist2, secondMinDist2;
           vec2  winnerCell, secondCell;
           worleyF1F2(cellId, cellFrac,
-                     vSeed * vec2(13.0, 19.0), vSeed * vec2(23.0, 29.0),
+                     vSeed * SALT_SURFACE_JITTER_A, vSeed * SALT_SURFACE_JITTER_B,
                      winnerCell, secondCell, minDist2, secondMinDist2);
 
           // Phase 1.6 — ice is a contextual surface state composed onto
@@ -1204,8 +1247,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // The partition lines up with frozenBoost's smoothstep, so a
           // body is either fully in the cap regime (frozenBoost=0) or
           // moving into the global regime (frozenBoost > 0). Salts
-          // 701/719 stay distinct from every other surface pass — see
-          // "Hash-salt budget" in PLANET-RENDER-PLAN.md.
+          // SALT_ICE_PRIORITY.
           bool  capActive      = vGlobalness < CAP_GLOBALNESS_MAX;
           // Per-cell threshold jitter so the cap boundary follows the
           // worley grid's jittered shapes instead of reading as a clean
@@ -1214,13 +1256,12 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // scales with iceFrac so Mars's tiny cap (iceFrac 0.02) gets a
           // ~±0.01 wobble while Earth's larger cap (iceFrac 0.10) gets
           // ~±0.05 — clamped to keep very-small caps visible and very-
-          // large caps from dissolving into noise. Salts 233/239 distinct
-          // from every other surface pass.
-          float capJitterH    = hash21(winnerCell + vec2(vSeed * 233.0, vSeed * 239.0));
+          // large caps from dissolving into noise. Salts SALT_CAP_JITTER.
+          float capJitterH    = hash21(winnerCell + vSeed * SALT_CAP_JITTER);
           float capJitterAmp  = clamp(vIceFrac * 0.6, 0.01, 0.08);
           float capJitter     = (capJitterH - 0.5) * 2.0 * capJitterAmp;
           bool  capIcyHere    = capActive && (abs(latSinDisc) + capJitter) > (1.0 - vIceFrac);
-          float cellHashIce    = hash21(winnerCell + vec2(vSeed * 701.0, vSeed * 719.0));
+          float cellHashIce    = hash21(winnerCell + vSeed * SALT_ICE_PRIORITY);
           // Cold bodies push iceFrac toward 1.0 (Europa-class: cold AND
           // water-bearing → full shell rather than polar caps). Gated on
           // vIceFrac > 0 so the boost doesn't fabricate ice on a cold
@@ -1246,7 +1287,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // linea pass below carries the non-ice signal on those
           // bodies.
           vec2 contCell = floor(winnerCell / CONTINENT_GROUP);
-          vec2 contSalt = vec2(vSeed * 113.0, vSeed * 127.0);
+          vec2 contSalt = vSeed * SALT_CONTINENT;
           float contH = hash21(contCell + contSalt);
           bool  waterHere = contH < vWaterFrac;
           bool  liquidOceanHere = waterHere && vGlobalness < 0.5;
@@ -1298,7 +1339,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
               bool ring2 = (n2E >= vWaterFrac) || (n2W >= vWaterFrac)
                         || (n2N >= vWaterFrac) || (n2S >= vWaterFrac);
               if (ring2) {
-                float dH = hash21(floor(d) + vec2(vSeed * 257.0, vSeed * 379.0));
+                float dH = hash21(floor(d) + vSeed * SALT_COAST_DITHER);
                 if (dH < COAST_R2_COVERAGE) {
                   oceanCol = clamp(vOceanColor * (1.0 + COAST_LIGHT_DELTA), 0.0, 1.0);
                 }
@@ -1312,15 +1353,15 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // REGION_PATCH_FACTOR comment block above for the why.
           vec2 regionCell = floor(winnerCell / REGION_PATCH_FACTOR);
           ivec3 slots = pickRegionSlots(regionCell, vWeights.xyz, vSeed);
-          float resH = hash21(winnerCell + vec2(vSeed * 1009.0, vSeed * 2017.0));
+          float resH = hash21(winnerCell + vSeed * SALT_RESOURCE_PICK);
           int chosenSlot = (resH < SECONDARY_COVERAGE) ? slots.y : slots.x;
           vec3 landCol = slotColor(chosenSlot, vPalette0, vPalette1, vPalette2);
 
           // Biome stipple paints over land cells in the temperate band.
           // Per-pixel hash flips individual land pixels to the body's
           // biome color (archetype × stellar shift; see biomePaintFor).
-          // Salts (197, 311) distinct from continent / resource hashes
-          // so a single pixel doesn't draw the same noise stream twice.
+          // Salts SALT_BIOME_STIPPLE — distinct from the continent /
+          // resource hashes so one pixel never draws the same stream twice.
           // No-op when vBiomeCoverage is zero (no biome / banded /
           // sub-threshold disc).
           if (vBiomeCoverage > 0.0) {
@@ -1331,7 +1372,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             );
             float effective = vBiomeCoverage * taper;
             if (effective > 0.0) {
-              float bH = hash21(floor(d) + vec2(vSeed * 197.0, vSeed * 311.0));
+              float bH = hash21(floor(d) + vSeed * SALT_BIOME_STIPPLE);
               if (bH < effective) landCol = vBiomeColor;
             }
           }
@@ -1422,12 +1463,12 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             for (int dy = -3; dy <= 3; dy++) {
               vec2 off = vec2(float(dx), float(dy));
               vec2 nCell = craterCellId + off;
-              float existH = hash21(nCell + vec2(vSeed * 547.0, vSeed * 569.0));
+              float existH = hash21(nCell + vSeed * SALT_CRATER_EXIST);
               if (existH > craterDensity) continue;
-              float jx = hash21(nCell + vec2(vSeed * 587.0, vSeed * 547.0));
-              float jy = hash21(nCell + vec2(vSeed * 569.0, vSeed * 587.0));
+              float jx = hash21(nCell + vSeed * SALT_CRATER_JITTER_X);
+              float jy = hash21(nCell + vSeed * SALT_CRATER_JITTER_Y);
               vec2  cCenter = off + vec2(jx, jy);
-              float rH = hash21(nCell + vec2(vSeed * 569.0, vSeed * 547.0));
+              float rH = hash21(nCell + vSeed * SALT_CRATER_RADIUS);
               // Cubic bias: 50th percentile rH=0.5 → rH³=0.125 →
               // tiny crater; only rH > ~0.95 produces big craters.
               float radius = CRATER_RADIUS_MIN + (CRATER_RADIUS_MAX - CRATER_RADIUS_MIN) * rH * rH * rH;
@@ -1456,7 +1497,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
                 float craterMaxMul = mix(RAY_REACH_MAX_MUL, RAY_REACH_BIG_MUL, radiusNorm);
                 float rayMaxReach  = radius * craterMaxMul;
                 if (dist < rayMaxReach) {
-                  float craterAgeH = hash21(nCell + vec2(vSeed * 631.0, vSeed * 641.0));
+                  float craterAgeH = hash21(nCell + vSeed * SALT_CRATER_AGE);
                   if (craterAgeH < RAY_AGE_THRESHOLD) {
                     // Size-driven ray count: tiny crater → MIN, big
                     // crater → MAX. Clamp guards the radiusNorm = 1
@@ -1464,7 +1505,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
                     float numRays = clamp(
                       RAY_COUNT_MIN + floor(radiusNorm * (RAY_COUNT_MAX - RAY_COUNT_MIN + 1.0)),
                       RAY_COUNT_MIN, RAY_COUNT_MAX);
-                    float baseAngle = hash21(nCell + vec2(vSeed * 653.0, vSeed * 659.0)) * TWO_PI;
+                    float baseAngle = hash21(nCell + vSeed * SALT_RAY_ANGLE) * TWO_PI;
                     vec2  toFrag    = craterCellFrac - cCenter;
                     float angle     = atan(toFrag.y, toFrag.x);
                     float angleStep = TWO_PI / numRays;
@@ -1477,7 +1518,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
                     // across fragments inside one ray. Per-crater
                     // craterMaxMul caps the upper end so big craters
                     // can throw longer rays than small ones.
-                    float perRayH   = hash21(nCell + vec2(vSeed * 677.0 + wedgeIdx, vSeed * 683.0));
+                    float perRayH   = hash21(nCell + vSeed * SALT_RAY_PERRAY + vec2(wedgeIdx, 0.0));
                     float perRayReach = radius * mix(RAY_REACH_MIN_MUL, craterMaxMul, perRayH);
                     if (dist < perRayReach) {
                       // Pixel-width tolerance: RAY_PIXEL_WIDTH px wide
@@ -1522,8 +1563,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             // region-boundary seams the surface pass would normally
             // honor.
             vec2 paintCraterId = inCrater ? bestCraterId : bestRayCraterId;
-            float pjx = hash21(paintCraterId + vec2(vSeed * 587.0, vSeed * 547.0));
-            float pjy = hash21(paintCraterId + vec2(vSeed * 569.0, vSeed * 587.0));
+            float pjx = hash21(paintCraterId + vSeed * SALT_CRATER_JITTER_X);
+            float pjy = hash21(paintCraterId + vSeed * SALT_CRATER_JITTER_Y);
             vec2  pCenter = (paintCraterId + vec2(pjx, pjy)) * CRATER_PATCH_FACTOR;
             vec2  pRegionCell = floor(pCenter / REGION_PATCH_FACTOR);
             ivec3 pSlots = pickRegionSlots(pRegionCell, vWeights.xyz, vSeed);
@@ -1551,13 +1592,12 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // reads as a sparse crisscross rather than every-cell-edge.
           // The edge key is winnerCell + secondCell (commutative, so
           // the same edge keyed identically regardless of which side
-          // the fragment is on). Salts 743/761 — distinct primes from
-          // every other surface-pass salt.
+          // the fragment is on). Salts SALT_LINEA_EDGE.
           if (icyHere && (vIceFrac * vSurfaceAge) > LINEA_BODY_THRESHOLD) {
             float edgeDist = sqrt(secondMinDist2) - sqrt(minDist2);
             if (edgeDist < LINEA_WIDTH_FRAC) {
               vec2 edgeKey = winnerCell + secondCell;
-              float edgeH = hash21(edgeKey + vec2(vSeed * 743.0, vSeed * 761.0));
+              float edgeH = hash21(edgeKey + vSeed * SALT_LINEA_EDGE);
               if (edgeH < LINEA_DENSITY) {
                 col = resourceSubsurface;
               }
@@ -1642,19 +1682,19 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // centers. F2 is consulted by the edge-dither check below — the
           // distance to the F1/F2 boundary tells us how far inside our
           // own cell we are, and whether the neighbor would have fired.
-          // Per-layer salt folds layerSeed into the base 991/997, 1013/
-          // 1019 pairs so each deck's cells land on different positions.
+          // The LAYER_SALT_* pairs fold layerSeed into the base cloud salts
+          // so each deck's cells land on different positions.
           float minD2, secondD2;
           vec2 winnerCell, secondCell;
           worleyF1F2(cellId, cellFrac,
-                     vec2(vSeed * 991.0 + layerSeed * 13.0, vSeed * 997.0 + layerSeed * 17.0),
-                     vec2(vSeed * 1013.0 + layerSeed * 19.0, vSeed * 1019.0 + layerSeed * 23.0),
+                     vSeed * SALT_CLOUD_JITTER_A + layerSeed * LAYER_SALT_CLOUD_JIT_A,
+                     vSeed * SALT_CLOUD_JITTER_B + layerSeed * LAYER_SALT_CLOUD_JIT_B,
                      winnerCell, secondCell, minD2, secondD2);
 
           // Existence gate — binary per-cell hash. Cells whose hash sits
           // below coverage paint the deck; above this they skip, revealing
           // the next-deeper deck (or surface / atmColumnColor beneath).
-          float existH = hash21(winnerCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
+          float existH = hash21(winnerCell + vSeed * SALT_CLOUD_EXIST + layerSeed * LAYER_SALT_CLOUD_EXIST);
           if (existH >= coverage) continue;
 
           // Edge dither — two cases share one boundary-distance metric
@@ -1667,7 +1707,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // tighter cell-aspect axis to convert to env-pixels: in banded
           // cells the visible boundaries run along the lat-stretched axis,
           // so the lat dimension is the one we care about.
-          float existH2 = hash21(secondCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
+          float existH2 = hash21(secondCell + vSeed * SALT_CLOUD_EXIST + layerSeed * LAYER_SALT_CLOUD_EXIST);
           float boundaryWorley = (sqrt(secondD2) - sqrt(minD2)) * 0.5;
           float boundaryPx = boundaryWorley * min(cellAspect.x, cellAspect.y);
           float t = clamp(boundaryPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
@@ -1705,7 +1745,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // without introducing alien hues. ljCell is F1 except at
           // band/band boundaries where the symmetric dither above swaps
           // in F2.
-          float lj = (hash11(ljCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
+          float lj = (hash11(ljCell.y + vSeed * SALT_BAND_LIGHTNESS + layerSeed * LAYER_SALT_BAND) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
           vec3 cloudCol = clamp(deckColor + vec3(lj), 0.0, 1.0);
 
           // Haze pre-tint by altitude — deep decks read as more
