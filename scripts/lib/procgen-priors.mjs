@@ -1776,10 +1776,32 @@ export const CONDENSABLES = [
   },
 ];
 
-// Haze layer is derived directly from body physics in procgen.mjs's
-// hazeFor — per-species formation gates consult atm + T + P rather than
-// looking up a regime-keyed spec. See hazeContribution for the
-// per-species gates and calibration anchors.
+// Haze aerosol formation gates — per-species calibration windows consumed
+// by hazeContribution in procgen.mjs. The haze layer is still derived from
+// body physics (atm + T + P), not a regime-keyed spec; these are the tuning
+// edges those gates read. Each `[lo, hi]` pair is a smoothstep window;
+// peaked species combine a `tempRise` against `1 − tempFall`. Calibration
+// anchors (the regimes each window is centered on) are documented on the
+// consuming case in hazeContribution: Titan ~95K THOLIN, Jupiter ~165K
+// NH4SH, Saturn ~125K CHROMOPHORE, GJ 1214 b ~600K SALT, Venus ~720K H2SO4,
+// Io-class SULFUR, hot-Jupiter SILICATE.
+export const HAZE_GATES = {
+  THOLIN:      { tempRise: [40, 95],   tempFall: [95, 150],   ch4: [0.001, 0.04], n2: [0.1, 0.6] },
+  NH4SH:       { tempRise: [120, 165], tempFall: [165, 225] },
+  CHROMOPHORE: { tempRise: [90, 125],  tempFall: [125, 180] },
+  SALT:        { tempRise: [250, 625], tempFall: [625, 950] },
+  H2SO4:       { tempRise: [500, 720], tempFall: [720, 1100], press: [5, 150] },
+  SULFUR:      { tempRise: [250, 400], tempFall: [400, 800],  so2: [0.01, 0.3], pressFall: [0.5, 5], dryFall: [0.0, 0.2] },
+  SILICATE:    { tempRise: [900, 1500] },
+};
+
+// Lifted mineral-dust gate — terrestrial, dry surface, thin atmosphere,
+// moderate T (not frozen, not boiled). `maxPressureBar` is a hard cutoff
+// (thicker air can't keep grains airborne); `pressFall` is the smoothstep
+// that tapers strength toward it.
+export const DUST_GATE = {
+  dryFall: [0.0, 0.3], pressFall: [0.001, 1], tempRise: [150, 200], tempFall: [300, 400], maxPressureBar: 1,
+};
 
 // Resource occurrence — the resource grid is no longer a physics-derived
 // bulk-composition readout. It records the body's NOTABLE MINERAL DEPOSITS:

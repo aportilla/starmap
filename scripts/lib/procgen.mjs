@@ -85,6 +85,8 @@ import {
   INCLINATION_DEG,
   AXIAL_TILT_DEG,
   sampleBulkFraction,
+  HAZE_GATES,
+  DUST_GATE,
   SNOW_LINE_TEMPERATURES,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
@@ -1045,6 +1047,7 @@ function hazeContribution(gas, body) {
   const P = body.surfacePressureBar;
   const r = body.radiusEarth;
   const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  const spec = HAZE_GATES[gas];
 
   switch (gas) {
     case 'THOLIN': {
@@ -1057,7 +1060,7 @@ function hazeContribution(gas, body) {
       // escape and sublimation faster than aerosols can form.
       if (isGaseous) return 0;
       if (T == null) return 0;
-      const tempGate = smoothstep(40, 95, T) * (1 - smoothstep(95, 150, T));
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
       if (tempGate === 0) return 0;
       const ch4Frac = atmFracOf(body, 'CH4');
       const n2Frac  = atmFracOf(body, 'N2');
@@ -1066,8 +1069,8 @@ function hazeContribution(gas, body) {
       // flux (captured by tempGate as a T proxy) rather than precursor
       // supply. Bodies with sub-Titan CH4 still ramp in via the lower
       // edge.
-      const ch4Gate = smoothstep(0.001, 0.04, ch4Frac);
-      const n2Gate  = smoothstep(0.1, 0.6, n2Frac);
+      const ch4Gate = smoothstep(spec.ch4[0], spec.ch4[1], ch4Frac);
+      const n2Gate  = smoothstep(spec.n2[0], spec.n2[1], n2Frac);
       return tempGate * ch4Gate * n2Gate;
     }
     case 'NH4SH': {
@@ -1078,7 +1081,7 @@ function hazeContribution(gas, body) {
       if (!isGaseous) return 0;
       if (T == null) return 0;
       if (!hasCloudDeck(body, 'NH3')) return 0;
-      const tempGate = smoothstep(120, 165, T) * (1 - smoothstep(165, 225, T));
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
       return tempGate;
     }
     case 'CHROMOPHORE': {
@@ -1088,7 +1091,7 @@ function hazeContribution(gas, body) {
       if (!isGaseous) return 0;
       if (T == null) return 0;
       if (!hasCloudDeck(body, 'NH3')) return 0;
-      const tempGate = smoothstep(90, 125, T) * (1 - smoothstep(125, 180, T));
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
       return tempGate;
     }
     case 'SALT': {
@@ -1096,7 +1099,7 @@ function hazeContribution(gas, body) {
       // regime. GJ 1214 b anchor at ~600K cloud tops.
       if (!isGaseous) return 0;
       if (T == null) return 0;
-      const tempGate = smoothstep(250, 625, T) * (1 - smoothstep(625, 950, T));
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
       return tempGate;
     }
     case 'H2SO4': {
@@ -1104,8 +1107,8 @@ function hazeContribution(gas, body) {
       // pressure. Above ~1000K H2SO4 dissociates back to SO3 + H2O.
       if (isGaseous) return 0;
       if (T == null || P == null) return 0;
-      const tempGate = smoothstep(500, 720, T) * (1 - smoothstep(720, 1100, T));
-      const pressGate = smoothstep(5, 150, P);
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
+      const pressGate = smoothstep(spec.press[0], spec.press[1], P);
       return tempGate * pressGate;
     }
     case 'SULFUR': {
@@ -1114,12 +1117,12 @@ function hazeContribution(gas, body) {
       if (isGaseous) return 0;
       if (T == null || P == null) return 0;
       const so2Frac = atmFracOf(body, 'SO2');
-      const so2Gate = smoothstep(0.01, 0.3, so2Frac);
+      const so2Gate = smoothstep(spec.so2[0], spec.so2[1], so2Frac);
       if (so2Gate === 0) return 0;
-      const tempGate = smoothstep(250, 400, T) * (1 - smoothstep(400, 800, T));
-      const pressGate = 1 - smoothstep(0.5, 5, P);
+      const tempGate = smoothstep(spec.tempRise[0], spec.tempRise[1], T) * (1 - smoothstep(spec.tempFall[0], spec.tempFall[1], T));
+      const pressGate = 1 - smoothstep(spec.pressFall[0], spec.pressFall[1], P);
       const waterFrac = body.waterFraction ?? 0;
-      const dryGate = 1 - smoothstep(0.0, 0.2, waterFrac);
+      const dryGate = 1 - smoothstep(spec.dryFall[0], spec.dryFall[1], waterFrac);
       return tempGate * so2Gate * pressGate * dryGate;
     }
     case 'SILICATE': {
@@ -1127,7 +1130,7 @@ function hazeContribution(gas, body) {
       // extreme insolation. Hot gas-giant / hot sub-Neptune only.
       if (!isGaseous) return 0;
       if (T == null) return 0;
-      return smoothstep(900, 1500, T);
+      return smoothstep(spec.tempRise[0], spec.tempRise[1], T);
     }
     default:
       return 0;
@@ -1146,13 +1149,13 @@ function dustStrengthFor(body) {
   if (r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return 0;
   if (T == null || P == null) return 0;
   // Dust suspends in any non-zero atmosphere — mineral grains entrain
-  // at any pressure including Mars's 0.006 bar. Upper cap at 1 bar:
+  // at any pressure including Mars's 0.006 bar. Upper cap (maxPressureBar):
   // thicker air becomes too dense to keep dust airborne.
-  if (P <= 0 || P > 1) return 0;
+  if (P <= 0 || P > DUST_GATE.maxPressureBar) return 0;
   const waterFrac = body.waterFraction ?? 0;
-  const dryGate = 1 - smoothstep(0.0, 0.3, waterFrac);
-  const pressGate = 1 - smoothstep(0.001, 1, P);
-  const tempGate = smoothstep(150, 200, T) * (1 - smoothstep(300, 400, T));
+  const dryGate = 1 - smoothstep(DUST_GATE.dryFall[0], DUST_GATE.dryFall[1], waterFrac);
+  const pressGate = 1 - smoothstep(DUST_GATE.pressFall[0], DUST_GATE.pressFall[1], P);
+  const tempGate = smoothstep(DUST_GATE.tempRise[0], DUST_GATE.tempRise[1], T) * (1 - smoothstep(DUST_GATE.tempFall[0], DUST_GATE.tempFall[1], T));
   return Number((dryGate * pressGate * tempGate).toFixed(3));
 }
 
