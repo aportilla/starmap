@@ -886,6 +886,122 @@ function attachBodies(stars, rawBodies) {
   return { stars: finalStars, bodies: finalBodies };
 }
 
+// Partial-anchor synthesis — catalog rows that arrived with a host and a
+// period column but no measured mass (transit-only detections, direct-
+// imaging companions whose mass is too poorly constrained to record).
+// Without this pass `radiusFromMass(null)` returns null, the Filler's
+// terrestrial branch needs T which needs S which needs mass for pressure,
+// and the body cascades to a featureless gray disc with `worldClass=null`.
+// Runs ahead of the moon + ring backfill so generateMoons / generateRing
+// see populated anchors. Curated systems (Sol) bypass this for the same
+// reason they bypass moon backfill — their CSV is authoritative. Mutates the
+// matching rawBodies rows in place (massEarth / radiusEarth / semiMajorAu +
+// _unknowns).
+function synthesizePartialAnchors(rawBodies, starById) {
+  const diskCtxCache = new Map();
+  const getDiskCtx = (starId) => {
+    if (!diskCtxCache.has(starId)) {
+      const s = starById.get(starId);
+      diskCtxCache.set(starId, s ? starDiskContext(s) : null);
+    }
+    return diskCtxCache.get(starId);
+  };
+  for (const body of rawBodies) {
+    if (body.kind !== 'planet') continue;
+    if (body.source !== 'catalog') continue;
+    if (body.massEarth != null) continue;
+    if (CURATED_SYSTEM_HOSTS.has(body.hostId)) continue;
+    const host = starById.get(body.hostId);
+    if (!host) continue;
+    // The synthesis needs a formation orbit. Kepler-derive semiMajorAu
+    // from periodDays on the fly here (the Filler does the same a step
+    // later — we just need it available now). Write through so the
+    // moon + ring backfill below sees the same value.
+    if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
+      body.semiMajorAu = Number(keplerSemiMajorAu(body.periodDays, host.mass).toFixed(5));
+      const u = body._unknowns;
+      if (Array.isArray(u)) {
+        const idx = u.indexOf('semiMajorAu');
+        if (idx >= 0) u.splice(idx, 1);
+      }
+    }
+    const diskCtx = getDiskCtx(host.id);
+    if (!diskCtx) continue;
+    const synth = synthesizePartialAnchor(host, body, diskCtx);
+    if (!synth) continue;
+    body.massEarth = synth.massEarth;
+    body.radiusEarth = synth.radiusEarth;
+    // Strip from _unknowns so the Filler treats these as anchors rather
+    // than re-deriving — load-bearing for radius, whose Filler path
+    // (`radiusFromMass(mass)`) would overwrite the scattered radius we
+    // just sampled with the plain piecewise mean.
+    if (Array.isArray(body._unknowns)) {
+      body._unknowns = body._unknowns.filter(f => f !== 'massEarth' && f !== 'radiusEarth');
+    }
+  }
+}
+
+// Moon + ring backfill — observed exoplanets almost never carry moon or ring
+// coverage in the catalog (RV/transit detection bias against picking out
+// satellite signals), so without this pass every catalog planet would
+// surface moonless and ringless in-game, contradicting the catalog-is-
+// incomplete bias the rest of the procgen pipeline assumes. For each catalog
+// planet that arrived with no moons / ring in the CSV, derive a transient
+// worldClass + anchors from its mass and orbital context and run the
+// Architect's generators (the Filler writes the planet's own
+// worldClass/temp/pressure authoritatively a step later — the class here is
+// just a moon-count bucket). Curated systems (Sol today) are exempt: their
+// empty moon/ring lists are the catalog's "really none," not "we don't know."
+// Reads rawBodies (and may backfill planet.radiusEarth in place); returns the
+// new moon + ring bodies to append.
+function backfillMoonsAndRings(rawBodies, starById) {
+  const catalogMoonHosts = new Set(rawBodies.filter(b => b.kind === 'moon').map(b => b.hostId));
+  const catalogRingHosts = new Set(rawBodies.filter(b => b.kind === 'ring').map(b => b.hostId));
+  const backfillMoons = [];
+  const backfillRings = [];
+  for (const planet of rawBodies) {
+    if (planet.kind !== 'planet') continue;
+    if (CURATED_SYSTEM_HOSTS.has(planet.hostId)) continue;
+    if (planet.massEarth == null) continue;  // no anchor → moon Kepler would NaN
+    const host = starById.get(planet.hostId);
+    if (!host) continue;
+    // Catalog rows sometimes ship without radius. Backfill mass→radius
+    // here so generateRing's R_p² roll has a number to work with — the
+    // Filler will set the same value later, this just hoists it earlier.
+    if (planet.radiusEarth == null) {
+      const r = radiusFromMass(planet.massEarth);
+      if (r == null) continue;
+      planet.radiusEarth = r;
+    }
+    // RV-discovery catalog rows often carry periodDays but no semiMajorAu —
+    // the Filler will Kepler-derive it later, but the backfill runs first,
+    // so derive on the fly here to get a usable formation-zone proxy.
+    let aBackfill = planet.semiMajorAu;
+    if (aBackfill == null && planet.periodDays != null && host.mass > 0) {
+      aBackfill = Number(keplerSemiMajorAu(planet.periodDays, host.mass).toFixed(5));
+    }
+    // Moons + rings both inherit the host planet's formation zone — moons
+    // for bulk composition, rings for water-ice vs rocky-debris feed.
+    // Catalog planets don't carry formationAu (architect-only); fall back
+    // to the host's current semiMajorAu as the in-situ formation proxy.
+    // Frost lines are deterministic from host mass.
+    const hostFormationAu = planet.formationAu ?? aBackfill;
+    const frostLinesAu = frostLineTrio(host.mass);
+    if (!catalogMoonHosts.has(planet.id)) {
+      backfillMoons.push(...generateMoons(planet, host, hostFormationAu, frostLinesAu));
+    }
+    // Ring backfill mirrors the moon backfill: the catalog is silent on
+    // rings (transit + RV detection methods don't surface them), so we
+    // sample one per planet using the same per-(planet, salt) seeding
+    // the architect uses for in-line rings around procgen planets.
+    if (!catalogRingHosts.has(planet.id)) {
+      const ring = generateRing(planet, hostFormationAu, frostLinesAu);
+      if (ring) backfillRings.push(ring);
+    }
+  }
+  return { backfillMoons, backfillRings };
+}
+
 // =============================================================================
 // Main
 // =============================================================================
@@ -1024,117 +1140,11 @@ async function main() {
 
   const starById = new Map(placedStars.map(s => [s.id, s]));
 
-  // Partial-anchor synthesis — catalog rows that arrived with a host
-  // and a period column but no measured mass (transit-only detections,
-  // direct-imaging companions whose mass is too poorly constrained to
-  // record). Without this pass `radiusFromMass(null)` returns null, the
-  // Filler's terrestrial branch needs T which needs S which needs mass
-  // for pressure, and the body cascades to a featureless gray disc
-  // with `worldClass=null`. The synthesis sits ahead of the moon and
-  // ring backfill below so generateMoons / generateRing see populated
-  // anchors. Curated systems (Sol) bypass this for the same reason
-  // they bypass moon backfill — their CSV is authoritative.
-  const diskCtxCache = new Map();
-  const getDiskCtx = (starId) => {
-    if (!diskCtxCache.has(starId)) {
-      const s = starById.get(starId);
-      diskCtxCache.set(starId, s ? starDiskContext(s) : null);
-    }
-    return diskCtxCache.get(starId);
-  };
-  for (const body of rawBodies) {
-    if (body.kind !== 'planet') continue;
-    if (body.source !== 'catalog') continue;
-    if (body.massEarth != null) continue;
-    if (CURATED_SYSTEM_HOSTS.has(body.hostId)) continue;
-    const host = starById.get(body.hostId);
-    if (!host) continue;
-    // The synthesis needs a formation orbit. Kepler-derive semiMajorAu
-    // from periodDays on the fly here (the Filler does the same a step
-    // later — we just need it available now). Write through so the
-    // moon + ring backfill below sees the same value.
-    if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
-      body.semiMajorAu = Number(keplerSemiMajorAu(body.periodDays, host.mass).toFixed(5));
-      const u = body._unknowns;
-      if (Array.isArray(u)) {
-        const idx = u.indexOf('semiMajorAu');
-        if (idx >= 0) u.splice(idx, 1);
-      }
-    }
-    const diskCtx = getDiskCtx(host.id);
-    if (!diskCtx) continue;
-    const synth = synthesizePartialAnchor(host, body, diskCtx);
-    if (!synth) continue;
-    body.massEarth = synth.massEarth;
-    body.radiusEarth = synth.radiusEarth;
-    // Strip from _unknowns so the Filler treats these as anchors rather
-    // than re-deriving — load-bearing for radius, whose Filler path
-    // (`radiusFromMass(mass)`) would overwrite the scattered radius we
-    // just sampled with the plain piecewise mean.
-    if (Array.isArray(body._unknowns)) {
-      body._unknowns = body._unknowns.filter(f => f !== 'massEarth' && f !== 'radiusEarth');
-    }
-  }
-
-  // Moon backfill — observed exoplanets almost never have moon coverage
-  // in the catalog (RV/transit detection bias against picking out
-  // satellite signals), so without this pass every catalog planet would
-  // surface as moonless in-game, contradicting the catalog-is-incomplete
-  // bias the rest of the procgen pipeline assumes. For each catalog
-  // planet that arrived with no moons in the CSV, derive a transient
-  // worldClass + planet type from its mass and orbital context and run
-  // the Architect's moon generator. The Filler will write the planet's
-  // own worldClass/temp/pressure authoritatively a step later — we only
-  // derive a class here as a moon-count bucket, not to persist it.
-  //
-  // Curated systems (Sol today) are exempt: their CSV is authoritative,
-  // so an empty moon list for Mercury / Venus is the catalog's "really
-  // none" rather than a "we don't know" — backfilling would invent
-  // moons that contradict the curated truth.
-  const catalogMoonHosts = new Set(rawBodies.filter(b => b.kind === 'moon').map(b => b.hostId));
-  const catalogRingHosts = new Set(rawBodies.filter(b => b.kind === 'ring').map(b => b.hostId));
-  const backfillMoons = [];
-  const backfillRings = [];
-  for (const planet of rawBodies) {
-    if (planet.kind !== 'planet') continue;
-    if (CURATED_SYSTEM_HOSTS.has(planet.hostId)) continue;
-    if (planet.massEarth == null) continue;  // no anchor → moon Kepler would NaN
-    const host = starById.get(planet.hostId);
-    if (!host) continue;
-    // Catalog rows sometimes ship without radius. Backfill mass→radius
-    // here so generateRing's R_p² roll has a number to work with — the
-    // Filler will set the same value later, this just hoists it earlier.
-    if (planet.radiusEarth == null) {
-      const r = radiusFromMass(planet.massEarth);
-      if (r == null) continue;
-      planet.radiusEarth = r;
-    }
-    // RV-discovery catalog rows often carry periodDays but no semiMajorAu —
-    // the Filler will Kepler-derive it later, but the backfill runs first,
-    // so derive on the fly here to get a usable formation-zone proxy.
-    let aBackfill = planet.semiMajorAu;
-    if (aBackfill == null && planet.periodDays != null && host.mass > 0) {
-      aBackfill = Number(keplerSemiMajorAu(planet.periodDays, host.mass).toFixed(5));
-    }
-    // Moons + rings both inherit the host planet's formation zone — moons
-    // for bulk composition, rings for water-ice vs rocky-debris feed.
-    // Catalog planets don't carry formationAu (architect-only); fall back
-    // to the host's current semiMajorAu as the in-situ formation proxy.
-    // Frost lines are deterministic from host mass.
-    const hostFormationAu = planet.formationAu ?? aBackfill;
-    const frostLinesAu = frostLineTrio(host.mass);
-    if (!catalogMoonHosts.has(planet.id)) {
-      backfillMoons.push(...generateMoons(planet, host, hostFormationAu, frostLinesAu));
-    }
-    // Ring backfill mirrors the moon backfill: the catalog is silent on
-    // rings (transit + RV detection methods don't surface them), so we
-    // sample one per planet using the same per-(planet, salt) seeding
-    // the architect uses for in-line rings around procgen planets.
-    if (!catalogRingHosts.has(planet.id)) {
-      const ring = generateRing(planet, hostFormationAu, frostLinesAu);
-      if (ring) backfillRings.push(ring);
-    }
-  }
+  // Synthesize partial anchors first (mutates rawBodies so the backfill
+  // sees populated mass/radius/orbit), then backfill moons + rings. See
+  // each function's header for the detection-bias rationale.
+  synthesizePartialAnchors(rawBodies, starById);
+  const { backfillMoons, backfillRings } = backfillMoonsAndRings(rawBodies, starById);
 
   const allBodies = [...rawBodies, ...procgenBodies, ...overlayBodies, ...floorBelts, ...backfillMoons, ...backfillRings];
 
