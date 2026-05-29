@@ -1893,6 +1893,16 @@ const RESOURCE_OCCURRENCE_TUNE = {
 
 export const RESOURCE_OCCURRENCE = mergeTunes(RESOURCE_OCCURRENCE_REALISTIC, RESOURCE_OCCURRENCE_TUNE);
 
+// Canonical resource-grid field order — the key list for every two-deposit
+// draw (planets/moons via RESOURCE_OCCURRENCE, belts via
+// BELT_RESOURCE_OCCURRENCE). Single-sourced here so the two procgen consumers
+// can't drift; the runtime `ResourceKey` union in src/data/stars.ts mirrors it
+// across the .ts/.mjs boundary (structurally forced — keep it in sync by hand).
+export const RESOURCE_KEYS = [
+  'resMetals', 'resSilicates', 'resVolatiles',
+  'resRareEarths', 'resRadioactives', 'resExotics',
+];
+
 // ---------------------------------------------------------------------------
 // Biosphere — three orthogonal derived fields: archetype × complexity × surface impact
 // ---------------------------------------------------------------------------

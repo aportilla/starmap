@@ -126,6 +126,7 @@ import {
   BIOSPHERE_ARCHETYPES,
   BIOSPHERE_COMPLEXITY,
   RESOURCE_OCCURRENCE,
+  RESOURCE_KEYS,
 } from './procgen-priors.mjs';
 
 // Per-archetype productivity field — used by the CSV-authored biosphere
@@ -142,7 +143,7 @@ const BIOTIC_FIELD_BY_ARCH = {
 };
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
-import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
+import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS, SIGMA_SB, SOLAR_CONSTANT } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
   return mulberry32(hash32(`${body.id}:${field}:${PROCGEN_VERSION}`));
@@ -152,8 +153,6 @@ function fieldPrng(body, field) {
 // Physics helpers
 // =============================================================================
 
-const SIGMA_SB = 5.670374e-8;   // Stefan-Boltzmann constant (W/m²/K⁴)
-const SOLAR_CONSTANT = 1361;    // Solar irradiance at 1 AU (W/m²)
 const BOLTZMANN = 1.380649e-23; // Boltzmann constant (J/K)
 const ATOMIC_MASS_UNIT = 1.66053906660e-27;  // amu in kg
 const GRAV_CONSTANT = 6.6743e-11;            // m³/(kg·s²)
@@ -439,7 +438,7 @@ function greenhouseKFromComposition(body) {
 // gasDwarfRadius) return bare T_eq — no surface, no greenhouse term.
 function avgSurfaceTempFromAlbedo(radiusEarth, S, bondAlbedo, greenhouseK) {
   if (S == null) return null;
-  const tEq = Math.pow((S * SOLAR_CONSTANT * (1 - bondAlbedo)) / (4 * SIGMA_SB), 0.25);
+  const tEq = equilibriumTempK(S, bondAlbedo);
   if (radiusEarth != null && radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) {
     return Math.round(tEq);  // gaseous body — cloud-top equilibrium
   }
@@ -497,7 +496,7 @@ function surfacePressureFor(body, S) {
   if (body.massEarth == null || body.radiusEarth == null || S == null) return null;
   // Gaseous bodies have no surface — radius gate replaces the old
   // worldClass check, decoupling pressure derivation from class.
-  if (body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return null;
+  if (isGaseousBody(body)) return null;
   const tEq = equilibriumTempK(S);
   const retention = atmosphericRetention(body.massEarth, body.radiusEarth, body.magneticFieldGauss, tEq);
   if (retention == null) return null;
@@ -615,15 +614,14 @@ function surfaceIceCover(bulkWater, T_mean, T_pole, surfacePressureBar, noiseMul
 // surface (radius >= gasDwarfRadius).
 function surfaceAgeFor(body, hostBody) {
   if (body.radiusEarth == null) return null;
-  if (body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return null;
+  if (isGaseousBody(body)) return null;
   if (body.tectonicActivity == null) return null;
   const noise = sampleTruncated(fieldPrng(body, 'surfaceAge'), SURFACE_AGE_FROM_TECTONIC.noise);
   let age = Math.pow(body.tectonicActivity, SURFACE_AGE_FROM_TECTONIC.exponent) * noise;
   // Tidal-heating lift for eccentric moons of gaseous hosts. Host gate
   // is now radius-based (was class-based) — same physical bodies, no
   // worldClass dependency.
-  const hostIsGaseous = hostBody?.radiusEarth != null &&
-    hostBody.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  const hostIsGaseous = hostBody != null && isGaseousBody(hostBody);
   if (body.kind === 'moon' && hostIsGaseous && body.eccentricity != null) {
     const e = body.eccentricity;
     const { eThreshold, eMaxNormalize, liftAmount } = SURFACE_AGE_TIDAL_LIFT;
@@ -693,7 +691,7 @@ function magneticFieldGaussFor(body) {
   const cap = MAGNETIC_FIELD.capBase * Math.pow(body.massEarth, MAGNETIC_FIELD.capExponent);
   const noise = sampleTruncated(fieldPrng(body, 'magneticFieldGauss'), MAGNETIC_FIELD.noise);
   // Gaseous body — deep convective dynamo, not core-driven
-  if (body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) {
+  if (isGaseousBody(body)) {
     return Number((cap * MAGNETIC_FIELD.giantBoost * noise).toFixed(4));
   }
   // Terrestrial — gate on tectonic + rotation
@@ -780,7 +778,7 @@ function atmosphereRegimeFor(body) {
   if (body.surfacePressureBar != null && body.surfacePressureBar < ATMOSPHERE_MIN_PRESSURE_BAR) {
     return null;
   }
-  if (body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) {
+  if (isGaseousBody(body)) {
     return 'primary';
   }
   if (body.avgSurfaceTempK != null && body.avgSurfaceTempK < ATMOSPHERE_REGIME_THRESHOLDS.coldTempMaxK) {
@@ -864,9 +862,7 @@ function atmosphereFor(body, S) {
 // possible later (partial gas-giant rents) but for now this is
 // binary, driven by world class.
 function surfaceOpacityFor(body) {
-  const r = body.radiusEarth;
-  const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
-  return isGaseous ? 0 : 1;
+  return isGaseousBody(body) ? 0 : 1;
 }
 
 // Per-body cloud-deck emission via per-species condensation gates —
@@ -1043,8 +1039,7 @@ function atmFracOf(body, gas) {
 function hazeContribution(gas, body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
-  const r = body.radiusEarth;
-  const isGaseous = r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  const isGaseous = isGaseousBody(body);
   const spec = HAZE_GATES[gas];
 
   switch (gas) {
@@ -1143,8 +1138,7 @@ const HAZE_AEROSOL_SPECIES = ['THOLIN', 'NH4SH', 'CHROMOPHORE', 'SALT', 'H2SO4',
 function dustStrengthFor(body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
-  const r = body.radiusEarth;
-  if (r != null && r >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) return 0;
+  if (isGaseousBody(body)) return 0;
   if (T == null || P == null) return 0;
   // Dust suspends in any non-zero atmosphere — mineral grains entrain
   // at any pressure including Mars's 0.006 bar. Upper cap (maxPressureBar):
@@ -1181,11 +1175,6 @@ function hazeFor(body) {
 // Resources — context-weighted probabilistic occurrence
 // =============================================================================
 
-const RESOURCE_KEYS = [
-  'resMetals', 'resSilicates', 'resVolatiles',
-  'resRareEarths', 'resRadioactives', 'resExotics',
-];
-
 // Bulk silicate-rock fraction on the resource 0..10 scale. Silicate rock is
 // ubiquitous — it's whatever isn't metal core or water/ice — so biosphere
 // SUBSTRATE reads use this physical bulk estimate rather than the resource
@@ -1221,10 +1210,8 @@ function resourcesFor(body, hostStar, hostBody) {
   const cls = hostStar?.cls;
   const metallicity = cls ? meanMetallicityForClass(cls) : 0;
   const stellarAge = cls ? meanAgeForClass(cls) : 5;
-  const isGaseous = body.radiusEarth != null &&
-    body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
-  const hostIsGaseous = hostBody?.radiusEarth != null &&
-    hostBody.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  const isGaseous = isGaseousBody(body);
+  const hostIsGaseous = hostBody != null && isGaseousBody(hostBody);
   const ctx = {
     hot:           T != null && T >= C.hotK,
     cold:          T != null && T <= C.coldK,

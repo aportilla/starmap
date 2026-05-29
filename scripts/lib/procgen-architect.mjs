@@ -150,19 +150,13 @@ import {
   RING_EXTENT,
   RING_RESOURCE_ICY,
   RING_RESOURCE_ROCKY,
+  RESOURCE_KEYS,
 } from './procgen-priors.mjs';
 
 // =============================================================================
 // Sampling helpers
 // =============================================================================
 
-// Resource-grid field order — mirrors RESOURCE_KEYS in procgen.mjs + the
-// ResourceKey union in src/data/stars.ts. Used as the key list for the
-// belt two-deposit draw (drawWeightedDeposits).
-const RESOURCE_KEYS = [
-  'resMetals', 'resSilicates', 'resVolatiles',
-  'resRareEarths', 'resRadioactives', 'resExotics',
-];
 
 // Per-(star, slot, salt) PRNG. slot=-1 reserved for system-level draws
 // (planet count, etc.) that aren't tied to a specific orbital slot.

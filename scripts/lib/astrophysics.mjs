@@ -10,6 +10,11 @@ import { SNOW_LINE_TEMPERATURES } from './procgen-priors.mjs';
 // shared so the Architect, Filler, and these helpers all spell it once.
 export const EARTH_PER_SOLAR_MASS = 333000;
 
+// Radiative-equilibrium constants, single-sourced here so the frost-line and
+// equilibrium-temperature relations (in the Filler) agree to the last digit.
+export const SIGMA_SB = 5.670374e-8;   // Stefan-Boltzmann constant (W/m²/K⁴)
+export const SOLAR_CONSTANT = 1361;    // Solar irradiance at 1 AU (W/m²)
+
 // Stellar luminosity in solar units from mass in solar units.
 // Piecewise empirical: M dwarfs follow a shallower relation than FGK+
 // (Eker et al. 2015). The 0.43 M☉ break point is the conventional
@@ -113,10 +118,10 @@ export function meanAgeForClass(cls) {
 // black so albedo is omitted (A ≈ 0); the bare formula reproduces the
 // conventional 2.7 AU water frost line for the Sun (T_H2O = 170 K → S ≈ 0.14).
 //
-// S₀ = 1361 W/m² (solar constant), σ = 5.670374e-8 W/m²/K⁴ (Stefan-Boltzmann).
+// S₀ = SOLAR_CONSTANT, σ = SIGMA_SB.
 export function frostLineS(volatileTempK) {
   if (volatileTempK == null || volatileTempK <= 0) return null;
-  return Math.pow(volatileTempK, 4) * 4 * 5.670374e-8 / 1361;
+  return Math.pow(volatileTempK, 4) * 4 * SIGMA_SB / SOLAR_CONSTANT;
 }
 
 // Frost-line distance in AU for a given star and volatile. Uses

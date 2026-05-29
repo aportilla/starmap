@@ -10,13 +10,8 @@
 
 import { CanvasTexture } from 'three';
 import { getFont, measurePixelText } from '../data/pixel-font';
-import { paintPillButton } from './painter';
+import { PILL_PAD_X, PILL_PAD_Y, paintPillButton } from './painter';
 import { Widget, paintToTexture } from './widget';
-
-// Must match paintPillButton's internal padding so the pre-allocated
-// canvas size matches what the painter will draw into.
-const PILL_PAD_X = 6;
-const PILL_PAD_Y = 3;
 
 export interface ActionButtonOpts {
   renderOrder?: number;
