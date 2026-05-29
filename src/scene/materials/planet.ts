@@ -1567,6 +1567,146 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         return col;
       }
 
+      // ── Cloud layers ──
+      // Up to MAX_CLOUD_LAYERS stratified decks composite back-to-front
+      // by altitudeNorm. Per-body deck data lives in uCloudLayerData
+      // (DataTexture) sampled by vBodyIndex — kept off vertex attribs
+      // to stay under the gl_MaxVertexAttribs cap as layer count grows.
+      // Each deck pre-tints toward vHazeColor by the haze that would
+      // sit above it under a uniform-density column approximation:
+      //   hazeAbove = vHazeOpacity * (1 - altitudeNorm)
+      // Deeper decks get more haze tint (more atmosphere above them);
+      // top decks barely tint. The uniform haze pass below composites
+      // the full blanket once over the surface; deck pre-tinting is
+      // the cheap equivalent of interleaving haze sub-layers between
+      // every deck without sampling haze multiple times.
+      //
+      // Cloud rendering is a single unified worley sampler. Per-deck
+      // wind speed (m/s, peak cloud-top zonal jets) drives two
+      // dimensions of the banding effect via independent curves:
+      //   - bandness (0..1) — smoothstep from Earth jet stream
+      //     (~30 m/s, patchy cumulus → both-axes color hash) to
+      //     Jupiter-class (~150 m/s, lat-strip aligned → lat-only
+      //     hash). Controls hash mode + lerps toward bandedLonPx
+      //     below as cells transition from cellular to lat-aligned.
+      //   - bandedLonPx — east-west cell pitch at full bandness.
+      //     Sqrt curve over windSpeed / WIND_STRETCH_REFERENCE_MS so
+      //     low wind speeds already produce visible stretching
+      //     (Jupiter ~130 lands at ~13:1 aspect) while high speeds
+      //     saturate gracefully (Neptune ~600 caps at 24:1, Saturn
+      //     ~450 at 21:1, Uranus ~250 at 17:1). Sqrt rather than
+      //     linear because real wind speeds span an order of
+      //     magnitude across the gas giants and a linear curve
+      //     leaves Jupiter under-stretched relative to its bands.
+      vec3 cloudLayers(vec3 col, float lon, float lat, float vBodyV) {
+        for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
+          float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+          vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
+          float coverage = layer.x;
+          if (coverage <= 0.0) continue;
+          float windSpeedMS = layer.y;
+          float altitudeNorm = layer.z;
+          float layerSeed = layer.w;
+          float bandness = smoothstep(WIND_BANDNESS_LOW_MS, WIND_BANDNESS_HIGH_MS, windSpeedMS);
+          float windFactor = sqrt(clamp(windSpeedMS / WIND_STRETCH_REFERENCE_MS, 0.0, 1.0));
+          float bandedLonPx = mix(BAND1_LON_PX, BAND_MAX_LON_PX, windFactor);
+          float lonPx = mix(CLOUD_LON_PX, bandedLonPx, bandness);
+
+          // Per-deck color — one RGBA texel, condensate hue in .rgb.
+          float pDeckColU = (float(${DECK_COLOR_BASE_OFFSET}) + float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+          vec3 deckColor = texture2D(uCloudLayerData, vec2(pDeckColU, vBodyV)).rgb;
+
+          // LAT pitch lerps from CLOUD_LAT_PX (patchy) to BAND1_LAT_PX
+          // (banded) by bandness. LON pitch already encodes the wind-
+          // speed stretching via lonPx above.
+          vec2 cellAspect = vec2(
+            lonPx,
+            mix(CLOUD_LAT_PX, BAND1_LAT_PX, bandness)
+          );
+          vec2 p = vec2(lon, lat) * vRadius / cellAspect;
+          vec2 cellId = floor(p);
+          vec2 cellFrac = p - cellId;
+          // Track both nearest (F1) and second-nearest (F2) jittered cell
+          // centers. F2 is consulted by the edge-dither check below — the
+          // distance to the F1/F2 boundary tells us how far inside our
+          // own cell we are, and whether the neighbor would have fired.
+          // Per-layer salt folds layerSeed into the base 991/997, 1013/
+          // 1019 pairs so each deck's cells land on different positions.
+          float minD2, secondD2;
+          vec2 winnerCell, secondCell;
+          worleyF1F2(cellId, cellFrac,
+                     vec2(vSeed * 991.0 + layerSeed * 13.0, vSeed * 997.0 + layerSeed * 17.0),
+                     vec2(vSeed * 1013.0 + layerSeed * 19.0, vSeed * 1019.0 + layerSeed * 23.0),
+                     winnerCell, secondCell, minD2, secondD2);
+
+          // Existence gate — binary per-cell hash. Cells whose hash sits
+          // below coverage paint the deck; above this they skip, revealing
+          // the next-deeper deck (or surface / atmColumnColor beneath).
+          float existH = hash21(winnerCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
+          if (existH >= coverage) continue;
+
+          // Edge dither — two cases share one boundary-distance metric
+          // but apply different thresholds for the asymmetry each wants.
+          //
+          // Distance from the fragment to the F1/F2 perpendicular bisector
+          // (in worley units) is (sqrt(secondD2) - sqrt(minD2)) * 0.5 —
+          // the bisector is equidistant by definition, so this measures
+          // how deep inside F1's cell the fragment sits. Multiply by the
+          // tighter cell-aspect axis to convert to env-pixels: in banded
+          // cells the visible boundaries run along the lat-stretched axis,
+          // so the lat dimension is the one we care about.
+          float existH2 = hash21(secondCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
+          float boundaryWorley = (sqrt(secondD2) - sqrt(minD2)) * 0.5;
+          float boundaryPx = boundaryWorley * min(cellAspect.x, cellAspect.y);
+          float t = clamp(boundaryPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
+          float b = bayer4(gl_FragCoord.xy);
+
+          // ljCell decides which cell's BAND_LIGHTNESS_JITTER colors this
+          // fragment. Defaults to F1; the firing/firing case below may
+          // swap in F2 for fragments inside the dither fringe.
+          vec2 ljCell = winnerCell;
+
+          if (existH2 >= coverage) {
+            // F1 fires, F2 doesn't — cloud/no-cloud boundary. Asymmetric:
+            // Bayer-out fragments fall through to the layer beneath, so
+            // the cloud silhouette gains a stipple halo against same-tone
+            // surface (water cloud over snowcap) or deeper decks (NH3
+            // rent revealing NH4SH on Jupiter).
+            if (b >= t) continue;
+          } else {
+            // F1 fires, F2 also fires — cloud/cloud boundary inside the
+            // deck. Two adjacent worley cells share the same condensate
+            // color but get distinct BAND_LIGHTNESS_JITTER via
+            // hash11(cell.y), so for cells in different lat rows there's
+            // a visible (and at high coverage, ONLY) tonal seam between
+            // them. Symmetric stipple: fragments in the dither fringe
+            // pick up F2's lj instead of F1's so the bands taper into
+            // each other. Threshold 0.5 + 0.5*t gives 50% F1/50% F2 at
+            // the bisector, ramping to 100% F1 at the fringe edge —
+            // visible band-edge dither even on a 100%-coverage deck
+            // (Venus H2SO4) where no rents exist to dither against.
+            if (b >= 0.5 + 0.5 * t) ljCell = secondCell;
+          }
+
+          // Per-cell brightness jitter — keyed to lat so cells in the
+          // same band share tonal life, gives a deck visual texture
+          // without introducing alien hues. ljCell is F1 except at
+          // band/band boundaries where the symmetric dither above swaps
+          // in F2.
+          float lj = (hash11(ljCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
+          vec3 cloudCol = clamp(deckColor + vec3(lj), 0.0, 1.0);
+
+          // Haze pre-tint by altitude — deep decks read as more
+          // haze-tinted; top decks barely tint. Approximates
+          // interleaved uniform-density haze without per-deck sampling.
+          float hazeAbove = vHazeOpacity * (1.0 - altitudeNorm);
+          vec3 tinted = mix(cloudCol, vHazeColor, hazeAbove);
+
+          col = tinted;
+        }
+        return col;
+      }
+
       void main() {
         vec2 d = gl_FragCoord.xy - vCenter;
         float r = length(d);
@@ -1755,142 +1895,10 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           col += vec3(ditherT * HAZE_DITHER_AMP * ditherGate);
         }
 
-        // ── Cloud layers ──
-        // Up to MAX_CLOUD_LAYERS stratified decks composite back-to-front
-        // by altitudeNorm. Per-body deck data lives in uCloudLayerData
-        // (DataTexture) sampled by vBodyIndex — kept off vertex attribs
-        // to stay under the gl_MaxVertexAttribs cap as layer count grows.
-        // Each deck pre-tints toward vHazeColor by the haze that would
-        // sit above it under a uniform-density column approximation:
-        //   hazeAbove = vHazeOpacity * (1 - altitudeNorm)
-        // Deeper decks get more haze tint (more atmosphere above them);
-        // top decks barely tint. The uniform haze pass below composites
-        // the full blanket once over the surface; deck pre-tinting is
-        // the cheap equivalent of interleaving haze sub-layers between
-        // every deck without sampling haze multiple times.
-        //
-        // Cloud rendering is a single unified worley sampler. Per-deck
-        // wind speed (m/s, peak cloud-top zonal jets) drives two
-        // dimensions of the banding effect via independent curves:
-        //   - bandness (0..1) — smoothstep from Earth jet stream
-        //     (~30 m/s, patchy cumulus → both-axes color hash) to
-        //     Jupiter-class (~150 m/s, lat-strip aligned → lat-only
-        //     hash). Controls hash mode + lerps toward bandedLonPx
-        //     below as cells transition from cellular to lat-aligned.
-        //   - bandedLonPx — east-west cell pitch at full bandness.
-        //     Sqrt curve over windSpeed / WIND_STRETCH_REFERENCE_MS so
-        //     low wind speeds already produce visible stretching
-        //     (Jupiter ~130 lands at ~13:1 aspect) while high speeds
-        //     saturate gracefully (Neptune ~600 caps at 24:1, Saturn
-        //     ~450 at 21:1, Uranus ~250 at 17:1). Sqrt rather than
-        //     linear because real wind speeds span an order of
-        //     magnitude across the gas giants and a linear curve
-        //     leaves Jupiter under-stretched relative to its bands.
-        for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
-          float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-          vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
-          float coverage = layer.x;
-          if (coverage <= 0.0) continue;
-          float windSpeedMS = layer.y;
-          float altitudeNorm = layer.z;
-          float layerSeed = layer.w;
-          float bandness = smoothstep(WIND_BANDNESS_LOW_MS, WIND_BANDNESS_HIGH_MS, windSpeedMS);
-          float windFactor = sqrt(clamp(windSpeedMS / WIND_STRETCH_REFERENCE_MS, 0.0, 1.0));
-          float bandedLonPx = mix(BAND1_LON_PX, BAND_MAX_LON_PX, windFactor);
-          float lonPx = mix(CLOUD_LON_PX, bandedLonPx, bandness);
-
-          // Per-deck color — one RGBA texel, condensate hue in .rgb.
-          float pDeckColU = (float(${DECK_COLOR_BASE_OFFSET}) + float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-          vec3 deckColor = texture2D(uCloudLayerData, vec2(pDeckColU, vBodyV)).rgb;
-
-          // LAT pitch lerps from CLOUD_LAT_PX (patchy) to BAND1_LAT_PX
-          // (banded) by bandness. LON pitch already encodes the wind-
-          // speed stretching via lonPx above.
-          vec2 cellAspect = vec2(
-            lonPx,
-            mix(CLOUD_LAT_PX, BAND1_LAT_PX, bandness)
-          );
-          vec2 p = vec2(lon, lat) * vRadius / cellAspect;
-          vec2 cellId = floor(p);
-          vec2 cellFrac = p - cellId;
-          // Track both nearest (F1) and second-nearest (F2) jittered cell
-          // centers. F2 is consulted by the edge-dither check below — the
-          // distance to the F1/F2 boundary tells us how far inside our
-          // own cell we are, and whether the neighbor would have fired.
-          // Per-layer salt folds layerSeed into the base 991/997, 1013/
-          // 1019 pairs so each deck's cells land on different positions.
-          float minD2, secondD2;
-          vec2 winnerCell, secondCell;
-          worleyF1F2(cellId, cellFrac,
-                     vec2(vSeed * 991.0 + layerSeed * 13.0, vSeed * 997.0 + layerSeed * 17.0),
-                     vec2(vSeed * 1013.0 + layerSeed * 19.0, vSeed * 1019.0 + layerSeed * 23.0),
-                     winnerCell, secondCell, minD2, secondD2);
-
-          // Existence gate — binary per-cell hash. Cells whose hash sits
-          // below coverage paint the deck; above this they skip, revealing
-          // the next-deeper deck (or surface / atmColumnColor beneath).
-          float existH = hash21(winnerCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
-          if (existH >= coverage) continue;
-
-          // Edge dither — two cases share one boundary-distance metric
-          // but apply different thresholds for the asymmetry each wants.
-          //
-          // Distance from the fragment to the F1/F2 perpendicular bisector
-          // (in worley units) is (sqrt(secondD2) - sqrt(minD2)) * 0.5 —
-          // the bisector is equidistant by definition, so this measures
-          // how deep inside F1's cell the fragment sits. Multiply by the
-          // tighter cell-aspect axis to convert to env-pixels: in banded
-          // cells the visible boundaries run along the lat-stretched axis,
-          // so the lat dimension is the one we care about.
-          float existH2 = hash21(secondCell + vec2(vSeed * 1031.0 + layerSeed * 29.0, vSeed * 1033.0 + layerSeed * 31.0));
-          float boundaryWorley = (sqrt(secondD2) - sqrt(minD2)) * 0.5;
-          float boundaryPx = boundaryWorley * min(cellAspect.x, cellAspect.y);
-          float t = clamp(boundaryPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
-          float b = bayer4(gl_FragCoord.xy);
-
-          // ljCell decides which cell's BAND_LIGHTNESS_JITTER colors this
-          // fragment. Defaults to F1; the firing/firing case below may
-          // swap in F2 for fragments inside the dither fringe.
-          vec2 ljCell = winnerCell;
-
-          if (existH2 >= coverage) {
-            // F1 fires, F2 doesn't — cloud/no-cloud boundary. Asymmetric:
-            // Bayer-out fragments fall through to the layer beneath, so
-            // the cloud silhouette gains a stipple halo against same-tone
-            // surface (water cloud over snowcap) or deeper decks (NH3
-            // rent revealing NH4SH on Jupiter).
-            if (b >= t) continue;
-          } else {
-            // F1 fires, F2 also fires — cloud/cloud boundary inside the
-            // deck. Two adjacent worley cells share the same condensate
-            // color but get distinct BAND_LIGHTNESS_JITTER via
-            // hash11(cell.y), so for cells in different lat rows there's
-            // a visible (and at high coverage, ONLY) tonal seam between
-            // them. Symmetric stipple: fragments in the dither fringe
-            // pick up F2's lj instead of F1's so the bands taper into
-            // each other. Threshold 0.5 + 0.5*t gives 50% F1/50% F2 at
-            // the bisector, ramping to 100% F1 at the fringe edge —
-            // visible band-edge dither even on a 100%-coverage deck
-            // (Venus H2SO4) where no rents exist to dither against.
-            if (b >= 0.5 + 0.5 * t) ljCell = secondCell;
-          }
-
-          // Per-cell brightness jitter — keyed to lat so cells in the
-          // same band share tonal life, gives a deck visual texture
-          // without introducing alien hues. ljCell is F1 except at
-          // band/band boundaries where the symmetric dither above swaps
-          // in F2.
-          float lj = (hash11(ljCell.y + vSeed * 67.0 + layerSeed * 13.0) - 0.5) * 2.0 * BAND_LIGHTNESS_JITTER;
-          vec3 cloudCol = clamp(deckColor + vec3(lj), 0.0, 1.0);
-
-          // Haze pre-tint by altitude — deep decks read as more
-          // haze-tinted; top decks barely tint. Approximates
-          // interleaved uniform-density haze without per-deck sampling.
-          float hazeAbove = vHazeOpacity * (1.0 - altitudeNorm);
-          vec3 tinted = mix(cloudCol, vHazeColor, hazeAbove);
-
-          col = tinted;
-        }
+        // ── Cloud layers ── composite the stratified condensate decks over
+        // the surface+haze base (or atm column on no-surface bodies). See
+        // cloudLayers() for the wind→banding model + edge-dither cases.
+        col = cloudLayers(col, lon, lat, vBodyV);
 
         // ── Lighting pass ──
         // See the LIGHT_* constant block for the math + tuning rationale.
