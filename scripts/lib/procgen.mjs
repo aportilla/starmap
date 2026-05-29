@@ -88,6 +88,7 @@ import {
   CLOUD_DECK,
   HAZE_GATES,
   DUST_GATE,
+  BIOSPHERE_PRODUCTIVITY,
   SNOW_LINE_TEMPERATURES,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
@@ -827,7 +828,7 @@ function atmosphereFor(body, S) {
   // worlds (productivity ≈ 0) keep the trace photolysis O2 floor.
   const carbProd = body.bioticCarbonAqueous ?? 0;
   if (carbProd > 0 && weights.O2 != null) {
-    weights.O2 *= 1 + carbProd * BIOTIC_O2_LIFT_FACTOR;
+    weights.O2 *= 1 + carbProd * BIOSPHERE_PRODUCTIVITY.o2LiftFactor;
   }
   // Pick top 3 (or however many are non-zero) by weight via repeated
   // weighted-random draw without replacement.
@@ -1292,15 +1293,6 @@ const PAR_BY_CLASS = {
   O: 0, B: 0, A: 0.6, F: 0.95, G: 1.0, K: 0.7, M: 0.3, WD: 0, BD: 0,
 };
 
-// Atmospheric O2 biotic-lift factor — applied to the O2 prior weight
-// as `1 + productivity × FACTOR`. Calibrated against Earth: at
-// carbon_aqueous productivity 0.85, this gives O2 weight ≈ 0.05 ×
-// (1 + 0.85 × 70) ≈ 3, which competes with N2's weight ~8 for ~21%
-// O2 fraction in the renormalized top-3 — matches Earth's measured
-// 21% O2. Linear in productivity so the Great Oxidation transition
-// reads as a smooth ramp rather than a discrete tier flip.
-const BIOTIC_O2_LIFT_FACTOR = 70;
-
 // Bell curve gate — peaks at `center`, falls to 0 at `center ± halfwidth`.
 // Quadratic falloff. Used by productivity factors that want a "best at
 // this value, falls off either direction" shape (T windows, ice-shell
@@ -1351,8 +1343,9 @@ function productivityPreAtm(body, hostStar, hostBody) {
   const cls = hostStar?.cls ?? null;
   const isGaseous = body.worldClass != null && GASEOUS_CLASSES.has(body.worldClass);
 
-  const ageWindowCarbon     = smoothstep(1.0, 3.5, age) * (1 - smoothstep(8.0, 12.0, age));
-  const ageWindowSubsurface = smoothstep(0.5, 2.0, age);
+  const aw = BIOSPHERE_PRODUCTIVITY.ageWindow;
+  const ageWindowCarbon     = smoothstep(aw.carbonAqueous.rise[0], aw.carbonAqueous.rise[1], age) * (1 - smoothstep(aw.carbonAqueous.fall[0], aw.carbonAqueous.fall[1], age));
+  const ageWindowSubsurface = smoothstep(aw.subsurfaceAqueous.rise[0], aw.subsurfaceAqueous.rise[1], age);
 
   // ── carbon_aqueous (Earth-standard, water + carbon + photosynthesis) ──
   // The N2_buffer factor was dropped: Earth's 78% N2 is BIOTIC-co-evolved,
@@ -1366,13 +1359,14 @@ function productivityPreAtm(body, hostStar, hostBody) {
   } else if (T == null) {
     bioticCarbonAqueous = 0;
   } else {
-    const water_window = smoothstep(0.02, 0.30, water);
-    const T_temperate = T < 273 ? 0 : bellGate(T, 290, 60);
+    const k = BIOSPHERE_PRODUCTIVITY.carbonAqueous;
+    const water_window = smoothstep(k.waterWindow[0], k.waterWindow[1], water);
+    const T_temperate = T < k.tempFreezeFloorK ? 0 : bellGate(T, k.tempBell.center, k.tempBell.halfwidth);
     const T_variability = (Tmin != null && Tmax != null && T > 0)
-      ? 1 - smoothstep(0.5, 1.5, (Tmax - Tmin) / T)
+      ? 1 - smoothstep(k.variability[0], k.variability[1], (Tmax - Tmin) / T)
       : 1;
-    const atm_column = smoothstep(0.005, 0.10, colMass);
-    const shielding = smoothstep(0.005, 0.15, B * Math.log10(P + 1));
+    const atm_column = smoothstep(k.atmColumn[0], k.atmColumn[1], colMass);
+    const shielding = smoothstep(k.shielding[0], k.shielding[1], B * Math.log10(P + 1));
     const stellar_PAR = cls ? (PAR_BY_CLASS[cls] ?? 0) : 0;
     bioticCarbonAqueous = water_window * T_temperate * T_variability
                           * atm_column * shielding
@@ -1386,17 +1380,18 @@ function productivityPreAtm(body, hostStar, hostBody) {
   } else if (T == null) {
     bioticSubsurfaceAqueous = 0;
   } else {
-    const bulk_water = smoothstep(0.05, 0.40, bulkVol);
-    const ice_shell = bellGate(ice, 0.85, 0.30);
-    const cold_surface = smoothstep(0, 60, 220 - T);
-    const size_floor = smoothstep(0.15, 0.35, r);
+    const k = BIOSPHERE_PRODUCTIVITY.subsurfaceAqueous;
+    const bulk_water = smoothstep(k.bulkWater[0], k.bulkWater[1], bulkVol);
+    const ice_shell = bellGate(ice, k.iceShell.center, k.iceShell.halfwidth);
+    const cold_surface = smoothstep(k.coldSurface[0], k.coldSurface[1], k.coldSurfaceRefK - T);
+    const size_floor = smoothstep(k.sizeFloor[0], k.sizeFloor[1], r);
     const hostMassEarth = hostBody?.massEarth ?? 0;
     const a = body.semiMajorAu ?? 0;
     const tidalProxy = (e > 0 && hostMassEarth > 0 && a > 0)
       ? e * (hostMassEarth / EARTH_PER_SOLAR_MASS) / Math.pow(a, 3)
       : 0;
-    const tidal_score = smoothstep(0, 0.1, tidalProxy);
-    const radio_score = smoothstep(2, 6, body.resRadioactives ?? 0);
+    const tidal_score = smoothstep(k.tidalScore[0], k.tidalScore[1], tidalProxy);
+    const radio_score = smoothstep(k.radioScore[0], k.radioScore[1], body.resRadioactives ?? 0);
     const tidal_or_radiogenic = Math.max(tidal_score, radio_score);
     bioticSubsurfaceAqueous = bulk_water * ice_shell * cold_surface
                               * size_floor * tidal_or_radiogenic
@@ -1425,10 +1420,11 @@ function productivityPostAtm(body, hostStar) {
   const isGaseous = body.worldClass != null && GASEOUS_CLASSES.has(body.worldClass);
   const isTerrestrialSolid = body.worldClass != null && TERRESTRIAL_SOLID_CLASSES.has(body.worldClass);
 
-  const ageWindowAerial    = smoothstep(1.5, 4.0, age);
-  const ageWindowCryogenic = smoothstep(1.0, 4.0, age);
-  const ageWindowSilicate  = smoothstep(0.5, 3.0, age);
-  const ageWindowSulfur    = smoothstep(0.5, 3.0, age);
+  const aw = BIOSPHERE_PRODUCTIVITY.ageWindow;
+  const ageWindowAerial    = smoothstep(aw.aerial.rise[0], aw.aerial.rise[1], age);
+  const ageWindowCryogenic = smoothstep(aw.cryogenic.rise[0], aw.cryogenic.rise[1], age);
+  const ageWindowSilicate  = smoothstep(aw.silicate.rise[0], aw.silicate.rise[1], age);
+  const ageWindowSulfur    = smoothstep(aw.sulfur.rise[0], aw.sulfur.rise[1], age);
 
   // ── aerial (Sagan-Salpeter floaters in gas-giant clouds) ──
   let bioticAerial;
@@ -1440,7 +1436,8 @@ function productivityPostAtm(body, hostStar) {
     // Bulk T proxy for cloud-deck T — gas giants don't carry per-deck T
     // explicitly, but the body's representative T sits in the visible
     // cloud-deck region by construction (atm-column derivation).
-    const T_cloud = bellGate(T, 290, 80);
+    const k = BIOSPHERE_PRODUCTIVITY.aerial;
+    const T_cloud = bellGate(T, k.tempBell.center, k.tempBell.halfwidth);
     const ch4 = atmFracOf(body, 'CH4');
     const nh3 = atmFracOf(body, 'NH3');
     const h2o = atmFracOf(body, 'H2O');
@@ -1448,13 +1445,13 @@ function productivityPostAtm(body, hostStar) {
     // against) so the shared `colMass` is 0 here. Sub a cloud-top
     // reference pressure (~1 bar) so the precursor gate has a column-
     // thickness signal to weight against atm composition.
-    const cloudDeckColMass = Math.log10(1.0 / g + 1);
-    const organic_precursors = smoothstep(0.001, 0.1, (ch4 + nh3 + h2o) * cloudDeckColMass);
+    const cloudDeckColMass = Math.log10(k.cloudTopPressureBar / g + 1);
+    const organic_precursors = smoothstep(k.organicPrecursors[0], k.organicPrecursors[1], (ch4 + nh3 + h2o) * cloudDeckColMass);
     const windMs = (body.cloudLayers ?? []).reduce(
       (m, l) => Math.max(m, l.windSpeedMS ?? 0), 0
     );
-    const circulation = 1 - smoothstep(200, 600, windMs);
-    const insol_window = smoothstep(0.1, 2.0, insol) * (1 - smoothstep(5, 20, insol));
+    const circulation = 1 - smoothstep(k.circulation[0], k.circulation[1], windMs);
+    const insol_window = smoothstep(k.insolRise[0], k.insolRise[1], insol) * (1 - smoothstep(k.insolFall[0], k.insolFall[1], insol));
     bioticAerial = T_cloud * organic_precursors * circulation
                    * insol_window * ageWindowAerial;
   }
@@ -1466,14 +1463,15 @@ function productivityPostAtm(body, hostStar) {
   } else if (T == null) {
     bioticCryogenic = 0;
   } else {
-    const cold_T = bellGate(T, 95, 50);
+    const k = BIOSPHERE_PRODUCTIVITY.cryogenic;
+    const cold_T = bellGate(T, k.tempBell.center, k.tempBell.halfwidth);
     const ch4 = atmFracOf(body, 'CH4');
-    const hydrocarbon_atm = smoothstep(0.001, 0.1, ch4 * P);
+    const hydrocarbon_atm = smoothstep(k.hydrocarbonAtm[0], k.hydrocarbonAtm[1], ch4 * P);
     const n2 = atmFracOf(body, 'N2');
-    const n2_solvent = smoothstep(0.1, 1.5, n2 * P);
+    const n2_solvent = smoothstep(k.n2Solvent[0], k.n2Solvent[1], n2 * P);
     const tholin = body.hazeAerosols?.THOLIN ?? 0;
-    const tholin_substrate = smoothstep(0.1, 0.7, tholin);
-    const uv_input = smoothstep(0.001, 0.05, insol);
+    const tholin_substrate = smoothstep(k.tholinSubstrate[0], k.tholinSubstrate[1], tholin);
+    const uv_input = smoothstep(k.uvInput[0], k.uvInput[1], insol);
     bioticCryogenic = cold_T * hydrocarbon_atm * n2_solvent
                       * tholin_substrate * uv_input * ageWindowCryogenic;
   }
@@ -1485,15 +1483,16 @@ function productivityPostAtm(body, hostStar) {
   } else if (T == null) {
     bioticSilicate = 0;
   } else {
-    const hot_T = bellGate(T, 600, 200);
-    const silicate_substrate = smoothstep(1, 6, bulkSilicate10(body));
-    const tectonic_activity = smoothstep(0.2, 0.8, tect);
+    const k = BIOSPHERE_PRODUCTIVITY.silicate;
+    const hot_T = bellGate(T, k.tempBell.center, k.tempBell.halfwidth);
+    const silicate_substrate = smoothstep(k.silicateSubstrate[0], k.silicateSubstrate[1], bulkSilicate10(body));
+    const tectonic_activity = smoothstep(k.tectonic[0], k.tectonic[1], tect);
     const so2 = atmFracOf(body, 'SO2');
     const h2so4 = atmFracOf(body, 'H2SO4');
     const s2 = atmFracOf(body, 'S2');
-    const volatile_solvent = smoothstep(0.001, 0.05, (so2 + h2so4 + s2) * P);
+    const volatile_solvent = smoothstep(k.volatileSolvent[0], k.volatileSolvent[1], (so2 + h2so4 + s2) * P);
     const radioactives = body.resRadioactives ?? 0;
-    const energy = Math.max(smoothstep(0.2, 5, insol), smoothstep(2, 8, radioactives));
+    const energy = Math.max(smoothstep(k.insolEnergy[0], k.insolEnergy[1], insol), smoothstep(k.radioEnergy[0], k.radioEnergy[1], radioactives));
     bioticSilicate = hot_T * silicate_substrate * tectonic_activity
                      * volatile_solvent * energy * ageWindowSilicate;
   }
@@ -1505,13 +1504,14 @@ function productivityPostAtm(body, hostStar) {
   } else if (T == null) {
     bioticSulfur = 0;
   } else {
-    const warm_T = bellGate(T, 380, 100);
+    const k = BIOSPHERE_PRODUCTIVITY.sulfur;
+    const warm_T = bellGate(T, k.tempBell.center, k.tempBell.halfwidth);
     const so2 = atmFracOf(body, 'SO2');
     const h2s = atmFracOf(body, 'H2S');
     const h2so4 = atmFracOf(body, 'H2SO4');
-    const sulfur_atm = smoothstep(0.001, 0.05, (so2 + h2s + h2so4) * P);
-    const active_volcanism = smoothstep(0.3, 0.9, tect);
-    const sulfur_substrate = smoothstep(2, 8, (body.resRadioactives ?? 0) + bulkSilicate10(body));
+    const sulfur_atm = smoothstep(k.sulfurAtm[0], k.sulfurAtm[1], (so2 + h2s + h2so4) * P);
+    const active_volcanism = smoothstep(k.volcanism[0], k.volcanism[1], tect);
+    const sulfur_substrate = smoothstep(k.substrate[0], k.substrate[1], (body.resRadioactives ?? 0) + bulkSilicate10(body));
     bioticSulfur = warm_T * sulfur_atm * active_volcanism
                    * sulfur_substrate * ageWindowSulfur;
   }

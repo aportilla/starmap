@@ -1932,6 +1932,82 @@ export const RESOURCE_OCCURRENCE = mergeTunes(RESOURCE_OCCURRENCE_REALISTIC, RES
 //                              tiers. Continuous, never identically zero
 //                              once life is present.
 
+// Biosphere productivity calibration — the per-archetype gate windows that
+// productivityPreAtm / productivityPostAtm (procgen.mjs) multiply into a
+// continuous [0..1] productivity per archetype. `[lo, hi]` pairs are
+// smoothstep edges; `{ center, halfwidth }` are bellGate windows (peak at
+// center, 0 at center ± halfwidth). `ageWindow` entries are stellar-age
+// (Gyr) smoothstep rises, with an optional `fall` for archetypes that also
+// age out. These ARE the tuning surface — the formulas are calibrated
+// against the anchors documented on COMPLEXITY_THRESHOLDS below (Earth 0.85
+// carbon_aqueous, Titan 0.50 cryogenic, Europa 0.55 subsurface, …).
+export const BIOSPHERE_PRODUCTIVITY = {
+  // Atmospheric O2 biotic-lift factor — applied to the O2 atm prior weight
+  // as `1 + carbonAqueousProductivity × o2LiftFactor`. Calibrated against
+  // Earth: at carbon_aqueous productivity 0.85 this gives O2 weight ≈ 0.05 ×
+  // (1 + 0.85 × 70) ≈ 3, competing with N2's ~8 for ~21% O2 in the
+  // renormalized top-3 — Earth's measured 21%. Linear in productivity so the
+  // Great Oxidation transition reads as a smooth ramp, not a tier flip.
+  o2LiftFactor: 70,
+
+  // Stellar-age windows (Gyr), per archetype.
+  ageWindow: {
+    carbonAqueous:     { rise: [1.0, 3.5], fall: [8.0, 12.0] },
+    subsurfaceAqueous: { rise: [0.5, 2.0] },
+    aerial:            { rise: [1.5, 4.0] },
+    cryogenic:         { rise: [1.0, 4.0] },
+    silicate:          { rise: [0.5, 3.0] },
+    sulfur:            { rise: [0.5, 3.0] },
+  },
+
+  carbonAqueous: {
+    waterWindow:      [0.02, 0.30],
+    tempFreezeFloorK: 273,
+    tempBell:         { center: 290, halfwidth: 60 },
+    variability:      [0.5, 1.5],
+    atmColumn:        [0.005, 0.10],
+    shielding:        [0.005, 0.15],
+  },
+  subsurfaceAqueous: {
+    bulkWater:        [0.05, 0.40],
+    iceShell:         { center: 0.85, halfwidth: 0.30 },
+    coldSurfaceRefK:  220,
+    coldSurface:      [0, 60],
+    sizeFloor:        [0.15, 0.35],
+    tidalScore:       [0, 0.1],
+    radioScore:       [2, 6],
+  },
+  aerial: {
+    tempBell:           { center: 290, halfwidth: 80 },
+    cloudTopPressureBar: 1.0,
+    organicPrecursors:  [0.001, 0.1],
+    circulation:        [200, 600],
+    insolRise:          [0.1, 2.0],
+    insolFall:          [5, 20],
+  },
+  cryogenic: {
+    tempBell:        { center: 95, halfwidth: 50 },
+    hydrocarbonAtm:  [0.001, 0.1],
+    n2Solvent:       [0.1, 1.5],
+    tholinSubstrate: [0.1, 0.7],
+    uvInput:         [0.001, 0.05],
+  },
+  silicate: {
+    tempBell:          { center: 600, halfwidth: 200 },
+    silicateSubstrate: [1, 6],
+    tectonic:          [0.2, 0.8],
+    volatileSolvent:   [0.001, 0.05],
+    insolEnergy:       [0.2, 5],
+    radioEnergy:       [2, 8],
+  },
+  sulfur: {
+    tempBell:    { center: 380, halfwidth: 100 },
+    sulfurAtm:   [0.001, 0.05],
+    volcanism:   [0.3, 0.9],
+    substrate:   [2, 8],
+  },
+};
+
 // All recognized archetypes — each describes a distinct biochemistry /
 // habitat combination. Productivity formulas in procgen.mjs derive a
 // continuous [0..1] scalar per archetype from the body's physics; the
