@@ -1014,169 +1014,20 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         return mix(c3, c4, (t - 0.75) / 0.25);
       }
 
-      void main() {
-        vec2 d = gl_FragCoord.xy - vCenter;
-        float r = length(d);
-
-        // Outside the disc — paint the atmospheric halo if any, else
-        // discard. Sprite is sized to give us vRimWidthPx pixels of
-        // overdraw space in the outward direction. Stack count for layer
-        // L = (W - L): innermost layer (closest to disc) is covered by
-        // the widest stroke and every narrower stroke, so it accumulates
-        // the most opacity. Output uses real alpha so the halo blends
-        // correctly with rings, moons, and other scene elements behind
-        // it (the planet material is transparent=true for this reason —
-        // see the material config below). vRimColor is the weighted-
-        // average merger across cloud + species haze + scattering + dust
-        // contributors (see disc-palette/index.ts).
-        if (r > vRadius) {
-          #ifdef DISC_ONLY
-            discard;
-          #else
-            if (r > vRadius + vRimWidthPx || vRimWidthPx < 1.0) discard;
-            float distOut = r - vRadius;
-            float layer = floor(distOut);
-            float stackCount = vRimWidthPx - layer;
-            float rimA = 1.0 - pow(1.0 - OUTER_BASE_ALPHA, stackCount);
-
-            // Directional loft glow — see the atmospheric-loft constant
-            // block. With no active lights, fall back to the static gas-
-            // color ring (no angular term) so a lightless body doesn't
-            // render a black-on-one-side halo.
-            vec3  rimCol = vRimColor;
-            if (uLightCount > 0) {
-              vec2  rimDir = normalize(d);
-              vec3  glowAccum = vec3(0.0);
-              vec3  lightAccum = vec3(0.0);
-              float litSum = 0.0;
-              float litMax = 0.0;
-              for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-                if (i >= uLightCount) break;
-                vec2 Ldir = normalize(uLightPos[i] - vCenter);
-                // Half-lambert wrap so the loft glow reaches past the
-                // terminator around the whole backlit limb (see block).
-                float facing = dot(rimDir, Ldir) * 0.5 + 0.5;
-                float lit = pow(facing, RIM_GLOW_FOCUS) * uLightIntensity[i];
-                // Per-light dither offset so multiple stars' stipple
-                // patterns don't cascade (mirrors the disc lighting pass).
-                float bL = bayer4(gl_FragCoord.xy + vec2(43.0 + float(i) * 7.0, 29.0 + float(i) * 11.0));
-                lit = clamp(lit + (bL - 0.5) * 2.0 * RIM_DITHER_WIDTH, 0.0, 1.0);
-                // Gas filters the starlight (hue-preserving multiply,
-                // gentle gain), plus a small white tip gated to the
-                // brightest sunward sliver so only the extreme limb pops.
-                vec3 scattered = vRimColor * uLightColor[i] * RIM_GLOW_GAIN;
-                float tip = pow(lit, RIM_TIP_FOCUS) * RIM_TIP_WHITE;
-                vec3 illum = scattered + uLightColor[i] * tip;
-                glowAccum += mix(vRimColor, illum, lit) * lit;
-                lightAccum += uLightColor[i] * lit;
-                litSum += lit;
-                litMax = max(litMax, lit);
-              }
-              // Color: per-star illuminated hues averaged by their lit
-              // weights (each star paints its own arc its own color); the
-              // gas color shows through where nothing lights the rim.
-              rimCol = (litSum > 0.0) ? glowAccum / litSum : vRimColor;
-              // Alpha: radial stack falloff × angular ramp from the faint
-              // night-side ambient floor to full on the lit limb. litMax
-              // (not the sum) so overlapping crescents don't double-opaque.
-              rimA *= mix(RIM_DARK_FLOOR, 1.0, litMax);
-
-              // Rayleigh hue shift, graded by column depth — outermost loft
-              // layer most, inner edge least. HUE ONLY: the target hue is
-              // renormalized to rimCol's luminance, so mixing toward it
-              // leaves brightness unchanged, and rimA is never touched.
-              // Target = the body's per-gas scatter color re-illuminated by
-              // the lit-weighted average starlight; shift amount scales by
-              // the per-body Rayleigh fraction (vWeights.w). See block.
-              float scatterStrength = vWeights.w;
-              if (litSum > 0.0 && RIM_RAYLEIGH_STRENGTH > 0.0 && scatterStrength > 0.0) {
-                float scatV = (vBodyIndex + 0.5) / max(uCloudLayerRows, 1.0);
-                float scatU = (float(${SCATTER_COLOR_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-                vec3  scatterColor = texture2D(uCloudLayerData, vec2(scatU, scatV)).rgb;
-                vec3  rayTarget = (lightAccum / litSum) * scatterColor;
-                float tgtL = lum(rayTarget);
-                if (tgtL > 0.0) {
-                  vec3 rayHue = rayTarget * (lum(rimCol) / tgtL);
-                  // Depth fraction: outermost layer → 1, inner → 1/width.
-                  float depth = clamp((floor(distOut) + 1.0) / vRimWidthPx, 0.0, 1.0);
-                  rimCol = mix(rimCol, rayHue, depth * scatterStrength * RIM_RAYLEIGH_STRENGTH);
-                }
-              }
-            }
-            gl_FragColor = vec4(rimCol, rimA);
-            return;
-          #endif
-        }
-        #ifdef HALO_ONLY
-          discard;
-        #endif
-
-        // Sphere projection — reconstruct the forward-hemisphere surface
-        // normal at this fragment and dot it with the band-aligned pole
-        // (tipped forward by arcsin(POLE_SIN), same foreshortening the
-        // rings and banded mode use). latSinS is the sine of latitude on
-        // the visible sphere; polar caps hug |latSinS| ≈ 1. Tilt rotation
-        // matches banded mode so a ringed terrestrial's caps and ring
-        // share one vantage.
-        //
-        // Hoisted above the surface gate because two consumers need it:
-        // the surface block (worley cells in lon/lat) and the patchy
-        // cloud block (worley cells in the same frame, so clouds and
-        // continents compress toward the limb together). Banded clouds
-        // keep their own un-inset projection because their latitude
-        // arcs need to reach the true pole.
-        //
-        // Frame derivation: in the band-aligned tilted frame the pole
-        // points along P = (0, POLE_COS, POLE_SIN) and the prime
-        // meridian (lon = 0 at the equator, facing the viewer) along
-        // F = (0, -POLE_SIN, POLE_COS); east is +x. For a surface
-        // normal n = (nxs, nys, nzs):
-        //   sin(lat) = dot(n, P) = nys*POLE_COS + nzs*POLE_SIN
-        //   cos(lat) cos(lon) = dot(n, F) = nzs*POLE_COS - nys*POLE_SIN
-        //   cos(lat) sin(lon) = dot(n, E) = nxs
-        // so lat = asin(latSinS) and lon = atan2(nxs, lonF). atan2 is
-        // well-defined across the visible hemisphere; the only
-        // singularity (visible pole) is a sub-pixel region masked by
-        // the ice cap for any body with iceFrac > 0.
-        float cT = cos(vTilt);
-        float sT = sin(vTilt);
-        float lxs =  d.x * cT + d.y * sT;
-        float lys = -d.x * sT + d.y * cT;
-        // Inset the projection by SPHERE_VISIBLE_FRAC so the disc edge
-        // maps inside the hemisphere rather than to the true limb —
-        // bounds cell foreshortening so they stop pinching to sub-pixel
-        // widths near the rim. See the constant block.
-        float nxs = (lxs / vRadius) * SPHERE_VISIBLE_FRAC;
-        float nys = (lys / vRadius) * SPHERE_VISIBLE_FRAC;
-        float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
-        float latSinS = nys * POLE_COS + nzs * POLE_SIN;
-        float lat     = asin(latSinS);
-        float lonF    = nzs * POLE_COS - nys * POLE_SIN;
-        float lon     = atan(nxs, lonF);
-
-        // Atm column color sampled from the data texture once per
-        // fragment. Painted as the disc base on no-surface bodies
-        // (visible through cloud rents, dominating the limb where
-        // clouds don't fully occlude). On surface bodies the surface
-        // block paints over it and it never shows directly.
-        float vBodyV = (vBodyIndex + 0.5) / max(uCloudLayerRows, 1.0);
-        float atmColU = (float(${ATM_COLUMN_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-        vec3 vAtmColumnColor = texture2D(uCloudLayerData, vec2(atmColU, vBodyV)).rgb;
-        // Per-body ocean color — derived from solvent species, biotic
-        // pigment mix, suspended mineral sediment, CDOM yellow substance,
-        // host-star SED, and sky reflection (see oceanColorFor in
-        // disc-palette/ocean.ts). Replaces the old hard-coded OCEAN_COLOR
-        // constant so two close-analog bodies get distinguishable hues.
-        float oceanColU = (float(${OCEAN_COLOR_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
-        vec3 vOceanColor = texture2D(uCloudLayerData, vec2(oceanColU, vBodyV)).rgb;
-
-        // Lava self-luminous emission accumulated in the surface block and
-        // added back AFTER the reflectance lighting pass (see the molten
-        // sub-pass + the post-lighting additive). Declared at main() scope
-        // so it survives the surface/cloud/haze composite. Zero on every
-        // non-molten body (the sub-pass early-outs on vMoltenCoverage).
-        vec3 lavaEmissive = vec3(0.0);
-
+      // Surface (or atm-column) base color for one fragment. Composes the
+      // full terrestrial surface stack — worley patches, ice/cap regime,
+      // ocean + coastal fringe, region palette election, biome stipple,
+      // craters + ejecta rays, linea, and molten lava — for surface bodies
+      // (vSurfaceOpacity > 0.5), or paints the gas/ice-giant atm column for
+      // the rest. lavaEmissive returns the self-luminous lava contribution
+      // (zero off molten bodies) for the caller to add back after lighting.
+      // The sphere-projection locals (d/lxs/lys/lon/lat) and per-body texture
+      // samples (ocean / atm-column color, body-row v) come from main();
+      // everything else reads from varyings/uniforms in scope.
+      vec3 surfaceColor(vec2 d, float lxs, float lys, float lon, float lat,
+                        vec3 vOceanColor, vec3 vAtmColumnColor, float vBodyV,
+                        out vec3 lavaEmissive) {
+        lavaEmissive = vec3(0.0);
         vec3 col;
         if (vSurfaceOpacity > 0.5) {
           // Latitude for cap / biome tests uses the un-inset projection
@@ -1713,6 +1564,174 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // decks below composite on top via the loop.
           col = vAtmColumnColor;
         }
+        return col;
+      }
+
+      void main() {
+        vec2 d = gl_FragCoord.xy - vCenter;
+        float r = length(d);
+
+        // Outside the disc — paint the atmospheric halo if any, else
+        // discard. Sprite is sized to give us vRimWidthPx pixels of
+        // overdraw space in the outward direction. Stack count for layer
+        // L = (W - L): innermost layer (closest to disc) is covered by
+        // the widest stroke and every narrower stroke, so it accumulates
+        // the most opacity. Output uses real alpha so the halo blends
+        // correctly with rings, moons, and other scene elements behind
+        // it (the planet material is transparent=true for this reason —
+        // see the material config below). vRimColor is the weighted-
+        // average merger across cloud + species haze + scattering + dust
+        // contributors (see disc-palette/index.ts).
+        if (r > vRadius) {
+          #ifdef DISC_ONLY
+            discard;
+          #else
+            if (r > vRadius + vRimWidthPx || vRimWidthPx < 1.0) discard;
+            float distOut = r - vRadius;
+            float layer = floor(distOut);
+            float stackCount = vRimWidthPx - layer;
+            float rimA = 1.0 - pow(1.0 - OUTER_BASE_ALPHA, stackCount);
+
+            // Directional loft glow — see the atmospheric-loft constant
+            // block. With no active lights, fall back to the static gas-
+            // color ring (no angular term) so a lightless body doesn't
+            // render a black-on-one-side halo.
+            vec3  rimCol = vRimColor;
+            if (uLightCount > 0) {
+              vec2  rimDir = normalize(d);
+              vec3  glowAccum = vec3(0.0);
+              vec3  lightAccum = vec3(0.0);
+              float litSum = 0.0;
+              float litMax = 0.0;
+              for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+                if (i >= uLightCount) break;
+                vec2 Ldir = normalize(uLightPos[i] - vCenter);
+                // Half-lambert wrap so the loft glow reaches past the
+                // terminator around the whole backlit limb (see block).
+                float facing = dot(rimDir, Ldir) * 0.5 + 0.5;
+                float lit = pow(facing, RIM_GLOW_FOCUS) * uLightIntensity[i];
+                // Per-light dither offset so multiple stars' stipple
+                // patterns don't cascade (mirrors the disc lighting pass).
+                float bL = bayer4(gl_FragCoord.xy + vec2(43.0 + float(i) * 7.0, 29.0 + float(i) * 11.0));
+                lit = clamp(lit + (bL - 0.5) * 2.0 * RIM_DITHER_WIDTH, 0.0, 1.0);
+                // Gas filters the starlight (hue-preserving multiply,
+                // gentle gain), plus a small white tip gated to the
+                // brightest sunward sliver so only the extreme limb pops.
+                vec3 scattered = vRimColor * uLightColor[i] * RIM_GLOW_GAIN;
+                float tip = pow(lit, RIM_TIP_FOCUS) * RIM_TIP_WHITE;
+                vec3 illum = scattered + uLightColor[i] * tip;
+                glowAccum += mix(vRimColor, illum, lit) * lit;
+                lightAccum += uLightColor[i] * lit;
+                litSum += lit;
+                litMax = max(litMax, lit);
+              }
+              // Color: per-star illuminated hues averaged by their lit
+              // weights (each star paints its own arc its own color); the
+              // gas color shows through where nothing lights the rim.
+              rimCol = (litSum > 0.0) ? glowAccum / litSum : vRimColor;
+              // Alpha: radial stack falloff × angular ramp from the faint
+              // night-side ambient floor to full on the lit limb. litMax
+              // (not the sum) so overlapping crescents don't double-opaque.
+              rimA *= mix(RIM_DARK_FLOOR, 1.0, litMax);
+
+              // Rayleigh hue shift, graded by column depth — outermost loft
+              // layer most, inner edge least. HUE ONLY: the target hue is
+              // renormalized to rimCol's luminance, so mixing toward it
+              // leaves brightness unchanged, and rimA is never touched.
+              // Target = the body's per-gas scatter color re-illuminated by
+              // the lit-weighted average starlight; shift amount scales by
+              // the per-body Rayleigh fraction (vWeights.w). See block.
+              float scatterStrength = vWeights.w;
+              if (litSum > 0.0 && RIM_RAYLEIGH_STRENGTH > 0.0 && scatterStrength > 0.0) {
+                float scatV = (vBodyIndex + 0.5) / max(uCloudLayerRows, 1.0);
+                float scatU = (float(${SCATTER_COLOR_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+                vec3  scatterColor = texture2D(uCloudLayerData, vec2(scatU, scatV)).rgb;
+                vec3  rayTarget = (lightAccum / litSum) * scatterColor;
+                float tgtL = lum(rayTarget);
+                if (tgtL > 0.0) {
+                  vec3 rayHue = rayTarget * (lum(rimCol) / tgtL);
+                  // Depth fraction: outermost layer → 1, inner → 1/width.
+                  float depth = clamp((floor(distOut) + 1.0) / vRimWidthPx, 0.0, 1.0);
+                  rimCol = mix(rimCol, rayHue, depth * scatterStrength * RIM_RAYLEIGH_STRENGTH);
+                }
+              }
+            }
+            gl_FragColor = vec4(rimCol, rimA);
+            return;
+          #endif
+        }
+        #ifdef HALO_ONLY
+          discard;
+        #endif
+
+        // Sphere projection — reconstruct the forward-hemisphere surface
+        // normal at this fragment and dot it with the band-aligned pole
+        // (tipped forward by arcsin(POLE_SIN), same foreshortening the
+        // rings and banded mode use). latSinS is the sine of latitude on
+        // the visible sphere; polar caps hug |latSinS| ≈ 1. Tilt rotation
+        // matches banded mode so a ringed terrestrial's caps and ring
+        // share one vantage.
+        //
+        // Hoisted above the surface gate because two consumers need it:
+        // the surface block (worley cells in lon/lat) and the patchy
+        // cloud block (worley cells in the same frame, so clouds and
+        // continents compress toward the limb together). Banded clouds
+        // keep their own un-inset projection because their latitude
+        // arcs need to reach the true pole.
+        //
+        // Frame derivation: in the band-aligned tilted frame the pole
+        // points along P = (0, POLE_COS, POLE_SIN) and the prime
+        // meridian (lon = 0 at the equator, facing the viewer) along
+        // F = (0, -POLE_SIN, POLE_COS); east is +x. For a surface
+        // normal n = (nxs, nys, nzs):
+        //   sin(lat) = dot(n, P) = nys*POLE_COS + nzs*POLE_SIN
+        //   cos(lat) cos(lon) = dot(n, F) = nzs*POLE_COS - nys*POLE_SIN
+        //   cos(lat) sin(lon) = dot(n, E) = nxs
+        // so lat = asin(latSinS) and lon = atan2(nxs, lonF). atan2 is
+        // well-defined across the visible hemisphere; the only
+        // singularity (visible pole) is a sub-pixel region masked by
+        // the ice cap for any body with iceFrac > 0.
+        float cT = cos(vTilt);
+        float sT = sin(vTilt);
+        float lxs =  d.x * cT + d.y * sT;
+        float lys = -d.x * sT + d.y * cT;
+        // Inset the projection by SPHERE_VISIBLE_FRAC so the disc edge
+        // maps inside the hemisphere rather than to the true limb —
+        // bounds cell foreshortening so they stop pinching to sub-pixel
+        // widths near the rim. See the constant block.
+        float nxs = (lxs / vRadius) * SPHERE_VISIBLE_FRAC;
+        float nys = (lys / vRadius) * SPHERE_VISIBLE_FRAC;
+        float nzs = sqrt(max(0.0, 1.0 - nxs * nxs - nys * nys));
+        float latSinS = nys * POLE_COS + nzs * POLE_SIN;
+        float lat     = asin(latSinS);
+        float lonF    = nzs * POLE_COS - nys * POLE_SIN;
+        float lon     = atan(nxs, lonF);
+
+        // Atm column color sampled from the data texture once per
+        // fragment. Painted as the disc base on no-surface bodies
+        // (visible through cloud rents, dominating the limb where
+        // clouds don't fully occlude). On surface bodies the surface
+        // block paints over it and it never shows directly.
+        float vBodyV = (vBodyIndex + 0.5) / max(uCloudLayerRows, 1.0);
+        float atmColU = (float(${ATM_COLUMN_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+        vec3 vAtmColumnColor = texture2D(uCloudLayerData, vec2(atmColU, vBodyV)).rgb;
+        // Per-body ocean color — derived from solvent species, biotic
+        // pigment mix, suspended mineral sediment, CDOM yellow substance,
+        // host-star SED, and sky reflection (see oceanColorFor in
+        // disc-palette/ocean.ts). Replaces the old hard-coded OCEAN_COLOR
+        // constant so two close-analog bodies get distinguishable hues.
+        float oceanColU = (float(${OCEAN_COLOR_TEXEL_OFFSET}) + 0.5) / float(${BODY_TEXTURE_WIDTH});
+        vec3 vOceanColor = texture2D(uCloudLayerData, vec2(oceanColU, vBodyV)).rgb;
+
+        // Surface (or atm-column) base color + self-luminous lava emission.
+        // lavaEmissive is added back AFTER the reflectance lighting pass (see
+        // the post-lighting additive), so it lives at main() scope to survive
+        // the surface/cloud/haze composite; surfaceColor zeroes it on every
+        // non-molten body. col is the base the haze + cloud decks composite over.
+        vec3 lavaEmissive;
+        vec3 col = surfaceColor(d, lxs, lys, lon, lat,
+                                vOceanColor, vAtmColumnColor, vBodyV,
+                                lavaEmissive);
 
         // ── Haze blanket ──
         // Surface bodies: uniform per-fragment lerp toward the unified
