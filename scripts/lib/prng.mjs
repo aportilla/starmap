@@ -1,18 +1,13 @@
-// FNV-1a + mulberry32 — shared seeded PRNG helpers for build-time
-// derivations. Same numerical behavior the original syntheticMass /
-// expandCoincidentSets used in build-catalog.mjs; lifted into a shared
-// module so procgen.mjs can derive identical seeds from the same id
-// strings, and so future build-time consumers don't fork the implementation.
-//
-// **Mirrored at runtime** in src/scene/system-diagram/geom/prng.ts. Two
-// copies exist because this file runs under Node (no TS toolchain in
-// the build script's path) and the diagram runs in the bundled browser
-// build. Any change to hash32 or mulberry32 here MUST be mirrored over
-// there (and vice-versa) — drift would silently desync the runtime's
-// per-body seeds from the ones baked into catalog.generated.json, so
-// procgen moons/belts/rings would re-roll different layouts on load
-// than the build script intended. sampleNormal / sampleTruncated are
-// build-time only and have no runtime counterpart.
+// FNV-1a + mulberry32 — shared seeded PRNG helpers, the single source of the
+// deterministic seeding used across the build and the runtime. procgen and the
+// other build scripts import them here to derive per-body seeds from id
+// strings; the browser bundle re-exports hash32 / mulberry32 through
+// src/scene/system-diagram/geom/prng.ts (typed by prng.d.mts) so the moon /
+// belt / ring layouts the diagram rolls match the seeds baked into
+// catalog.generated.json by construction. This file is plain JS so the Node
+// build can run it without a TS toolchain; that's why the runtime reaches in
+// here rather than the two forking. sampleNormal / sampleTruncated and the
+// other samplers below are build-time only and have no runtime consumer.
 
 export function hash32(s) {
   let h = 0x811c9dc5;
@@ -20,6 +15,9 @@ export function hash32(s) {
   return h >>> 0;
 }
 
+// One instance per consumer so draws stay isolated — a shared global PRNG
+// would couple every belt's chunk layout to every other belt's draw count,
+// breaking determinism under any reordering.
 export function mulberry32(seed) {
   let t = seed >>> 0;
   return () => {

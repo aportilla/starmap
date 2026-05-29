@@ -79,6 +79,7 @@
 // other input is shared between planets and moons.
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, sampleMixture, drawWeightedDeposits } from './prng.mjs';
+import { GAS_POTENCY } from './gas-potency.mjs';
 import {
   PROCGEN_VERSION,
   ECCENTRICITY,
@@ -880,23 +881,6 @@ function surfaceOpacityFor(body) {
 // T + atm + waterFraction + bulkWaterFraction. Coverage / wind / strength
 // tuning lives in CLOUD_DECK (procgen-priors).
 
-// Approximate per-gas absorption strength for the sparse-cirrus mode
-// gate. Mirrors GAS_POTENCY in src/data/stars.ts for the species that
-// can simultaneously be cloud condensates AND atm-column absorbers
-// (the only place procgen needs to reason about column color). Kept
-// small + local instead of pulled across the .ts/.mjs boundary.
-const CLOUD_GAS_POTENCY = {
-  H2:  0.02, He: 0.01, N2: 0.05, Ar: 0.05,
-  CO2: 1.0, CO: 1.0, O2: 1.0,
-  H2O: 3.0, NH3: 3.0,
-  CH4: 12.0, SO2: 8.0,
-  // Aerosol species potencies — only matters if these appear in the
-  // atm record, which they don't today (procgen emits them as
-  // hazeAerosols / cloud condensates, never as bulk atm). Carried for
-  // completeness in case the renderer's atm-column reading evolves.
-  H2SO4: 3.0, SILICATE: 3.0, THOLIN: 3.0, NH4SH: 3.0, SALT: 3.0, SULFUR: 3.0,
-};
-
 function isGaseousBody(body) {
   return body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
 }
@@ -966,7 +950,7 @@ function cloudDecksFor(body, _S) {
     if (strength < CLOUD_DECK.strengthThreshold) continue;
 
     const atmFrac = atmFracOf(body, c.gas);
-    const gasPotency = CLOUD_GAS_POTENCY[c.gas] ?? 0;
+    const gasPotency = GAS_POTENCY[c.gas] ?? 0;
     const coverage = coverageFor(body, c.gas, strength, atmFrac, gasPotency);
     if (coverage < CLOUD_DECK.strengthThreshold) continue;
 
@@ -1034,8 +1018,8 @@ function atmFracOf(body, gas) {
 // chemistry physics (T, P, precursor fractions, world class). Pre-
 // potency, pre-scale: the unified haze blend in `hazeFor` is the only
 // thing that combines these with the global category multipliers.
-// Per-species visibility weight lives in GAS_POTENCY (see priors), so
-// no anchor coefficient appears here.
+// Per-species visibility weight lives in GAS_POTENCY (gas-potency.mjs),
+// so no anchor coefficient appears here.
 function hazeContribution(gas, body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
