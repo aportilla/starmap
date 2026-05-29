@@ -1653,6 +1653,40 @@ export function fillBodies(bodies, stars) {
   return bodies.map(b => fillBody(b, bodies, stars));
 }
 
+// One cover→albedo→temp→cover iteration for a given greenhouse offset.
+// `prevWater`/`prevIce` seed the albedo's cloud/ice contribution so the
+// caller can run it twice (cold start, then refined by pass 1's cover).
+// Reads the body's settled physics off `ctx.working`; returns all-null
+// when T can't be resolved (missing radius or insolation).
+function runTempIcePass(ctx, prevWater, prevIce, greenhouseK) {
+  const { working, S, surfacePressureBar, bulkWaterFraction, waterNoise, iceNoise } = ctx;
+  const stateForAlbedo = {
+    ...working,
+    waterFraction: prevWater,
+    iceFraction:   prevIce,
+    // T not yet known; bondAlbedoFor's cloud gate uses T — pass null
+    // first pass, refined T on second.
+    avgSurfaceTempK: null,
+  };
+  // First T-pass without cloud temperature gate
+  let A = bondAlbedoFor(stateForAlbedo);
+  let T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
+  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
+  // Recompute albedo with T available so the cloud-temperate gate fires
+  A = bondAlbedoFor({ ...stateForAlbedo, avgSurfaceTempK: T });
+  T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
+  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
+  const { min: Tmin, max: Tmax } = surfaceTempRangeFor({
+    ...working,
+    avgSurfaceTempK: T,
+    waterFraction: prevWater,
+    surfacePressureBar,
+  });
+  const water = surfaceLiquidWaterCover(bulkWaterFraction, T, surfacePressureBar, waterNoise);
+  const ice   = surfaceIceCover(bulkWaterFraction, T, Tmin, surfacePressureBar, iceNoise);
+  return { T, Tmin, Tmax, ice, water };
+}
+
 function fillBody(b, allBodies, stars) {
   // Resolve host + the mass that drives Kepler's third law for this body:
   //   planet → host star (solar masses)
@@ -1826,33 +1860,25 @@ function fillBody(b, allBodies, stars) {
   const iceNoise   = sampleTruncated(fieldPrng(b, 'iceCover'),   ICE_COVER_NOISE);
   const waterNoise = sampleTruncated(fieldPrng(b, 'waterCover'), WATER_COVER_NOISE);
 
-  function runTempIcePass(waterPrev, icePrev, greenhouseK) {
-    const stateForAlbedo = {
+  // Run the two-pass settle for one greenhouse offset against the current
+  // `working`, then commit the resolved temp/cover fields into the unknowns
+  // and `working`. Pass A (pressure proxy) and Pass B (composition-aware)
+  // share this body so the five-field commit lives in one place.
+  const applyTempPass = (greenhouseK) => {
+    const ctx = { working, S, surfacePressureBar, bulkWaterFraction, waterNoise, iceNoise };
+    const p1 = runTempIcePass(ctx, 0, 0, greenhouseK);
+    const p2 = runTempIcePass(ctx, p1.water ?? 0, p1.ice ?? 0, greenhouseK);
+    if (unknowns.has('avgSurfaceTempK') && p2.T != null) avgSurfaceTempK = p2.T;
+    if (unknowns.has('surfaceTempMinK') && p2.Tmin != null) surfaceTempMinK = p2.Tmin;
+    if (unknowns.has('surfaceTempMaxK') && p2.Tmax != null) surfaceTempMaxK = p2.Tmax;
+    if (unknowns.has('iceFraction')   && p2.ice   != null) iceFraction   = p2.ice;
+    if (unknowns.has('waterFraction') && p2.water != null) waterFraction = p2.water;
+    working = {
       ...working,
-      waterFraction: waterPrev,
-      iceFraction:   icePrev,
-      // T not yet known; bondAlbedoFor's cloud gate uses T — pass null
-      // first pass, refined T on second.
-      avgSurfaceTempK: null,
+      avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
+      iceFraction, waterFraction,
     };
-    // First T-pass without cloud temperature gate
-    let A = bondAlbedoFor(stateForAlbedo);
-    let T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
-    if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
-    // Recompute albedo with T available so the cloud-temperate gate fires
-    A = bondAlbedoFor({ ...stateForAlbedo, avgSurfaceTempK: T });
-    T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
-    if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
-    const { min: Tmin, max: Tmax } = surfaceTempRangeFor({
-      ...working,
-      avgSurfaceTempK: T,
-      waterFraction: waterPrev,
-      surfacePressureBar,
-    });
-    const water = surfaceLiquidWaterCover(bulkWaterFraction, T, surfacePressureBar, waterNoise);
-    const ice   = surfaceIceCover(bulkWaterFraction, T, Tmin, surfacePressureBar, iceNoise);
-    return { T, Tmin, Tmax, ice, water };
-  }
+  };
 
   // ─── Pass A: pressure-proxy greenhouse ───
   // Initial estimate — atm composition isn't known yet, so we use the
@@ -1860,19 +1886,7 @@ function fillBody(b, allBodies, stars) {
   // dispatch atm species; Pass B will refine using the resulting
   // composition.
   const greenhouseA = greenhouseKFromPressure(surfacePressureBar);
-  const passA1 = runTempIcePass(0, 0, greenhouseA);
-  const passA2 = runTempIcePass(passA1.water ?? 0, passA1.ice ?? 0, greenhouseA);
-
-  if (unknowns.has('avgSurfaceTempK') && passA2.T != null) avgSurfaceTempK = passA2.T;
-  if (unknowns.has('surfaceTempMinK') && passA2.Tmin != null) surfaceTempMinK = passA2.Tmin;
-  if (unknowns.has('surfaceTempMaxK') && passA2.Tmax != null) surfaceTempMaxK = passA2.Tmax;
-  if (unknowns.has('iceFraction')   && passA2.ice   != null) iceFraction   = passA2.ice;
-  if (unknowns.has('waterFraction') && passA2.water != null) waterFraction = passA2.water;
-  working = {
-    ...working,
-    avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
-    iceFraction, waterFraction,
-  };
+  applyTempPass(greenhouseA);
 
   // Surface age — derived from tectonic activity + tidal lift for
   // eccentric moons of gaseous hosts.
@@ -1911,20 +1925,8 @@ function fillBody(b, allBodies, stars) {
   // flip which species fires).
   if (working.surfacePressureBar != null && working.surfacePressureBar > 0) {
     const greenhouseB = greenhouseKFromComposition(working);
-    const deltaK = Math.abs(greenhouseB - greenhouseA);
-    if (deltaK > 1) {
-      const passB1 = runTempIcePass(0, 0, greenhouseB);
-      const passB2 = runTempIcePass(passB1.water ?? 0, passB1.ice ?? 0, greenhouseB);
-      if (unknowns.has('avgSurfaceTempK') && passB2.T != null) avgSurfaceTempK = passB2.T;
-      if (unknowns.has('surfaceTempMinK') && passB2.Tmin != null) surfaceTempMinK = passB2.Tmin;
-      if (unknowns.has('surfaceTempMaxK') && passB2.Tmax != null) surfaceTempMaxK = passB2.Tmax;
-      if (unknowns.has('iceFraction')   && passB2.ice   != null) iceFraction   = passB2.ice;
-      if (unknowns.has('waterFraction') && passB2.water != null) waterFraction = passB2.water;
-      working = {
-        ...working,
-        avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
-        iceFraction, waterFraction,
-      };
+    if (Math.abs(greenhouseB - greenhouseA) > 1) {
+      applyTempPass(greenhouseB);
     }
   }
 
