@@ -820,9 +820,10 @@ export const PROCGEN_VERSION = 'v17';
 // ---------------------------------------------------------------------------
 
 // Belt context is a single thermal axis: warm (inward of giants, rocky-
-// leaning) or cold (outward of giants, volatile-leaning). Composition
-// lives in the six-resource grid; the renderer derives belt color from
-// resVolatiles vs. rocky resources. Size character emerges from
+// leaning) or cold (outward of giants, volatile-leaning). Composition is
+// a two-deposit draw from BELT_RESOURCE_OCCURRENCE keyed on this context;
+// the renderer derives belt color from resVolatiles vs. rocky resources.
+// Size character emerges from
 // shepherding — belts anchored to a giant draw `largestBodyKm` from
 // the parent-body range (Ceres / Pluto class); free-float belts draw
 // from the dust-cascade range (~tens of km). No discrete enum exposes
@@ -895,57 +896,41 @@ export const BELT_PLACEMENT = {
   cold: { innerFrac: 0.75, outerFrac: 2.50, mass: { min: 0.001,  max: 0.3  } },
 };
 
-// Resource priors per belt context. Sampled as truncated normals,
-// rounded to integer, clamped [0, 10]. The grid carries composition
-// AND drives rendered character (resVolatiles dominant → bright icy
-// chunks; rocky resources dominant → tan/dusty chunks). Wide sd
-// reflects the real spread: a warm belt can be a Sol-Main-Belt rocky
-// parent-body system OR an HD 69830-style processed-material cascade,
-// and the priors here cover both.
+// Belt resource occurrence — belts use the same two-deposit draw as
+// planets/moons (see RESOURCE_OCCURRENCE + `drawWeightedDeposits`): per
+// context, draw TWO resource types weighted-without-replacement and roll a
+// context-scaled abundance for each (others 0). A belt reads as "the iron
+// belt" / "the ice-and-exotics belt" rather than a flat six-resource smear,
+// while the rocky-vs-icy split still emerges from whether volatiles win a
+// slot (the renderer's `bodyIcyness` reads the same grid).
 //
-//   warm: rocky-dominant — high metals/silicates, low volatiles.
-//         Anchored on Sol Main Belt (rocky) + HD 69830 (warm dust)
-//         composition envelope.
-//   cold: volatile-dominant — high volatiles, low rocky. Anchored on
-//         Kuiper Belt (icy KBOs) + β Pic outer ring (mixed cold dust)
-//         envelope.
-const BELT_RESOURCE_PRIORS_REALISTIC = {
-  warm: {
-    resMetals:        { mean: 6, sd: 3, min: 0, max: 10 },
-    resSilicates:     { mean: 6, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 1, sd: 1, min: 0, max: 10 },
-    resRareEarths:    { mean: 3, sd: 2, min: 0, max: 10 },
-    resRadioactives:  { mean: 2, sd: 2, min: 0, max: 10 },
-    resExotics:       { mean: 2, sd: 2, min: 0, max: 10 },
-  },
-  cold: {
-    resMetals:        { mean: 2, sd: 2, min: 0, max: 10 },
-    resSilicates:     { mean: 2, sd: 2, min: 0, max: 10 },
-    resVolatiles:     { mean: 7, sd: 3, min: 0, max: 10 },
-    resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
-    resRadioactives:  { mean: 1, sd: 1, min: 0, max: 10 },
-    resExotics:       { mean: 3, sd: 2, min: 0, max: 10 },
-  },
+// Context base weights carry the belt's physical character; the secondary
+// draw supplies variety:
+//   warm: rocky — metals usually primary (THE strategic metal source),
+//         silicates a strong alternate, volatiles near-absent. Anchored on
+//         Sol Main Belt + HD 69830 warm-dust envelope.
+//   cold: icy — volatiles dominate, exotics the common accent. Anchored on
+//         Kuiper Belt + β Pic outer-ring envelope.
+//
+// `abundance` runs richer than the planet spec (strongMean 9, so a primary
+// deposit lands ~9-10): belts are strategic mining targets that should
+// DOMINATE their niche, not tie a planet's surface yield. That dominance
+// now rides the primary-deposit abundance rather than a per-field mean bump.
+const BELT_RESOURCE_OCCURRENCE_REALISTIC = {
+  abundance: { weakMean: 4, strongMean: 9, sd: 1.5, min: 1, max: 10, primaryBonus: 1 },
+  warm: { resMetals: 5, resSilicates: 3.5, resVolatiles: 0.4, resRareEarths: 2, resRadioactives: 1.5, resExotics: 1.5 },
+  cold: { resVolatiles: 6, resExotics: 2.5, resMetals: 1.2, resSilicates: 1.2, resRareEarths: 1, resRadioactives: 1 },
 };
 
-// Gameplay tune: belts should be strategic mining targets that DOMINATE
-// their resource niche, not generic "any-resource" sources roughly equal
-// to planet surface mining. Without these tunes a rocky planet
-// (5/6/3/4/3/1) ties or beats a warm belt on per-cell metal yield once
-// volumetric extraction factors in — so a player thinking "where do I
-// send the mining fleet" picks planets every time and belts feel
-// decorative. Bumps:
-//   - warm resMetals    6→8 (THE strategic metal source)
-//   - cold resVolatiles 7→9 (THE volatile source)
-// Other resources untouched.
-const BELT_RESOURCE_PRIORS_TUNE = {
-  warm: { resMetals:    { mean: 8 } },
-  cold: { resVolatiles: { mean: 9 } },
-};
+// No gameplay flatten on belts — their rocky/icy character is the point, and
+// the strategic-dominance tune the old per-field model carried is now
+// inherent in the abundance spec (primary deposit ≈ 9-10). Kept as a split
+// for structural parity + a future tuning home.
+const BELT_RESOURCE_OCCURRENCE_TUNE = {};
 
-export const BELT_RESOURCE_PRIORS = mergeTunes(
-  BELT_RESOURCE_PRIORS_REALISTIC,
-  BELT_RESOURCE_PRIORS_TUNE,
+export const BELT_RESOURCE_OCCURRENCE = mergeTunes(
+  BELT_RESOURCE_OCCURRENCE_REALISTIC,
+  BELT_RESOURCE_OCCURRENCE_TUNE,
 );
 
 // largestBodyKm draw range, conditioned on shepherding rather than a
@@ -1809,15 +1794,73 @@ export const CONDENSABLES = [
 // looking up a regime-keyed spec. See hazeContribution for the
 // per-species gates and calibration anchors.
 
-// Resources are now physics-derived in resourcesFor (procgen.mjs):
-//   metals       ∝ bulkMetalFraction
-//   silicates    ∝ (1 - bulkMetal - bulkWater)
-//   volatiles    ∝ surface water/ice cover + atm volatile fraction
-//                  (gaseous bodies: 8 + bulkWater × 20)
-//   rare earths  ∝ stellar metallicity
-//   radioactives ∝ stellar metallicity × age-decay
-//   exotics      ∝ gaseous bonus + tidal-heated moon bonus + noise
-// No class-keyed table.
+// Resource occurrence — the resource grid is no longer a physics-derived
+// bulk-composition readout. It records the body's NOTABLE MINERAL DEPOSITS:
+// `resourcesFor` (procgen.mjs) draws TWO resource types per body from a
+// context-weighted probability table and rolls a context-driven abundance
+// for each (the other four are 0). Bulk composition is assumed background —
+// silicate rock, etc. is everywhere and gameplay-boring, so it stops being
+// a tracked-everywhere scalar and becomes "is it a notable deposit here?"
+//
+// Why a draw, not a derivation: the old `gain × bulk-fraction` model was
+// chained to the identity silicates = 1 − metal − water, which guaranteed a
+// bulk resource always dominated the top-2 — no amount of gain tuning could
+// surface scarce resources or let arbitrary pairs co-occur (proven: even at
+// exotics-in-55%-of-worlds the rare|rare pairs stayed at zero). A weighted
+// draw without replacement makes any two resources able to land together,
+// with their odds shaped by physical context rather than a hard floor.
+//
+// Per resource: `base` weight × the product of whichever `context`-axis
+// multipliers apply to this body (absent axis ⇒ ×1). The axes ARE the
+// physics, re-expressed as odds: hot/inner → metals, cold/icy → volatiles,
+// metal-rich host → rare-earths + radioactives, tidal moon / gas giant →
+// exotics. Then two distinct resources are drawn weighted-without-
+// replacement, so a strong-fit resource is likely-not-guaranteed and a
+// long-shot still has a chance.
+//
+// `abundance` is dynamic to the same context: a picked resource's mean
+// scales from `weakMean`→`strongMean` by its normalized occurrence weight
+// (strong contextual fit ⇒ richer deposit), and the first (primary) draw
+// gets `primaryBonus`. So one table drives both presence AND richness.
+//
+// `_REALISTIC` keeps physics-flavored odds (bulk favored, context-shaped);
+// `_TUNE` flattens the bases toward uniform for compositional diversity.
+// Deleting the tune reverts to physics-flavored odds.
+const RESOURCE_OCCURRENCE_REALISTIC = {
+  context: {
+    hotK: 400, coldK: 200,
+    metalRichBulk: 0.40,
+    metalRichHostDex: 0.10, metalPoorHostDex: -0.10,
+    youngHostGyr: 3,
+    icyFrac: 0.30, wateryFrac: 0.50,
+  },
+  abundance: { weakMean: 3, strongMean: 8, sd: 1.5, min: 1, max: 10, primaryBonus: 1.5 },
+  resMetals:       { base: 4,   hot: 1.5, metalRichBulk: 2.0, gaseous: 0.2 },
+  resSilicates:    { base: 5,   gaseous: 0.2 },
+  resVolatiles:    { base: 3,   cold: 2.0, icy: 2.2, gaseous: 3.0, hot: 0.3 },
+  resRareEarths:   { base: 1.5, metalRichHost: 2.2, metalPoorHost: 0.4 },
+  resRadioactives: { base: 1.0, metalRichHost: 2.0, youngHost: 1.6 },
+  resExotics:      { base: 0.8, gaseous: 2.0, tidalMoon: 3.0 },
+};
+
+// Gameplay tune — flatten the base weights toward uniform so the scarce
+// resources compete with the bulk ones for a world's two deposits. Bases are
+// equalized AND the context multipliers are compressed toward 1 (vs the
+// realistic block's stronger pulls) — the realistic volatiles stack
+// (cold × icy × gaseous) otherwise makes ice worlds a near-monoculture. The
+// axes still tilt the odds (cold worlds lean volatile, metal-rich hosts lean
+// rare-earth) but no longer dominate, so no single resource defines more
+// than ~1/5 of worlds. Calibrated to that ceiling against the live catalog.
+const RESOURCE_OCCURRENCE_TUNE = {
+  resMetals:       { base: 3,   hot: 1.2, metalRichBulk: 1.3, gaseous: 0.55 },
+  resSilicates:    { base: 3.2, gaseous: 0.55 },
+  resVolatiles:    { base: 2.4, cold: 1.2, icy: 1.25, gaseous: 1.4, hot: 0.7 },
+  resRareEarths:   { base: 3.6, metalRichHost: 1.4, metalPoorHost: 0.75 },
+  resRadioactives: { base: 3.2, metalRichHost: 1.4, youngHost: 1.3 },
+  resExotics:      { base: 3,   gaseous: 1.4, tidalMoon: 1.8 },
+};
+
+export const RESOURCE_OCCURRENCE = mergeTunes(RESOURCE_OCCURRENCE_REALISTIC, RESOURCE_OCCURRENCE_TUNE);
 
 // ---------------------------------------------------------------------------
 // Biosphere — three orthogonal derived fields: archetype × complexity × surface impact

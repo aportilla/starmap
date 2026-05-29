@@ -549,7 +549,7 @@ const BODY_KINDS = new Set(['planet', 'moon', 'belt', 'ring']);
 const BODY_SOURCES = new Set(['catalog', 'procgen']);
 // belt_class and population_model are vestigial columns kept in the
 // CSV schema so column positions don't shift, but ignored at runtime.
-// Composition lives in the six-resource grid; size character emerges
+// Composition lives in the resource grid; size character emerges
 // from the architect's shepherding-conditional largestBodyKm draw.
 // See the validators below.
 

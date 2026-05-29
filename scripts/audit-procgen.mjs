@@ -38,7 +38,7 @@ import {
   MOON_PROBABILITY_CAP,
   MOON_COUNT_MAX,
   BELT_OCCURRENCE_BY_CLASS,
-  BELT_RESOURCE_PRIORS,
+  BELT_RESOURCE_OCCURRENCE,
   COMPANION_PLANET_SUPPRESSION,
   zoneForFormationAu,
   SNOW_LINE_TEMPERATURES,
@@ -725,7 +725,7 @@ for (const cls of Object.keys(resByClass).sort()) {
 console.log();
 
 console.log('=== Resource means, by belt context (procgen belts, 0-10 scale) ===');
-console.log('  context           |  n      met  sil  vol  rare radio exo    (priors in brackets)');
+console.log('  context           |  n      met  sil  vol  rare radio exo    (occurrence weights in brackets)');
 const beltResByCtx = {};
 for (const b of bodies) {
   if (b.kind !== 'belt' || b.source !== 'procgen') continue;
@@ -739,10 +739,10 @@ for (const b of bodies) {
 }
 for (const ctx of BELT_CONTEXTS) {
   const r = beltResByCtx[ctx];
-  const p = BELT_RESOURCE_PRIORS[ctx];
+  const p = BELT_RESOURCE_OCCURRENCE[ctx];
   if (!r || !r.n) continue;
   const obs = RES.map(f => (r.sums[f] / r.n).toFixed(1).padStart(3));
-  const prior = RES.map(f => p[f].mean.toString().padStart(3));
+  const prior = RES.map(f => String(p[f] ?? 0).padStart(3));
   console.log(
     '  ' + pad(ctx, 17) +
     ' | ' + pad(r.n, 4, true) +

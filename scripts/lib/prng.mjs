@@ -122,3 +122,50 @@ export function sampleBinomial(prng, n, p) {
   for (let i = 0; i < n; i++) if (prng() < p) k += 1;
   return k;
 }
+
+// Pick `n` distinct items from `items` weighted by `weightMap[item]`,
+// drawing sequentially from one PRNG (without replacement). Items with
+// weight ≤ 0 are excluded.
+export function weightedPickN(prng, items, weightMap, n) {
+  const pool = items
+    .map((it) => ({ it, w: weightMap[it] ?? 0 }))
+    .filter((e) => e.w > 0);
+  const out = [];
+  while (out.length < n && pool.length > 0) {
+    const total = pool.reduce((s, e) => s + e.w, 0);
+    let r = prng() * total;
+    let idx = 0;
+    while (idx < pool.length - 1 && r >= pool[idx].w) { r -= pool[idx].w; idx++; }
+    out.push(pool[idx].it);
+    pool.splice(idx, 1);
+  }
+  return out;
+}
+
+// The shared "notable deposits" draw used by both the planet/moon resource
+// model and the belt model. Given per-key occurrence `weights` and an
+// `abundance` spec ({ weakMean, strongMean, sd, min, max, primaryBonus }),
+// draw `count` distinct keys weighted-without-replacement and roll each an
+// abundance whose mean scales with that key's normalized weight (strong
+// contextual fit ⇒ richer), with `primaryBonus` added to the first (primary)
+// draw. Unpicked keys are 0. `prngFor(name)` returns a seeded PRNG per draw
+// stage so callers control determinism. Returns an object over all `keys`.
+export function drawWeightedDeposits(keys, weights, abundance, prngFor, count = 2) {
+  let maxW = 0;
+  for (const k of keys) if ((weights[k] ?? 0) > maxW) maxW = weights[k] ?? 0;
+  const picks = weightedPickN(prngFor('pick'), keys, weights, count);
+  const grid = {};
+  for (const k of keys) grid[k] = 0;
+  picks.forEach((res, i) => {
+    const norm = maxW > 0 ? (weights[res] ?? 0) / maxW : 0;
+    const mean = abundance.weakMean
+      + (abundance.strongMean - abundance.weakMean) * norm
+      + (i === 0 ? abundance.primaryBonus : 0);
+    grid[res] = sampleTruncated(
+      prngFor(`abund_${res}`),
+      { mean, sd: abundance.sd, min: abundance.min, max: abundance.max },
+      true,
+    );
+  });
+  return grid;
+}

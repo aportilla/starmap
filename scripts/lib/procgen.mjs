@@ -53,9 +53,11 @@
 //                               frozen bodies into `ice` (water-ice
 //                               dominant) vs `carbon` (methane-frost
 //                               dominant) per bulkVolatile vs bulkWater.
-//   13. Resources               Six 0..10 scalars physics-derived from
-//                               bulk composition + stellar metallicity
-//                               + age × decay + tidal bonus.
+//   13. Resources               Two notable mineral deposits drawn per
+//                               body from a context-weighted occurrence
+//                               table (RESOURCE_OCCURRENCE); the other
+//                               four resource fields stay 0. See
+//                               resourcesFor for the draw + abundance.
 //   14. Post-atm biotic         bioticAerial (Sagan floaters on gas
 //                               giants), bioticCryogenic (Titan-class),
 //                               bioticSilicate (hot rocky), bioticSulfur
@@ -76,7 +78,7 @@
 // via the step-8 surface-age lift for eccentric moons of giants; every
 // other input is shared between planets and moons.
 
-import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, sampleMixture } from './prng.mjs';
+import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, sampleMixture, drawWeightedDeposits } from './prng.mjs';
 import {
   PROCGEN_VERSION,
   ECCENTRICITY,
@@ -121,6 +123,7 @@ import {
   MICROBIAL_SURFACE_CONTRIBUTION,
   BIOSPHERE_ARCHETYPES,
   BIOSPHERE_COMPLEXITY,
+  RESOURCE_OCCURRENCE,
 } from './procgen-priors.mjs';
 
 // Per-archetype productivity field — used by the CSV-authored biosphere
@@ -1205,94 +1208,81 @@ function hazeFor(body) {
 }
 
 // =============================================================================
-// Resources — physics-derived (Phase 4.5)
+// Resources — context-weighted probabilistic occurrence
 // =============================================================================
 
-// Volatile gases for resVolatiles accounting. O2 is excluded (it's a
-// biotic biosignature, not a bulk-volatile resource).
-const VOLATILE_GASES_SET = new Set(['CO2', 'CH4', 'H2O', 'NH3', 'CO', 'SO2']);
+const RESOURCE_KEYS = [
+  'resMetals', 'resSilicates', 'resVolatiles',
+  'resRareEarths', 'resRadioactives', 'resExotics',
+];
 
-// Per-resource physics derivation. No class input — six scalars derived
-// from primary attributes (mass, bulk composition) + downstream physics
-// (atm composition, surface cover) + stellar context (metallicity, age).
-//
-// Calibration anchors (Sol curated values — Filler doesn't touch them,
-// these are for procgen consistency):
-//   Earth   M/S/V/R/Ra/E = 5/6/7/5/4/0   bulkMetal 0.32 / N2 atm
-//   Mars    5/5/3/5/4/0                  bulkMetal 0.24 / CO2 atm
-//   Mercury 8/4/1/5/3/0                  bulkMetal 0.70
-//   Europa  3/4/9/3/2/6                  bulkMetal 0.10 / iceFraction 0.85
-//   Jupiter 1/1/10/1/1/2                 bulkMetal 0.02 / gaseous
-//
-// Each scalar gets per-body seeded noise (truncated normal around 1.0).
+// Bulk silicate-rock fraction on the resource 0..10 scale. Silicate rock is
+// ubiquitous — it's whatever isn't metal core or water/ice — so biosphere
+// SUBSTRATE reads use this physical bulk estimate rather than the resource
+// grid. The grid now records notable mineral DEPOSITS (two per body), not
+// bulk composition, so a world that didn't roll a silicate deposit still has
+// silicate rock for life to build on.
+function bulkSilicate10(body) {
+  const m = body.bulkMetalFraction ?? 0.32;
+  const w = body.bulkWaterFraction ?? 0;
+  return 10 * Math.max(0, 1 - m - w);
+}
+
+// Pick a body's two notable mineral deposits + their abundances. Rather than
+// derive six bulk-composition scalars, draw TWO resource types from a
+// context-weighted table (see RESOURCE_OCCURRENCE in procgen-priors): each
+// resource's `base` weight is multiplied by whichever context-axis
+// multipliers this body trips, then two distinct resources are drawn
+// weighted-without-replacement (any pair can co-occur). Abundance rides the
+// same weight — a strong contextual fit yields a richer deposit, and the
+// primary (first) draw gets a bonus — so one table drives presence and
+// richness together. The other four resources are 0.
 function resourcesFor(body, hostStar, hostBody) {
   if (body.massEarth == null) return null;
 
-  const bulkMetal = body.bulkMetalFraction ?? 0.32;  // Earth-default if unset
-  const bulkWater = body.bulkWaterFraction ?? 0;
-  const silicateFraction = Math.max(0, 1 - bulkMetal - bulkWater);
+  const O = RESOURCE_OCCURRENCE;
+  const C = O.context;
 
-  // Stellar context — heavier metallicity → more rare-earths and U/Th;
-  // older star → more decay of radioactives.
+  // ── Local physical context → the boolean axes the weights key off. The
+  // axes are the physics re-expressed as odds (hot/inner → metals, cold/icy
+  // → volatiles, metal-rich host → rare-earths + U/Th, tidal moon / giant →
+  // exotics).
+  const T = body.avgSurfaceTempK;
   const cls = hostStar?.cls;
   const metallicity = cls ? meanMetallicityForClass(cls) : 0;
   const stellarAge = cls ? meanAgeForClass(cls) : 5;
-  const metallicityFactor = Math.exp(metallicity * 2);  // 0 dex → 1.0, +0.3 → 1.82, -0.5 → 0.37
-  const ageDecayFactor = 1 / (1 + stellarAge / 4.5);    // U/Th half-decay anchor
-
   const isGaseous = body.radiusEarth != null &&
     body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
-
-  // Surface + atm volatile accounting for terrestrial bodies.
-  let atmVolFrac = 0;
-  const atmGases = new Set();
-  for (const [g, f] of [[body.atm1, body.atm1Frac], [body.atm2, body.atm2Frac], [body.atm3, body.atm3Frac]]) {
-    if (g) {
-      atmGases.add(g);
-      if (VOLATILE_GASES_SET.has(g)) atmVolFrac += f ?? 0;
-    }
-  }
-  const water = body.waterFraction ?? 0;
-  const ice = body.iceFraction ?? 0;
-  const surfaceVolFraction = Math.min(1, water + ice + atmVolFrac * 0.3);
-
-  // Tidal-heated moon of a giant — Io/Europa-class produce unusual
-  // chemistry → exotics lift. Mirrors the surface_age tidal-lift gate.
   const hostIsGaseous = hostBody?.radiusEarth != null &&
     hostBody.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
-  const tidalExotic = (body.kind === 'moon' && hostIsGaseous && (body.surfaceAge ?? 0) > 0.5) ? 3 : 0;
-
-  const noise = (field) => sampleTruncated(
-    fieldPrng(body, `res_${field}`),
-    { mean: 1, sd: 0.2, min: 0.5, max: 1.5 }
-  );
-
-  const clamp10 = (x) => Math.round(Math.max(0, Math.min(10, x)));
-
-  return {
-    // Metals scale with bulkMetalFraction. Mercury (0.70) → 11.2 → 10;
-    // Earth (0.32) → 5.1; Mars (0.24) → 3.8; Europa (0.10) → 1.6;
-    // Jupiter (0.02) → 0.32.
-    resMetals: clamp10(16 * bulkMetal * noise('metals')),
-    // Silicates from the leftover after metal + water. Earth (0.68) →
-    // 6.8; Mercury (0.30) → 3.0; Europa (0.40) → 4.0.
-    resSilicates: clamp10(10 * silicateFraction * noise('silicates')),
-    // Volatiles — gaseous bodies are made of volatiles by definition
-    // (H/He + CH4/NH3). Terrestrials get surface H2O + ice + atm
-    // volatile-gas content scaled.
-    resVolatiles: isGaseous
-      ? clamp10((8 + bulkWater * 20) * noise('volatiles'))
-      : clamp10(10 * surfaceVolFraction * noise('volatiles')),
-    // Rare earths track stellar metallicity. Solar metallicity → 6;
-    // metal-poor M-dwarf → ~2; metal-rich Pop I → ~10.
-    resRareEarths: clamp10(6 * metallicityFactor * noise('rare_earths')),
-    // Radioactives need metallicity (U/Th formed in supernovae of
-    // enriched ISM) + age-decay. Older stars have depleted U/Th.
-    resRadioactives: clamp10(8 * metallicityFactor * ageDecayFactor * noise('radioactives')),
-    // Exotics — gaseous bodies have He-3 + deuterium; tidal-heated
-    // moons have unusual chemistry; otherwise small base.
-    resExotics: clamp10((isGaseous ? 2 : 0) + tidalExotic + 1 * noise('exotics')),
+  const ctx = {
+    hot:           T != null && T >= C.hotK,
+    cold:          T != null && T <= C.coldK,
+    gaseous:       isGaseous,
+    tidalMoon:     body.kind === 'moon' && hostIsGaseous && (body.surfaceAge ?? 0) > 0.5,
+    metalRichBulk: (body.bulkMetalFraction ?? 0.32) >= C.metalRichBulk,
+    metalRichHost: metallicity >= C.metalRichHostDex,
+    metalPoorHost: metallicity <= C.metalPoorHostDex,
+    youngHost:     stellarAge <= C.youngHostGyr,
+    icy:           (body.iceFraction ?? 0) >= C.icyFrac || (body.waterFraction ?? 0) >= C.wateryFrac,
   };
+
+  // ── Effective occurrence weight per resource = base × Π(active axes).
+  const weights = {};
+  for (const res of RESOURCE_KEYS) {
+    const spec = O[res];
+    let w = spec.base;
+    for (const axis of Object.keys(ctx)) {
+      if (ctx[axis] && spec[axis] != null) w *= spec[axis];
+    }
+    weights[res] = w;
+  }
+
+  // ── Draw two deposits + dynamic abundance (shared with the belt model).
+  return drawWeightedDeposits(
+    RESOURCE_KEYS, weights, O.abundance,
+    (name) => fieldPrng(body, `res_occ_${name}`),
+  );
 }
 
 // =============================================================================
@@ -1530,7 +1520,7 @@ function productivityPostAtm(body, hostStar) {
     bioticSilicate = 0;
   } else {
     const hot_T = bellGate(T, 600, 200);
-    const silicate_substrate = smoothstep(1, 6, body.resSilicates ?? 0);
+    const silicate_substrate = smoothstep(1, 6, bulkSilicate10(body));
     const tectonic_activity = smoothstep(0.2, 0.8, tect);
     const so2 = atmFracOf(body, 'SO2');
     const h2so4 = atmFracOf(body, 'H2SO4');
@@ -1555,7 +1545,7 @@ function productivityPostAtm(body, hostStar) {
     const h2so4 = atmFracOf(body, 'H2SO4');
     const sulfur_atm = smoothstep(0.001, 0.05, (so2 + h2s + h2so4) * P);
     const active_volcanism = smoothstep(0.3, 0.9, tect);
-    const sulfur_substrate = smoothstep(2, 8, (body.resRadioactives ?? 0) + (body.resSilicates ?? 0));
+    const sulfur_substrate = smoothstep(2, 8, (body.resRadioactives ?? 0) + bulkSilicate10(body));
     bioticSulfur = warm_T * sulfur_atm * active_volcanism
                    * sulfur_substrate * ageWindowSulfur;
   }
@@ -1947,7 +1937,8 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, worldClass };
 
-  // Resources — six 0..10 scalars.
+  // Resources — two context-weighted deposits drawn per body (the other
+  // four fields stay 0). See resourcesFor.
   if (
     unknowns.has('resMetals') || unknowns.has('resSilicates') || unknowns.has('resVolatiles') ||
     unknowns.has('resRareEarths') || unknowns.has('resRadioactives') || unknowns.has('resExotics')

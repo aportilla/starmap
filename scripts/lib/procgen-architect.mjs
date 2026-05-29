@@ -95,16 +95,18 @@
 // shepherding: shepherded belts pull largestBodyKm from the parent-body
 // range (BELT_LARGEST_BODY_KM.{warm,cold}.shepherded — Ceres / Pluto
 // class), free-float belts pull from the dust-cascade range (tens of
-// km max). Belt and ring composition lives in a six-resource grid
-// rather than a discrete class enum, so renderers and gameplay both
-// read mining yields from the same data.
+// km max). Belt composition is a two-deposit occurrence draw
+// (BELT_RESOURCE_OCCURRENCE, the same mechanism planets use); ring
+// composition samples a full six-resource grid. Either way composition
+// lives in the resource grid rather than a discrete class enum, so
+// renderers and gameplay both read mining yields from the same data.
 //
 // generateFloorBelt runs as a post-pass from build-catalog.mjs: any
 // non-curated star that finished the architect + overlay phases with
 // both zero planets and zero belts gets one trace cold free-float
 // belt so the "no fully empty systems" gameplay invariant holds.
 
-import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson, sampleBinomial } from './prng.mjs';
+import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, samplePoisson, sampleBinomial, drawWeightedDeposits } from './prng.mjs';
 import { insolation, frostLineAU, solidSurfaceDensity, isolationMass, hillRadiusAu } from './astrophysics.mjs';
 import { radiusFromMass } from './procgen.mjs';
 import {
@@ -140,7 +142,7 @@ import {
   AXIAL_TILT_DEG,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_PLACEMENT,
-  BELT_RESOURCE_PRIORS,
+  BELT_RESOURCE_OCCURRENCE,
   BELT_LARGEST_BODY_KM,
   BELT_GIANT_ADJACENCY,
   GIANTLESS_BELT_PENALTY,
@@ -154,6 +156,14 @@ import {
 // =============================================================================
 // Sampling helpers
 // =============================================================================
+
+// Resource-grid field order — mirrors RESOURCE_KEYS in procgen.mjs + the
+// ResourceKey union in src/data/stars.ts. Used as the key list for the
+// belt two-deposit draw (drawWeightedDeposits).
+const RESOURCE_KEYS = [
+  'resMetals', 'resSilicates', 'resVolatiles',
+  'resRareEarths', 'resRadioactives', 'resExotics',
+];
 
 // Per-(star, slot, salt) PRNG. slot=-1 reserved for system-level draws
 // (planet count, etc.) that aren't tied to a specific orbital slot.
@@ -547,15 +557,15 @@ export function generateBelts(star, placedPlanets = []) {
     const logMax = Math.log10(placement.mass.max);
     const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin));
 
-    // Resources: per-field truncated normal from BELT_RESOURCE_PRIORS.
+    // Resources: two-deposit occurrence draw (shared with planets/moons).
     // Carries composition signal — the renderer reads it back to lerp
-    // chunk color between rocky-tan and icy-cyan.
-    const resPriors = BELT_RESOURCE_PRIORS[context];
-    const resources = {};
-    for (const field of Object.keys(resPriors)) {
-      const prng = beltPrng(star.id, context, `res_${field}`);
-      resources[field] = Math.round(sampleTruncated(prng, resPriors[field]));
-    }
+    // chunk color between rocky-tan and icy-cyan via bodyIcyness.
+    const resources = drawWeightedDeposits(
+      RESOURCE_KEYS,
+      BELT_RESOURCE_OCCURRENCE[context],
+      BELT_RESOURCE_OCCURRENCE.abundance,
+      (name) => beltPrng(star.id, context, `res_occ_${name}`),
+    );
 
     // largestBodyKm: log-uniform within the shepherding-conditional
     // range. Shepherded belts pull from the parent-body scale (Ceres/
@@ -620,13 +630,13 @@ export function generateFloorBelt(star) {
   const logMax = Math.log10(placement.mass.max);
   const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin) * 0.5);
 
-  // Resources: regular cold prior (volatile-dominant).
-  const resPriors = BELT_RESOURCE_PRIORS.cold;
-  const resources = {};
-  for (const field of Object.keys(resPriors)) {
-    const prng = beltPrng(star.id, 'cold', `floor_${field}`);
-    resources[field] = Math.round(sampleTruncated(prng, resPriors[field]));
-  }
+  // Resources: cold-context two-deposit draw (volatile-dominant).
+  const resources = drawWeightedDeposits(
+    RESOURCE_KEYS,
+    BELT_RESOURCE_OCCURRENCE.cold,
+    BELT_RESOURCE_OCCURRENCE.abundance,
+    (name) => beltPrng(star.id, 'cold', `floor_res_occ_${name}`),
+  );
 
   // Free-float dust-cascade parent-body scale.
   const kmRange = BELT_LARGEST_BODY_KM.cold.freeFloat;

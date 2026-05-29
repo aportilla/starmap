@@ -845,10 +845,13 @@ const ROCK_ARCHETYPE_SINGLE: Record<ResourceKey, Color> = {
 
 // Rock-archetype pair LUT — when a region's resource subset contains two
 // resources both above threshold, look up the named mineralogy here
-// instead of RGB-blending the two single colors. Keyed by a sorted
-// "resA|resB" string so lookup is order-independent. The 12 entries
-// cover all physically meaningful pairs; pairs not listed fall back to
-// RGB blend of the two single colors.
+// instead of RGB-blending the two single colors. Keyed by a
+// "resA|resB" string in RESOURCE_KEYS canonical order (metals →
+// silicates → volatiles → rare-earths → radioactives → exotics);
+// `rockArchetypeFor` normalizes its two inputs to that same order so the
+// lookup is direction-independent. All 15 resource pairs are covered, so
+// the RGB-blend branch in `rockArchetypeFor` is now a defensive fallback
+// rather than a routine path.
 //
 // Each color is a real-world mineral analog so a player can learn to
 // read the disc: basalt = mafic crust, hematite = iron oxide rust,
@@ -861,12 +864,15 @@ const ROCK_ARCHETYPE_PAIR: Record<string, Color> = {
   'resMetals|resRadioactives':    new Color(0x9c947c),  // uranium-iron metallic (light olive)
   'resMetals|resExotics':         new Color(0x706878),  // lifted obsidian glass
   'resSilicates|resVolatiles':    new Color(0xc8c8c0),  // permafrost (tundra, Mars high lat.)
-  'resSilicates|resRareEarths':   new Color(0xd09870),  // ferric sandstone / ochre desert
+  'resSilicates|resRareEarths':   new Color(0xd8945a),  // ferric sandstone / ochre desert (Mars rust)
   'resSilicates|resRadioactives': new Color(0xd8c084),  // sulfur deposits (Io-class warm yellow)
   'resSilicates|resExotics':      new Color(0x988494),  // mineralized vein-rock (light purple-brown)
   'resVolatiles|resRareEarths':   new Color(0xdcc4bc),  // reddish ice (tholin-stained outer moons)
   'resVolatiles|resRadioactives': new Color(0xc8ccb8),  // brine ice (pale sage)
   'resVolatiles|resExotics':      new Color(0x9c9cac),  // dark ice (slate)
+  'resRareEarths|resRadioactives':  new Color(0xb89868),  // monazite ore (rare-earth phosphate, mildly radioactive — warm yellow-tan)
+  'resRareEarths|resExotics':       new Color(0xb488ac),  // exotic pegmatite vein (rose-lavender crystal)
+  'resRadioactives|resExotics':     new Color(0x9c8ca4),  // irradiated anomaly (muted violet-grey)
 };
 
 // Shade-by-balance magnitude. Inside a pair archetype, the base color is
@@ -902,6 +908,7 @@ const ROCK_ARCHETYPE_BARREN: Record<string, Color> = {
   'resVolatiles|resMetals':     new Color(0x8c9498), // dusty frozen grey (Callisto regolith)
   'resSilicates|resVolatiles':  new Color(0x8c8478), // permafrost tan (Mars high lat.)
   'resVolatiles|resSilicates':  new Color(0x94948c), // dirty ice grey (rocky inclusions in ice)
+  'resSilicates|resRareEarths': new Color(0xa07a54), // ferric desert regolith (Mars rust over silicate crust)
 };
 
 // Formula weights for the barren-tint fallback. `BARREN` carries the
@@ -960,7 +967,12 @@ export function rockArchetypeFor(
   const singleA = ROCK_ARCHETYPE_SINGLE[keyA];
   if (keyB === null) return singleA;
   const singleB = ROCK_ARCHETYPE_SINGLE[keyB];
-  const lutKey = keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`;
+  // Normalize to RESOURCE_KEYS order — the order the PAIR table is keyed
+  // in — so the lookup is direction-independent (a string compare would
+  // disagree with the table's order for pairs like silicates+rare-earths).
+  const lutKey = RESOURCE_KEYS.indexOf(keyA) <= RESOURCE_KEYS.indexOf(keyB)
+    ? `${keyA}|${keyB}`
+    : `${keyB}|${keyA}`;
   const pair = ROCK_ARCHETYPE_PAIR[lutKey];
   if (!pair) {
     return new Color(
