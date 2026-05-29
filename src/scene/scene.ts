@@ -14,9 +14,8 @@ import { FocusMarker, FOCUS_MARKER_NEAR } from './focus-marker';
 import { InputController, type InputHandlers } from './input-controller';
 import { Labels } from './labels';
 import { StarPoints } from './stars';
-import { setSnappedLineViewport } from './materials';
 import { STAR_DIM_FULL_BELOW, STAR_DIM_OFF_ABOVE } from './cluster-fade';
-import { RenderScaleObserver, effectiveScale } from './render-scale';
+import { ViewportSizer } from './viewport-sizer';
 import { MapHud } from '../ui/map-hud';
 import { STARS, STAR_CLUSTERS, clusterIndexFor, nearestClusterIdxTo } from '../data/stars';
 import { getSettings } from '../settings';
@@ -84,7 +83,6 @@ export class StarmapScene {
   private readonly candidateBrackets: ClusterBrackets;
   private readonly starPoints: StarPoints;
   private readonly hud: MapHud;
-  private readonly renderScale = new RenderScaleObserver();
   private readonly input: InputController;
 
   // Hover-pointer state, written by the input controller via the
@@ -137,7 +135,6 @@ export class StarmapScene {
 
   // Reusable per-frame scratch.
   private readonly _ndc  = new Vector2();
-  private readonly _buf  = new Vector2();
   private readonly _forward = new Vector3();
   private readonly _right   = new Vector3();
   private readonly _step    = new Vector3();
@@ -148,16 +145,13 @@ export class StarmapScene {
 
   private lastTickMs = 0;
 
-  // Cached drawing-buffer dimensions, populated by resize(). All pixel-aware
-  // shader work uses these — NOT window.innerWidth/Height — because the
-  // buffer is smaller than CSS px once pixelRatio drops below 1.
-  private bufferW = 0;
-  private bufferH = 0;
-  // Cached canvas CSS dimensions. May be slightly less than the window
-  // (up to N-1 physical px lost to integer-multiple rounding in resize());
-  // pointer math uses these so hovers register correctly across the canvas.
-  private cssW = 0;
-  private cssH = 0;
+  // Owns the integer-multiple-of-N buffer snap + the cached css/buffer dims.
+  // All pixel-aware shader work reads viewport.bufferW/H (NOT
+  // window.innerWidth/Height — the buffer is smaller than CSS px once
+  // pixelRatio drops below 1); pointer math reads viewport.cssW/H (up to N-1
+  // physical px less than the window after the rounding) so hovers register
+  // across the whole canvas.
+  private readonly viewport = new ViewportSizer();
 
   // Renderer is owned by AppController and shared across view modes.
   // Pixel ratio + size are still driven from this scene's resize() (see
@@ -205,7 +199,7 @@ export class StarmapScene {
     this.labels.scene.add(this.selectionBrackets.mesh);
     this.labels.scene.add(this.candidateBrackets.mesh);
 
-    this.hud = new MapHud(this.renderScale.scale);
+    this.hud = new MapHud(this.viewport.scale);
     this.hud.onToggle = (id, on) => {
       if (id === 'labels') this.labels.setShowLabels(on);
       else if (id === 'drops') this.droplines.setMasterVisible(on);
@@ -241,10 +235,10 @@ export class StarmapScene {
 
     // Re-resize whenever DPR crosses an integer-N boundary (browser zoom,
     // monitor swap, OS scale change). resize() reads the current auto N
-    // from this.renderScale and applies the user's resolution preference;
+    // from the viewport sizer and applies the user's resolution preference;
     // the HUD's Resolution radio also rebuilds its disable states off
     // the new auto value.
-    this.renderScale.subscribe((scale) => {
+    this.viewport.subscribe((scale) => {
       this.hud.setAutoScale(scale);
       this.resize();
     });
@@ -292,7 +286,7 @@ export class StarmapScene {
   // the deltas to view-state and runs selection/animation logic.
   private buildInputHandlers(): InputHandlers {
     return {
-      clientToHud: (x, y, out) => this.clientToHud(x, y, out),
+      clientToHud: (x, y, out) => this.viewport.clientToHud(x, y, out),
       pickStar: (x, y) => this.pickStar(x, y),
       starToCluster: (idx) => clusterIndexFor(idx),
       hudHandleClick: (x, y) => this.hud.handleClick(x, y),
@@ -362,14 +356,6 @@ export class StarmapScene {
     };
   }
 
-  // Map a CSS-pixel client coord into HUD buffer coords (Y-up, origin at
-  // bottom-left). Uses cached cssW/cssH (the actual canvas size after the
-  // multiple-of-N rounding in resize), not window.innerWidth/Height.
-  private clientToHud(clientX: number, clientY: number, out: { x: number; y: number }): void {
-    out.x = clientX * (this.bufferW / this.cssW);
-    out.y = (this.cssH - clientY) * (this.bufferH / this.cssH);
-  }
-
   // Shared select-and-focus action: binds the selection to the given cluster
   // and glides the orbit pivot onto its COM (not any one member's position),
   // so a binary's two members both glide to the same vantage. Called from
@@ -408,7 +394,7 @@ export class StarmapScene {
   // distance — the point under the finger stays under the finger.
   private applyTouchPan(dxPx: number, dyPx: number): void {
     const halfFovTan = Math.tan((FOV_DEG * Math.PI / 180) * 0.5);
-    const lyPerPx = (2 * halfFovTan * this.view.distance) / this.cssH;
+    const lyPerPx = (2 * halfFovTan * this.view.distance) / this.viewport.cssH;
     const sy = Math.sin(this.view.yaw);
     const cy = Math.cos(this.view.yaw);
     const sp = Math.sin(this.view.pitch);
@@ -498,8 +484,8 @@ export class StarmapScene {
 
   private pickStar(clientX: number, clientY: number): number {
     this._ndc.set(
-      (clientX / this.cssW) * 2 - 1,
-      -(clientY / this.cssH) * 2 + 1,
+      (clientX / this.viewport.cssW) * 2 - 1,
+      -(clientY / this.viewport.cssH) * 2 + 1,
     );
     this.raycaster.setFromCamera(this._ndc, this.camera);
     const hits = this.raycaster.intersectObject(this.starPoints.points);
@@ -552,47 +538,20 @@ export class StarmapScene {
   }
 
   private resize(): void {
-    // The browser's image-rendering: pixelated upscale is only exactly N:1
-    // when (CSS_px × DPR) is divisible by N — i.e. the target physical-pixel
-    // dimension is a multiple of N. If it isn't, the browser distributes the
-    // remainder by making one buffer-pixel-wide column every (~CSS_px) actual
-    // columns span (N-1) physical pixels instead of N. Labels rendered on
-    // top of those compressed columns get visibly mangled (one bitmap column
-    // squashed into 2 physical px instead of 3). The artifact appears to
-    // "follow" labels as the camera rotates because the labels move across
-    // the buffer and cross those fixed compressed columns at different
-    // points within the bitmap.
-    //
-    // Fix: round target physical pixels DOWN to a multiple of N, then derive
-    // CSS and buffer from that. Up to (N-1) physical pixels of black bezel
-    // can show on the right/bottom — invisible against the dark scene.
-    const dpr = window.devicePixelRatio;
-    // Auto N from the observer biased by the user's resolution preference
-    // (low=+1 chunkier, high=-1 sharper, medium=auto). Pulled fresh per
-    // resize so flipping the radio re-applies on the next tick without
-    // needing extra plumbing.
-    const N = effectiveScale(this.renderScale.scale, getSettings().resolutionPreference);
-    const physW = Math.floor(window.innerWidth  * dpr / N) * N;
-    const physH = Math.floor(window.innerHeight * dpr / N) * N;
-    const cssW = physW / dpr;
-    const cssH = physH / dpr;
-    this.renderer.setPixelRatio(dpr / N);
-    this.renderer.setSize(cssW, cssH);
-    this.cssW = cssW;
-    this.cssH = cssH;
+    // ViewportSizer.apply does the load-bearing integer-multiple-of-N buffer
+    // snap (+ setPixelRatio / setSize / snapped-material viewport); the
+    // subsystem resizes below run off the updated css/buffer dims.
+    this.viewport.apply(this.renderer);
+    const { cssW, cssH, bufferW, bufferH } = this.viewport;
     this.camera.aspect = cssW / cssH;
     this.camera.updateProjectionMatrix();
-    this.renderer.getDrawingBufferSize(this._buf);
-    this.bufferW = this._buf.x;
-    this.bufferH = this._buf.y;
-    this.starPoints.setPxScale(this.bufferH / 2);
-    this.selectionBrackets.setPxScale(this.bufferH / 2);
-    this.candidateBrackets.setPxScale(this.bufferH / 2);
-    setSnappedLineViewport(this.bufferW, this.bufferH);
-    this.hud.resize(this.bufferW, this.bufferH);
-    this.labels.resize(this.bufferW, this.bufferH);
-    this.selectionBrackets.resize(this.bufferW, this.bufferH);
-    this.candidateBrackets.resize(this.bufferW, this.bufferH);
+    this.starPoints.setPxScale(bufferH / 2);
+    this.selectionBrackets.setPxScale(bufferH / 2);
+    this.candidateBrackets.setPxScale(bufferH / 2);
+    this.hud.resize(bufferW, bufferH);
+    this.labels.resize(bufferW, bufferH);
+    this.selectionBrackets.resize(bufferW, bufferH);
+    this.candidateBrackets.resize(bufferW, bufferH);
   }
 
   // -- main loop ---------------------------------------------------------
