@@ -699,6 +699,22 @@ function parseCsvBodies(text, label) {
   return out;
 }
 
+// `_unknowns` is the build-time blank-vs-`n/a` marker (see parseCsvBodies):
+// a plain array of field names the Filler should derive. Synthesis passes
+// here mutate it as they promote blanks to known anchors (a stripped field
+// stops the Filler from re-deriving and clobbering the synthesized value) or
+// defer a field to the Filler. Both directions go through these two helpers so
+// the marker is never edited with ad-hoc splice/filter/push — one fragile
+// cross-module contract, one place to read it.
+function markKnown(body, ...fields) {
+  if (!Array.isArray(body._unknowns)) return;
+  body._unknowns = body._unknowns.filter(f => !fields.includes(f));
+}
+function markUnknown(body, field) {
+  if (!Array.isArray(body._unknowns)) body._unknowns = [];
+  if (!body._unknowns.includes(field)) body._unknowns.push(field);
+}
+
 // Parses body_layers.csv — per-body cloud-deck overrides for curated
 // Sol bodies. Each row authors one deck: body_id joins back to a body,
 // layer_index orders rows (also sorts ascending by altitude_norm at
@@ -919,11 +935,7 @@ function synthesizePartialAnchors(rawBodies, starById) {
     // moon + ring backfill below sees the same value.
     if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
       body.semiMajorAu = Number(keplerSemiMajorAu(body.periodDays, host.mass).toFixed(5));
-      const u = body._unknowns;
-      if (Array.isArray(u)) {
-        const idx = u.indexOf('semiMajorAu');
-        if (idx >= 0) u.splice(idx, 1);
-      }
+      markKnown(body, 'semiMajorAu');
     }
     const diskCtx = getDiskCtx(host.id);
     if (!diskCtx) continue;
@@ -935,9 +947,7 @@ function synthesizePartialAnchors(rawBodies, starById) {
     // than re-deriving — load-bearing for radius, whose Filler path
     // (`radiusFromMass(mass)`) would overwrite the scattered radius we
     // just sampled with the plain piecewise mean.
-    if (Array.isArray(body._unknowns)) {
-      body._unknowns = body._unknowns.filter(f => f !== 'massEarth' && f !== 'radiusEarth');
-    }
+    markKnown(body, 'massEarth', 'radiusEarth');
   }
 }
 
@@ -1030,7 +1040,7 @@ async function main() {
       b.cloudLayers = decks;
     } else {
       b.cloudLayers = null;
-      b._unknowns.push('cloudLayers');
+      markUnknown(b, 'cloudLayers');
     }
   }
   // Sanity check: warn for body_layers.csv entries that reference
