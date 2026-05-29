@@ -1583,6 +1583,65 @@ function surfaceCouplingForBody(body, archetype, complexity) {
   return Math.max(0, Math.min(1, coupling));
 }
 
+// Resolve the three biosphere display fields from the per-archetype
+// productivity scalars. Two CSV-driven paths share one impact computation:
+//   1. CSV-authored — biosphereArchetype + biosphereComplexity are NOT in
+//      `unknowns` (cell was 'n/a' → sterile, or a literal value → use as
+//      authored). Both must travel together; a half-authored pair throws.
+//   2. Procgen-derived — both ARE in `unknowns` (empty cells): argmax over
+//      the productivity scalars + per-archetype complexity threshold.
+// surfaceImpact is always derived (never authored) so the per-body coupling
+// jitter applies uniformly. `authoredArchetype` / `authoredComplexity` are
+// the raw values from the body's CSV row (null when absent / 'n/a').
+function resolveBiosphere(body, productivityByArch, unknowns, authoredArchetype, authoredComplexity) {
+  const archIsAuthored = !unknowns.has('biosphereArchetype');
+  const cmplxIsAuthored = !unknowns.has('biosphereComplexity');
+  let resolvedArch = null;
+  let resolvedCmplx = 'none';
+  if (archIsAuthored || cmplxIsAuthored) {
+    // CSV-authored path. Both fields should travel together — an archetype
+    // without a complexity (or vice versa) is malformed; reject rather than
+    // silently filling in.
+    if (archIsAuthored !== cmplxIsAuthored) {
+      throw new Error(`${body.id}: biosphere_archetype and biosphere_complexity must both be authored or both blank`);
+    }
+    // Validate authored values against the enum sets. Null is legitimate
+    // (the 'n/a' cell semantic — body is sterile).
+    if (authoredArchetype !== null && !VALID_ARCHETYPES.has(authoredArchetype)) {
+      throw new Error(`${body.id}: invalid biosphere_archetype=${authoredArchetype}`);
+    }
+    if (authoredComplexity !== null && !VALID_COMPLEXITY.has(authoredComplexity)) {
+      throw new Error(`${body.id}: invalid biosphere_complexity=${authoredComplexity}`);
+    }
+    // n/a in either cell means sterile — both must be present for life to
+    // register. (Avoids a half-authored "complex with no archetype" or
+    // "carbon_aqueous with no complexity" sneaking through.)
+    if (authoredArchetype === null || authoredComplexity === null || authoredComplexity === 'none') {
+      resolvedArch = null;
+      resolvedCmplx = 'none';
+    } else {
+      resolvedArch = authoredArchetype;
+      resolvedCmplx = authoredComplexity;
+    }
+  } else {
+    // Procgen-derived path — argmax + bucket.
+    const { archetype, prod } = dominantArchetype(productivityByArch);
+    const complexity = complexityFromProductivity(prod, archetype);
+    resolvedArch = complexity === 'none' ? null : archetype;
+    resolvedCmplx = complexity;
+  }
+  if (resolvedCmplx === 'none') {
+    return { biosphereArchetype: null, biosphereComplexity: 'none', biosphereSurfaceImpact: 0 };
+  }
+  const coupling = surfaceCouplingForBody(body, resolvedArch, resolvedCmplx);
+  const archProd = productivityByArch[resolvedArch] ?? 0;
+  return {
+    biosphereArchetype: resolvedArch,
+    biosphereComplexity: resolvedCmplx,
+    biosphereSurfaceImpact: Math.max(0, Math.min(1, archProd * coupling)),
+  };
+}
+
 // =============================================================================
 // Filler entry point
 // =============================================================================
@@ -1937,7 +1996,8 @@ function fillBody(b, allBodies, stars) {
   }
 
   // Derive the three biosphere display fields from the productivity
-  // scalars (see procgen-priors.mjs biosphere section for the model):
+  // scalars (see resolveBiosphere + the procgen-priors.mjs biosphere
+  // section for the model):
   //   archetype       — argmax over the six scalars
   //   complexity      — per-archetype thresholds bucket the dominant
   //                     productivity; encodes probabilistic headwinds
@@ -1946,16 +2006,6 @@ function fillBody(b, allBodies, stars) {
   //                     contribution); decouples "is alive" from
   //                     "looks alive" so a complex subsurface biosphere
   //                     reads as a sealed Europa rather than a Gaian.
-  // Two CSV-driven paths share one impact computation:
-  //   1. CSV-authored — biosphereArchetype + biosphereComplexity are
-  //      NOT in _unknowns (cell was 'n/a' → sterile, or a literal
-  //      value → use as authored). Curated systems (Sol) populate
-  //      these explicitly; catalog exoplanets leave them blank.
-  //   2. Procgen-derived — both fields ARE in _unknowns (cell was
-  //      empty). Default flow: argmax over productivity scalars +
-  //      per-archetype complexity threshold + per-body coupling.
-  // surfaceImpact is always derived (never CSV-authored) so the
-  // per-body coupling jitter applies uniformly.
   {
     const productivityByArch = {
       carbon_aqueous:     bioticCarbonAqueous,
@@ -1965,54 +2015,8 @@ function fillBody(b, allBodies, stars) {
       silicate:           bioticSilicate,
       sulfur:             bioticSulfur,
     };
-    const archIsAuthored = !unknowns.has('biosphereArchetype');
-    const cmplxIsAuthored = !unknowns.has('biosphereComplexity');
-    let resolvedArch = null;
-    let resolvedCmplx = 'none';
-    if (archIsAuthored || cmplxIsAuthored) {
-      // CSV-authored path. Both fields should travel together — an
-      // archetype without a complexity (or vice versa) is malformed;
-      // reject rather than silently filling in.
-      if (archIsAuthored !== cmplxIsAuthored) {
-        throw new Error(`${b.id}: biosphere_archetype and biosphere_complexity must both be authored or both blank`);
-      }
-      // Validate authored values against the enum sets. Null is
-      // legitimate (the 'n/a' cell semantic — body is sterile).
-      if (biosphereArchetype !== null && !VALID_ARCHETYPES.has(biosphereArchetype)) {
-        throw new Error(`${b.id}: invalid biosphere_archetype=${biosphereArchetype}`);
-      }
-      if (biosphereComplexity !== null && !VALID_COMPLEXITY.has(biosphereComplexity)) {
-        throw new Error(`${b.id}: invalid biosphere_complexity=${biosphereComplexity}`);
-      }
-      // n/a in either cell means sterile — both must be present or
-      // both absent for life to register. (Avoids a half-authored
-      // "complex with no archetype" or "carbon_aqueous with no
-      // complexity" sneaking through.)
-      if (biosphereArchetype === null || biosphereComplexity === null || biosphereComplexity === 'none') {
-        resolvedArch = null;
-        resolvedCmplx = 'none';
-      } else {
-        resolvedArch = biosphereArchetype;
-        resolvedCmplx = biosphereComplexity;
-      }
-    } else {
-      // Procgen-derived path — argmax + bucket.
-      const { archetype, prod } = dominantArchetype(productivityByArch);
-      const complexity = complexityFromProductivity(prod, archetype);
-      resolvedArch = complexity === 'none' ? null : archetype;
-      resolvedCmplx = complexity;
-    }
-    if (resolvedCmplx === 'none') {
-      biosphereArchetype     = null;
-      biosphereComplexity    = 'none';
-      biosphereSurfaceImpact = 0;
-    } else {
-      biosphereArchetype     = resolvedArch;
-      biosphereComplexity    = resolvedCmplx;
-      const coupling         = surfaceCouplingForBody(b, resolvedArch, resolvedCmplx);
-      const archProd         = productivityByArch[resolvedArch] ?? 0;
-      biosphereSurfaceImpact = Math.max(0, Math.min(1, archProd * coupling));
-    }
+    ({ biosphereArchetype, biosphereComplexity, biosphereSurfaceImpact } =
+      resolveBiosphere(b, productivityByArch, unknowns, biosphereArchetype, biosphereComplexity));
   }
 
   // Strip _unknowns; runtime sees only the public Body shape.
