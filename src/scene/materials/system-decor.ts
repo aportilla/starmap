@@ -117,7 +117,7 @@ export function makeBlobMaterial(): ShaderMaterial {
 // env-pixel units); the mesh is positioned at the planet's cx/cy.
 //
 // The caller pre-lerps `color` from the icy/dusty palette endpoints
-// based on the ring's resource mix (see bodyIcyness in data/stars.ts).
+// based on the ring's resource mix (see bodyIcyness in body-palette.ts).
 // `alpha` is similarly lerped — icy rings paint opaque (Saturn-class
 // bright band) while dusty rings paint translucent (Uranus/Neptune-
 // class faint dust). When alpha < 1 the material flips to transparent

@@ -125,17 +125,18 @@
 // stay aligned with their gas species.
 
 import { Color } from 'three';
+import { AtmGas, BODIES, Body, CLASS_COLOR, STARS } from '../../data/stars';
 import {
-  AtmGas, BARREN_ROCK_COLOR, barrenTintFor, BODIES, Body, CLASS_COLOR,
+  BARREN_ROCK_COLOR, barrenTintFor,
   GAS_COLOR, GAS_POTENCY,
   HAZE_AEROSOL_SCALE, HAZE_BULK_GAS_SCALE,
   HAZE_DUST_SCALE, HAZE_RAYLEIGH_SCALE,
   SCATTERING_COLOR, SCATTERING_POTENCY,
-  STARS, WORLD_CLASS_COLOR, WORLD_CLASS_TINT,
-  WORLD_CLASS_UNKNOWN_COLOR, biomePaintFor, deckGasesFor, RENDERER_SKIP_AEROSOLS,
+  WORLD_CLASS_COLOR, WORLD_CLASS_TINT, WORLD_CLASS_UNKNOWN_COLOR,
+  biomePaintFor, deckGasesFor, RENDERER_SKIP_AEROSOLS,
   cloudDeckPalette, dominantResources, rockArchetypeFor,
   stratosphericHazeStrengthFor,
-} from '../../data/stars';
+} from './body-palette';
 import { hash32 } from './geom/prng';
 import { bodyVisualTiltRad } from './geom/ring';
 import { PROCEDURAL_TEXTURE_MIN_PX } from './layout/constants';

@@ -10,12 +10,12 @@
 // so visual character and gameplay attribute can't disagree.
 
 import { BufferAttribute, BufferGeometry, Color, Mesh, Scene, ShaderMaterial } from 'three';
+import { BODIES, type Body } from '../../../data/stars';
 import {
   BELT_RING_COLOR_ICY, BELT_RING_COLOR_ROCKY,
-  BODIES, bodyIcyness,
+  bodyIcyness,
   RING_ALPHA_DUSTY, RING_ALPHA_ICY,
-  type Body,
-} from '../../../data/stars';
+} from '../body-palette';
 import { makeRingMaterial } from '../../materials';
 import {
   RENDER_ORDER_BACK_RING, RENDER_ORDER_FRONT_RING,

@@ -3,10 +3,8 @@
 // translates each cluster around its slot center (no re-roll on resize).
 
 import { BufferAttribute, Color, Scene } from 'three';
-import {
-  BELT_RING_COLOR_ICY, BELT_RING_COLOR_ROCKY,
-  BODIES, bodyIcyness,
-} from '../../../data/stars';
+import { BODIES } from '../../../data/stars';
+import { BELT_RING_COLOR_ICY, BELT_RING_COLOR_ROCKY, bodyIcyness } from '../body-palette';
 import {
   BELT_CHUNKS_MAX, BELT_CHUNKS_MIN, BELT_CHUNK_SIZES, BELT_HEIGHT_FACTOR,
   BELT_SLOT_WIDTH, PLANET_DISC_MIN, RENDER_ORDER_BELT, Z_BELT, Z_STRIDE,
