@@ -69,6 +69,9 @@ const LONG_PRESS_MOVE_PX = 8;
 // out on positive deltaY, <1/notch zooms in on negative).
 const WHEEL_ZOOM_BASE = 1.0015;
 
+// A tracked pointer's CSS-pixel position.
+type Pt = { x: number; y: number };
+
 export interface InputHandlers {
   // Map a CSS-pixel client coord into HUD buffer coords. Scene owns the
   // cssW/H/bufferW/H cache populated by its own resize().
@@ -145,7 +148,7 @@ export class InputController {
   // hands off to pinch instead of running both gestures simultaneously.
   // Without unification, iPad Safari pinches arrive with a yaw jolt: the
   // first finger's pointermove fires while touchmove zooms.
-  private readonly pointers = new Map<number, { x: number; y: number }>();
+  private readonly pointers = new Map<number, Pt>();
   private pinching = false;
   // Two-finger gesture commits to either zoom or pan on the first
   // significant movement; once committed it stays in that mode for the
@@ -441,9 +444,7 @@ export class InputController {
           // way at different speeds) doesn't fake a separation change.
           let sepDelta = 0;
           if (this.pinchStartDist > 0) {
-            const it = this.pointers.values();
-            const a = it.next().value!;
-            const b = it.next().value!;
+            const [a, b] = this.firstTwoPointers();
             const ux = (this.pinchStartBx - this.pinchStartAx) / this.pinchStartDist;
             const uy = (this.pinchStartBy - this.pinchStartAy) / this.pinchStartDist;
             const projA = (a.x - this.pinchStartAx) * ux + (a.y - this.pinchStartAy) * uy;
@@ -597,25 +598,28 @@ export class InputController {
     this.longPressFired = true;
   }
 
-  private measurePinch(): number {
+  // The active two-pointer pair, in first-seen Map-iteration order. Every
+  // pinch computation (separation, midpoint, per-finger start anchor) reads
+  // the same two pointers in the same order. Only call with size >= 2 — the
+  // non-null assertions assume both entries exist.
+  private firstTwoPointers(): [Pt, Pt] {
     const it = this.pointers.values();
-    const a = it.next().value!;
-    const b = it.next().value!;
+    return [it.next().value!, it.next().value!];
+  }
+
+  private measurePinch(): number {
+    const [a, b] = this.firstTwoPointers();
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
   private capturePinchMid(): void {
-    const it = this.pointers.values();
-    const a = it.next().value!;
-    const b = it.next().value!;
+    const [a, b] = this.firstTwoPointers();
     this.pinchMidX = (a.x + b.x) * 0.5;
     this.pinchMidY = (a.y + b.y) * 0.5;
   }
 
   private capturePinchStart(): void {
-    const it = this.pointers.values();
-    const a = it.next().value!;
-    const b = it.next().value!;
+    const [a, b] = this.firstTwoPointers();
     this.pinchStartAx = a.x; this.pinchStartAy = a.y;
     this.pinchStartBx = b.x; this.pinchStartBy = b.y;
   }

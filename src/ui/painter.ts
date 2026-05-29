@@ -11,6 +11,12 @@
 import { drawPixelText, measurePixelText, getFont, type FontSpec } from '../data/pixel-font';
 import { colors, fonts, sizes } from './theme';
 
+// Interior padding of a paintPillButton action pill (text-to-border). The
+// single source for this value — panel.ts reads these to size action rows
+// without re-measuring the painted pill.
+export const PILL_PAD_X = 6;
+export const PILL_PAD_Y = 3;
+
 // 4-strip 1-px border. No fill. Use paintSurface() if you also want a bg.
 export function paintBorder(
   g: CanvasRenderingContext2D,
@@ -233,8 +239,8 @@ export function paintPillButton(
   text: string,
   opts: PillButtonOpts,
 ): { w: number; h: number } {
-  const padX = 6;
-  const padY = 3;
+  const padX = PILL_PAD_X;
+  const padY = PILL_PAD_Y;
   const textW = measurePixelText(text, opts.font);
   const W = textW + padX * 2;
   const H = getFont(opts.font).lineHeight + padY * 2;

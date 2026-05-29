@@ -34,6 +34,8 @@ import {
   paintPillButton,
   paintSegmentedPill,
   paintSurface,
+  PILL_PAD_X,
+  PILL_PAD_Y,
 } from './painter';
 import { colors, fonts, sizes } from './theme';
 
@@ -115,10 +117,6 @@ interface TabZone {
   w: number;
   h: number;
 }
-
-// Same X-pad as paintPillButton's internal padding — kept in sync by
-// intent (both use 6 px). If you change one, change both.
-const ACTION_BTN_PAD_X = 6;
 
 export class Panel extends BasePanel {
   private spec: PanelSpec = { tabs: [], activeTabId: '' };
@@ -267,7 +265,7 @@ export class Panel extends BasePanel {
       return sizes.checkbox + sizes.checkboxLabelGap + measurePixelText(r.label);
     }
     if (r.kind === 'action') {
-      return measurePixelText(r.label) + ACTION_BTN_PAD_X * 2;
+      return measurePixelText(r.label) + PILL_PAD_X * 2;
     }
     if (r.kind === 'keybinding') {
       // key column aligned across the whole section, then gap, then desc
@@ -295,6 +293,20 @@ export class Panel extends BasePanel {
   // Height of a radio row — same as a tab pill.
   private radioRowHeight(): number {
     return getFont(fonts.body).lineHeight + sizes.panelTabPadY * 2;
+  }
+
+  // Vertical space a row occupies, including its pad. measure() sums these
+  // to size the panel and paintInto() advances its cursor by the same value,
+  // so the two passes can't drift. The action pill's own height
+  // (bodyLineH + 2*PILL_PAD_Y) is reproduced from the painter constant rather
+  // than read back from paintPillButton's return, so measure() needs no paint.
+  private rowHeight(r: PanelRow, bodyLineH: number): number {
+    switch (r.kind) {
+      case 'toggle':     return bodyLineH + sizes.panelRowPadY * 2;
+      case 'action':     return bodyLineH + PILL_PAD_Y * 2 + sizes.panelRowPadY * 2;
+      case 'keybinding': return bodyLineH + sizes.kbRowPadY * 2;
+      case 'radio':      return this.radioRowHeight() + sizes.panelRowPadY * 2;
+    }
   }
 
   // For each section that contains keybinding rows, compute the max key
@@ -364,15 +376,7 @@ export class Panel extends BasePanel {
           H += bodyLineH + sizes.panelSectionGapAfter;
         }
         for (const r of section.rows) {
-          if (r.kind === 'toggle') {
-            H += bodyLineH + sizes.panelRowPadY * 2;
-          } else if (r.kind === 'action') {
-            H += (bodyLineH + 3 * 2) + sizes.panelRowPadY * 2;  // pill: bodyLineH + 2*padY=6 + 2*rowPad
-          } else if (r.kind === 'keybinding') {
-            H += bodyLineH + sizes.kbRowPadY * 2;
-          } else {
-            H += this.radioRowHeight() + sizes.panelRowPadY * 2;
-          }
+          H += this.rowHeight(r, bodyLineH);
         }
       }
     }
@@ -427,9 +431,9 @@ export class Panel extends BasePanel {
 
         for (const r of section.rows) {
           const isHover = r.kind !== 'keybinding' && r.id === this.hoveredRowId;
+          const rowH = this.rowHeight(r, bodyLineH);
           if (r.kind === 'toggle') {
             const rowTop = cursorY;
-            const rowH = bodyLineH + sizes.panelRowPadY * 2;
             const labelY = rowTop + sizes.panelRowPadY;
             const checkboxX = sizes.padX;
             const checkboxY = labelY + Math.floor((bodyLineH - sizes.checkbox) / 2);
@@ -446,11 +450,10 @@ export class Panel extends BasePanel {
             cursorY += rowH;
           } else if (r.kind === 'action') {
             const rowTop = cursorY;
-            const btn = paintPillButton(
+            paintPillButton(
               g, sizes.padX, rowTop + sizes.panelRowPadY, r.label,
               { hover: isHover },
             );
-            const rowH = btn.h + sizes.panelRowPadY * 2;
             rowZones.push({ id: r.id, kind: 'action', y: rowTop, h: rowH });
             cursorY += rowH;
           } else if (r.kind === 'keybinding') {
@@ -458,7 +461,6 @@ export class Panel extends BasePanel {
             // (yellow), desc in textBody. Desc column aligns across the
             // whole section so multiple keybinding rows form a clean grid.
             const rowTop = cursorY;
-            const rowH = bodyLineH + sizes.kbRowPadY * 2;
             const labelY = rowTop + sizes.kbRowPadY;
             const keyX = sizes.padX;
             const keyColW = kbKeyColW.get(section) ?? 0;
@@ -494,7 +496,7 @@ export class Panel extends BasePanel {
               });
               pillX += pillW + sizes.radioPillGap;
             }
-            cursorY += pillH + sizes.panelRowPadY * 2;
+            cursorY += rowH;
           }
         }
       }
