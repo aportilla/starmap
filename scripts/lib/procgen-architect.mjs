@@ -845,6 +845,55 @@ function pruneToK(planets, K, starId) {
   return arr.slice(-K).sort((a, b) => a.semiMajorAu - b.semiMajorAu);
 }
 
+// Disk-physics mass→radius chain, shared by the top-down planet builder
+// and the partial-anchor synthesizer so a tuning change to the accretion /
+// envelope / radius model can't silently diverge between the two paths.
+//
+// Continuous mass pipeline:
+//   isolation mass (zone physics) → core mass (× accretion efficiency)
+//   → gas-envelope decision (mass + frost-line + disk-gas gates)
+//   → total mass → radius
+//
+// `prngFor(salt)` supplies a seeded PRNG per draw, so each caller owns its
+// own seeding (slot-based for the architect, body-id-based for partials).
+// Returns the raw {massEarth, radiusEarth} (callers round to taste), or
+// null when the formation zone yields no viable isolation mass.
+function massRadiusFromDiskPhysics(star, formationAu, diskCtx, prngFor) {
+  const Σ = solidSurfaceDensity(
+    star.mass, formationAu, diskCtx.frostLines, MMSN_NORMALIZATION, SNOW_LINE_BOOSTS,
+  );
+  const mIso = isolationMass(formationAu, star.mass, Σ);
+  if (mIso == null || mIso <= 0) return null;
+
+  const accZone = formationAu < diskCtx.frostLines.H2O ? 'inner' : 'outer';
+  const coreMass = mIso * samplePhysical(prngFor('accretion'), ACCRETION_EFFICIENCY[accZone]);
+
+  // Gas envelope fires only when all three gates pass: the core can
+  // contract H2 fast enough (≥ critical mass), it sits past the water
+  // frost line so volatile ice feeds the envelope, and the disk still
+  // has gas left when runaway is reached.
+  let envelopeMass = 0;
+  const canRunaway =
+    coreMass >= CRITICAL_CORE_MASS_EARTH &&
+    formationAu > diskCtx.frostLines.H2O &&
+    diskCtx.diskGasLifetimeMyr > TIME_TO_RUNAWAY_MYR;
+  if (canRunaway) {
+    const envRatio = sampleLogTruncated(prngFor('envelope'), ENVELOPE_FRACTION);
+    envelopeMass = coreMass * envRatio;
+  }
+  const massEarth = coreMass + envelopeMass;
+
+  // Radius from the Otegi mass-radius relation plus a single composition-
+  // agnostic log-scatter. The piecewise mean (rocky line below 2 M⊕, ice
+  // line below 130, gas plateau above) already encodes the bulk of
+  // density variety; remaining scatter is the per-body composition noise.
+  const meanRadius = radiusFromMass(massEarth) ?? 1.0;
+  const noisyRadius = meanRadius * Math.exp(sampleNormal(prngFor('radius'), 0, RADIUS_SCATTER_LOG));
+  const radiusEarth = Math.max(0.1, Math.min(30, noisyRadius));
+
+  return { massEarth, radiusEarth };
+}
+
 // Build one planet body at its formation orbit. Physics-driven mass
 // pipeline → radius → flavor. Returns the planet only (no moons / ring) —
 // the orchestrator runs the migration pass before attaching satellites,
@@ -864,44 +913,12 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
   if (diskCtx == null) return null;
   const S = insolation(star.mass, formationAu);
 
-  // Continuous mass pipeline:
-  //   isolation mass (zone physics) → core mass (× accretion efficiency)
-  //   → gas-envelope decision (mass + frost-line + disk-gas gates)
-  //   → total mass → radius
-  const Σ = solidSurfaceDensity(
-    star.mass, formationAu, diskCtx.frostLines, MMSN_NORMALIZATION, SNOW_LINE_BOOSTS,
+  const dp = massRadiusFromDiskPhysics(
+    star, formationAu, diskCtx,
+    (salt) => slotPrng(star.id, slotIdx, saltPrefix + salt),
   );
-  const mIso = isolationMass(formationAu, star.mass, Σ);
-  if (mIso == null || mIso <= 0) return null;
-
-  const accPrng = slotPrng(star.id, slotIdx, saltPrefix + 'accretion');
-  const accZone = formationAu < diskCtx.frostLines.H2O ? 'inner' : 'outer';
-  const coreMass = mIso * samplePhysical(accPrng, ACCRETION_EFFICIENCY[accZone]);
-
-  // Gas envelope fires only when all three gates pass: the core can
-  // contract H2 fast enough (≥ critical mass), it sits past the water
-  // frost line so volatile ice feeds the envelope, and the disk still
-  // has gas left when runaway is reached.
-  let envelopeMass = 0;
-  const canRunaway =
-    coreMass >= CRITICAL_CORE_MASS_EARTH &&
-    formationAu > diskCtx.frostLines.H2O &&
-    diskCtx.diskGasLifetimeMyr > TIME_TO_RUNAWAY_MYR;
-  if (canRunaway) {
-    const envPrng = slotPrng(star.id, slotIdx, saltPrefix + 'envelope');
-    const envRatio = sampleLogTruncated(envPrng, ENVELOPE_FRACTION);
-    envelopeMass = coreMass * envRatio;
-  }
-  const massEarth = coreMass + envelopeMass;
-
-  // Radius from the Otegi mass-radius relation plus a single composition-
-  // agnostic log-scatter. The piecewise mean (rocky line below 2 M⊕, ice
-  // line below 130, gas plateau above) already encodes the bulk of
-  // density variety; remaining scatter is the per-body composition noise.
-  const radiusPrng = slotPrng(star.id, slotIdx, saltPrefix + 'radius');
-  const meanRadius = radiusFromMass(massEarth) ?? 1.0;
-  const noisyRadius = meanRadius * Math.exp(sampleNormal(radiusPrng, 0, RADIUS_SCATTER_LOG));
-  const radiusEarth = Math.max(0.1, Math.min(30, noisyRadius));
+  if (dp == null) return null;
+  const { massEarth, radiusEarth } = dp;
 
   const eccPrng = slotPrng(star.id, slotIdx, saltPrefix + 'eccentricity');
   const incPrng = slotPrng(star.id, slotIdx, saltPrefix + 'inclination');
@@ -1011,36 +1028,15 @@ export function synthesizePartialAnchor(star, body, diskCtx) {
 
   // Mode 2: full disk-physics synthesis for direct-imaging rows
   // (neither mass nor radius known).
-  const Σ = solidSurfaceDensity(
-    star.mass, formationAu, diskCtx.frostLines, MMSN_NORMALIZATION, SNOW_LINE_BOOSTS,
+  const dp = massRadiusFromDiskPhysics(
+    star, formationAu, diskCtx,
+    (salt) => partialPrng(body.id, salt),
   );
-  const mIso = isolationMass(formationAu, star.mass, Σ);
-  if (mIso == null || mIso <= 0) return null;
-
-  const accZone = formationAu < diskCtx.frostLines.H2O ? 'inner' : 'outer';
-  const accPrng = partialPrng(body.id, 'accretion');
-  const coreMass = mIso * samplePhysical(accPrng, ACCRETION_EFFICIENCY[accZone]);
-
-  let envelopeMass = 0;
-  const canRunaway =
-    coreMass >= CRITICAL_CORE_MASS_EARTH &&
-    formationAu > diskCtx.frostLines.H2O &&
-    diskCtx.diskGasLifetimeMyr > TIME_TO_RUNAWAY_MYR;
-  if (canRunaway) {
-    const envPrng = partialPrng(body.id, 'envelope');
-    const envRatio = sampleLogTruncated(envPrng, ENVELOPE_FRACTION);
-    envelopeMass = coreMass * envRatio;
-  }
-  const massEarth = coreMass + envelopeMass;
-
-  const radiusPrng = partialPrng(body.id, 'radius');
-  const meanRadius = radiusFromMass(massEarth) ?? 1.0;
-  const noisyRadius = meanRadius * Math.exp(sampleNormal(radiusPrng, 0, RADIUS_SCATTER_LOG));
-  const radiusEarth = Math.max(0.1, Math.min(30, noisyRadius));
+  if (dp == null) return null;
 
   return {
-    massEarth: Number(massEarth.toFixed(3)),
-    radiusEarth: Number(radiusEarth.toFixed(3)),
+    massEarth: Number(dp.massEarth.toFixed(3)),
+    radiusEarth: Number(dp.radiusEarth.toFixed(3)),
   };
 }
 
