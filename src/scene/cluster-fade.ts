@@ -24,6 +24,30 @@ export const PIVOT_FADE_FAR   = 20;
 export const CAMERA_FADE_NEAR = 30;
 export const CAMERA_FADE_FAR  = 60;
 
+// ── Dropline subsystem shared geometry + palette ───────────────────────
+// Shared by Droplines (per-cluster vertical pins) and FocusMarker (the
+// view.target dropline) so the two render in one identical visual language.
+
+// On-screen colors at full opacity, premultiplied against the black bg.
+// Solid (near-side of the focus plane) sits at ~32% of the source 0x3ad1e6;
+// dots (far-side) run ~15% brighter so the broken-up pattern still reads at
+// distance.
+export const DROPLINE_COLOR_SOLID = 0x123d42;
+export const DROPLINE_COLOR_DOTS  = 0x15464c;
+
+// World-space spacing between dots on the dotted (far-side-of-plane) variant.
+// Dots are baked into geometry at fixed Z intervals so perspective compresses
+// them at distance and stretches them up close — a distant dropline stays
+// visually tight while the focused one keeps its pattern density. 0.25 ly was
+// tuned to mirror the legacy 1-px-on / 3-px-off screen-space pattern at a
+// mid-range orbit.
+export const DROPLINE_DOT_PERIOD_LY = 0.25;
+
+// A pin whose endpoints land within this distance of each other has
+// effectively no length and is hidden — the cluster sitting on its own focus
+// plane (dz = 0) is the canonical case.
+export const DROPLINE_DEGENERATE_DIST = 0.01;
+
 // Range-ring chrome (Grid: rings + axes + galactic-centre arrow) gets its
 // own zoom-fade ramp keyed to camera-to-selection-COM distance. Decoupled
 // from CAMERA_FADE_* so the rings can reach full opacity slightly sooner

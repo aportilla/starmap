@@ -11,40 +11,25 @@ import {
 } from 'three';
 import { STARS, STAR_CLUSTERS } from '../data/stars';
 import { snappedDotsMat, snappedLineMat } from './materials';
+import { fillVerticalDotPin } from './dot-pin';
 import {
   PIVOT_FADE_NEAR,
   PIVOT_FADE_FAR,
   CAMERA_FADE_NEAR,
   CAMERA_FADE_FAR,
+  DROPLINE_COLOR_SOLID,
+  DROPLINE_COLOR_DOTS,
+  DROPLINE_DOT_PERIOD_LY,
+  DROPLINE_DEGENERATE_DIST,
 } from './cluster-fade';
 
-// Premultiplied against black bg — these are the on-screen colors at full
-// opacity. Solid (near-side) sits at ~32% of the original 0x3ad1e6; dots
-// (far-side) are ~15% brighter than solid so the broken-up dot pattern still
-// reads at distance against the dark background.
-const COLOR_SOLID = 0x123d42;
-const COLOR_DOTS  = 0x15464c;
-
-// World-space spacing between dots on the dotted (far-side-of-plane) variant.
-// Dots are baked into the geometry at fixed Z intervals so perspective
-// compresses them at distance and stretches them up close — a distant
-// dropline stays visually tight while the focused one carries the same
-// pattern density it always had. 0.25 ly was tuned to mirror the legacy
-// 1-px-on / 3-px-off screen-space pattern at a mid-range orbit.
-const DOT_PERIOD_LY = 0.25;
-
-// Pre-allocated dot capacity per pin (= 125 ly of length at DOT_PERIOD_LY).
-// Comfortably covers the 50 ly catalog's full Z extent before the camera-fade
-// hides the pin at CAMERA_FADE_FAR. We rewrite z-values in place each time
-// the selection plane shifts and use setDrawRange to reveal the active slice
-// — avoids reallocating attributes on every selection change.
+// Pre-allocated dot capacity per pin (= 125 ly of length at
+// DROPLINE_DOT_PERIOD_LY). Comfortably covers the 50 ly catalog's full Z
+// extent before the camera-fade hides the pin at CAMERA_FADE_FAR. We rewrite
+// z-values in place each time the selection plane shifts and use setDrawRange
+// to reveal the active slice — avoids reallocating attributes on every
+// selection change.
 const MAX_DOTS_PER_PIN = 500;
-
-// A pin whose top (cluster COM) lands within this distance of the focus
-// plane has effectively no length and is hidden. The selected cluster
-// itself sits exactly on its own focus plane (dz = 0) and so this is also
-// what hides its self-referential pin.
-const DEGENERATE_PLANE_DIST = 0.01;
 
 // Distance fade thresholds live in ./cluster-fade so pin and label flip in/out
 // together as either gets tuned. PIVOT ramp + CAMERA ramp multiply; either
@@ -129,15 +114,15 @@ export class Droplines {
       // now keyed to the selected cluster's COM.z, Sol's pin is a real pin
       // whenever the user selects any non-Sol cluster — visualizes Sol's
       // altitude relative to the system under inspection. Per-frame
-      // degeneracy hiding (DEGENERATE_PLANE_DIST) handles the on-plane case
+      // degeneracy hiding (DROPLINE_DEGENERATE_DIST) handles the on-plane case
       // (Sol selected, or any cluster co-planar with the selection).
       const com = cluster.com;
       const primary = STARS[cluster.primary];
 
       // Per-drop material clones so each pin can carry its own opacity for
       // the per-cluster fade ramps below. Cost: ~70 ShaderMaterials total.
-      const solidMat = snappedLineMat({ color: COLOR_SOLID });
-      const dotsMat  = snappedDotsMat({ color: COLOR_DOTS });
+      const solidMat = snappedLineMat({ color: DROPLINE_COLOR_SOLID });
+      const dotsMat  = snappedDotsMat({ color: DROPLINE_COLOR_DOTS });
 
       // Solid line: top vertex pinned at COM, bottom rewritten on every
       // selection change (regenerateDrop). Pre-seed bottom at z=0 — first
@@ -210,23 +195,13 @@ export class Droplines {
     solidPos.setXYZ(1, com.x, com.y, planeZ);
     solidPos.needsUpdate = true;
 
-    const dz = com.z - planeZ;
-    const len = Math.abs(dz);
-    const dir = dz >= 0 ? 1 : -1;
+    // Dots run from the plane endpoint up toward the COM (degenerate on-plane
+    // pins bake nothing — DROPLINE_DEGENERATE_DIST gates the midpoint dot).
     const dotsPos = d.dots.geometry.attributes.position as Float32BufferAttribute;
-    let count = 0;
-    // Start one full period in from the plane endpoint (skips the bottom
-    // anchor visually) and stop strictly before the COM. A pin shorter
-    // than one period still gets a single midpoint dot so it never
-    // disappears entirely.
-    for (let off = DOT_PERIOD_LY; off < len && count < MAX_DOTS_PER_PIN; off += DOT_PERIOD_LY) {
-      dotsPos.setXYZ(count, com.x, com.y, planeZ + dir * off);
-      count++;
-    }
-    if (count === 0 && len > DEGENERATE_PLANE_DIST) {
-      dotsPos.setXYZ(0, com.x, com.y, planeZ + dir * len * 0.5);
-      count = 1;
-    }
+    const count = fillVerticalDotPin(
+      dotsPos, com.x, com.y, planeZ, com.z,
+      DROPLINE_DOT_PERIOD_LY, MAX_DOTS_PER_PIN, DROPLINE_DEGENERATE_DIST,
+    );
     dotsPos.needsUpdate = true;
     d.dots.geometry.setDrawRange(0, count);
   }
@@ -268,7 +243,7 @@ export class Droplines {
     const camAbove = camera.position.z >= planeZ;
     for (const d of this.drops) {
       const dz = d.com.z - planeZ;
-      if (Math.abs(dz) < DEGENERATE_PLANE_DIST) {
+      if (Math.abs(dz) < DROPLINE_DEGENERATE_DIST) {
         d.solid.visible = false;
         d.dots.visible = false;
         continue;

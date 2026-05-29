@@ -15,7 +15,7 @@
 // translated to view.target each tick. Top of the dropline stays at local
 // (0,0,0); bottom rewrites to (0,0, planeZ - view.target.z). Dots span the
 // same local Z range at fixed-period offsets — same pattern density as
-// the per-cluster droplines (DOT_PERIOD_LY) so the depth cue reads
+// the per-cluster droplines (DROPLINE_DOT_PERIOD_LY) so the depth cue reads
 // consistently. Solid/dotted swap by camera side of plane mirrors
 // droplines.ts.
 
@@ -32,12 +32,13 @@ import {
 } from 'three';
 import { STAR_CLUSTERS } from '../data/stars';
 import { snappedDotsMat, snappedLineMat } from './materials';
-
-// Match droplines.ts so the focus-marker line uses the same
-// premultiplied-against-black palette as the rest of the dropline
-// subsystem — keeps the visual language coherent.
-const COLOR_SOLID = 0x123d42;
-const COLOR_DOTS  = 0x15464c;
+import { fillVerticalDotPin } from './dot-pin';
+import {
+  DROPLINE_COLOR_SOLID,
+  DROPLINE_COLOR_DOTS,
+  DROPLINE_DOT_PERIOD_LY,
+  DROPLINE_DEGENERATE_DIST,
+} from './cluster-fade';
 
 // Ring matches the grid rings (same blue, same base opacity at full ramp)
 // so the marker reads as a small companion to them rather than a different
@@ -58,17 +59,6 @@ const RING_SEGMENTS = 32;
 // and the candidate-target indicator.
 export const FOCUS_MARKER_NEAR = 0.5;
 const FOCUS_MARKER_FAR  = 1.5;
-
-// Same epsilon as droplines.ts: a dropline whose top is within this
-// distance of the plane has effectively no length and the line is hidden.
-// The ring still renders — it locates the focus laterally even when
-// the pan stayed in-plane.
-const DEGENERATE_PLANE_DIST = 0.01;
-
-// Z-spacing for the dotted (far-side) variant. Same value as
-// droplines.ts so the two pattern densities match when both render
-// simultaneously.
-const DOT_PERIOD_LY = 0.25;
 
 // Pre-allocated capacity. Most pans stay near the selection plane, but
 // Z/X keyboard fly can put view.target tens of ly off — give the buffer
@@ -97,7 +87,7 @@ export class FocusMarker {
     this.ring = new Line(new BufferGeometry().setFromPoints(ringPts), this.ringMat);
     this.group.add(this.ring);
 
-    this.solidMat = snappedLineMat({ color: COLOR_SOLID, opacity: 0 });
+    this.solidMat = snappedLineMat({ color: DROPLINE_COLOR_SOLID, opacity: 0 });
     const solidGeom = new BufferGeometry().setFromPoints([
       new Vector3(0, 0, 0),
       new Vector3(0, 0, 0),
@@ -106,7 +96,7 @@ export class FocusMarker {
     this.solid = new Line(solidGeom, this.solidMat);
     this.group.add(this.solid);
 
-    this.dotsMat = snappedDotsMat({ color: COLOR_DOTS, opacity: 0 });
+    this.dotsMat = snappedDotsMat({ color: DROPLINE_COLOR_DOTS, opacity: 0 });
     const dotsArr = new Float32Array(MAX_DOTS * 3);
     const dotsGeom = new BufferGeometry();
     const dotsAttr = new Float32BufferAttribute(dotsArr, 3);
@@ -170,7 +160,7 @@ export class FocusMarker {
     const localBottomZ = planeZ - viewTarget.z;
     const dropLen = Math.abs(localBottomZ);
 
-    if (dropLen < DEGENERATE_PLANE_DIST) {
+    if (dropLen < DROPLINE_DEGENERATE_DIST) {
       this.solid.visible = false;
       this.dots.visible = false;
       return;
@@ -193,20 +183,12 @@ export class FocusMarker {
     } else {
       this.solid.visible = false;
       this.dots.visible = true;
+      // Local frame: 0 is the ring (top, at view.target), localBottomZ is the
+      // plane. Dots run from the ring toward the plane at fixed period.
       const pos = this.dots.geometry.attributes.position as Float32BufferAttribute;
-      const dir = localBottomZ >= 0 ? 1 : -1;
-      let count = 0;
-      // Skip the plane-side endpoint by starting one period in; stop
-      // strictly before the ring at the top. Sub-period drops still get
-      // a single midpoint dot so the line never disappears entirely.
-      for (let off = DOT_PERIOD_LY; off < dropLen && count < MAX_DOTS; off += DOT_PERIOD_LY) {
-        pos.setXYZ(count, 0, 0, dir * off);
-        count++;
-      }
-      if (count === 0) {
-        pos.setXYZ(0, 0, 0, dir * dropLen * 0.5);
-        count = 1;
-      }
+      const count = fillVerticalDotPin(
+        pos, 0, 0, 0, localBottomZ, DROPLINE_DOT_PERIOD_LY, MAX_DOTS,
+      );
       pos.needsUpdate = true;
       this.dots.geometry.setDrawRange(0, count);
       this.dotsMat.uniforms.uOpacity.value = ramp;
