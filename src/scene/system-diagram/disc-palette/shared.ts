@@ -14,6 +14,13 @@ import { dominantResources } from '../body-palette';
 export const WHITE_COLOR = new Color(1, 1, 1);
 export const BLACK_COLOR = new Color(0, 0, 0);
 
+// Clamp to [0, 1] — the GLSL `clamp(x, 0.0, 1.0)` the shader applies to every
+// normalized signal, mirrored CPU-side so palette scalars derived here land in
+// the same range the disc shader expects.
+export function clamp01(x: number): number {
+  return Math.min(1, Math.max(0, x));
+}
+
 // All present atmospheric gases as [species, fraction] pairs, filtered to
 // positive fractions. The single walk over atm1/atm2/atm3 that every
 // atmosphere consumer shares (column color, haze contributors, Rayleigh

@@ -13,21 +13,24 @@
 // melt temperature regardless of the cooler mean surface (fresh upwelling),
 // differing only in what triggers them. That's why a 804 K magma ocean
 // still glows — the exposed magma is ~1400 K even though the crust is not.
+//
+// CPU→GPU split: this module folds the drives down to the three scalars the
+// shader consumes; the GPU side paints them. The molten sub-pass + its
+// `LAVA_*` constant block + `emberRamp` live in `materials/planet.ts` (search
+// "Lava / molten-surface emission"). moltenCoverage / emissionTempNorm ride in
+// as varyings; lavaSulfurFrac travels via the LAVA_TINT texel. The split is
+// deliberate — CPU resolves coverage/temp, GPU resolves where on the disc.
 
 import { Body } from '../../../data/stars';
-import { atmFracOf } from './shared';
+import { atmFracOf, clamp01 } from './shared';
 
 // GLSL-style smoothstep — 0 below e0, 1 above e1, Hermite ease between.
 // Mirrors the shader's built-in so the lava drives derived here match the
 // curve the molten sub-pass expects.
 function smoothstep(e0: number, e1: number, x: number): number {
   if (e0 === e1) return x < e0 ? 0 : 1;
-  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
-}
-
-function clamp01(x: number): number {
-  return Math.min(1, Math.max(0, x));
 }
 
 // Silicate-solidus melt ramp for INSOLATION-driven heat. Below ~700 K

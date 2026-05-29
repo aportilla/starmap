@@ -111,22 +111,21 @@ import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from 
 // reads as gently banded foundation under its real cloud chemistry,
 // instead of a flat fill underneath sparse decks.
 export const MAX_CLOUD_LAYERS = 4;
-const ATM_COLUMN_TEXEL_OFFSET = MAX_CLOUD_LAYERS;
-const DECK_COLOR_BASE_OFFSET = MAX_CLOUD_LAYERS + 1;
-const OCEAN_COLOR_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS;
+export const ATM_COLUMN_TEXEL_OFFSET = MAX_CLOUD_LAYERS;
+export const DECK_COLOR_BASE_OFFSET = MAX_CLOUD_LAYERS + 1;
+export const OCEAN_COLOR_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS;
 // Per-body limb Rayleigh scatter color (rgb; .a unused) — the gas-specific
 // hue the rim halo's depth-graded Rayleigh shift targets. Strength rides
 // on aWeights.w, so only the color needs a texel here.
-const SCATTER_COLOR_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1;
+export const SCATTER_COLOR_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1;
 // Per-body lava composition signal (.r = sulfur fraction; gba unused) —
 // the abiotic surface-sulfur fraction that the molten sub-pass uses to
 // shift the ember yellower (see lavaSulfurFrac in disc-palette/lava.ts). One
 // channel today; the rest of the texel is reserved for future
 // compositional lava hues.
-const LAVA_TINT_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1 + 1;
+export const LAVA_TINT_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1 + 1;
 export const BODY_TEXTURE_WIDTH =
   MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1 + 1 + 1;
-export { ATM_COLUMN_TEXEL_OFFSET, DECK_COLOR_BASE_OFFSET, OCEAN_COLOR_TEXEL_OFFSET, SCATTER_COLOR_TEXEL_OFFSET, LAVA_TINT_TEXEL_OFFSET };
 
 // mode='all' renders disc + halo (moons; keeps the original single-pass
 // behavior). mode='disc' or 'halo' splits the disc-interior and the
@@ -1124,6 +1123,12 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // Presence (which fragments are molten) — binarized against a
           // Bayer threshold for a pixel-crisp edge; the step(0.001, …)
           // floor keeps the crust between features exactly solid.
+          // The vec2(53, 19) is a SCREEN-SPACE dither decorrelation offset
+          // (added to gl_FragCoord, not multiplied by vSeed), a separate
+          // namespace from the per-body SALT_* budget above — its only job is
+          // to stay distinct from the other gl_FragCoord bayer offsets (the
+          // per-light vec2(43+7i, 29+11i) in the rim pass) so the stipple
+          // patterns don't align.
           float meltSoft = max(crack, pool);
           float bLava    = bayer4(gl_FragCoord.xy + vec2(53.0, 19.0));
           float meltBin  = step(0.001, meltSoft) * step(bLava, meltSoft);

@@ -42,7 +42,7 @@ import { Color } from 'three';
 import { BODIES, Body, CLASS_COLOR, STARS } from '../../../data/stars';
 import { lerpColor } from '../body-palette';
 import { hazeBlendFor } from './atmosphere';
-import { atmFracOf, dustColorFor, WHITE_COLOR } from './shared';
+import { atmFracOf, clamp01, dustColorFor, WHITE_COLOR } from './shared';
 
 // ─── Pathway 3: solvent intrinsic absorption ───────────────────────────────
 //
@@ -167,14 +167,16 @@ const OCEAN_FRESNEL = 0.18;
 // productivity).
 const CDOM_TINT_COLOR = new Color(0.62, 0.45, 0.20);  // humic tannin brown-yellow
 const CDOM_STRENGTH_SCALE = 0.35;
+// How strongly ocean volume dilutes CDOM concentration: an ocean world
+// (wf=1) lands at 1 − this, a paleo-shore world (wf~0.3) stays near full.
+const CDOM_DILUTION_BY_WATER = 0.7;
 
 function cdomTintFor(body: Body): { color: Color; amount: number } {
   const bca = body.bioticCarbonAqueous ?? 0;
   const wf  = body.waterFraction ?? 0;
-  // Concentration ∝ productivity / water_volume. Use (1 - wf*0.7) as a
-  // coarse dilution proxy — ocean worlds (wf ~ 1) dilute, paleo-shore
-  // worlds (wf ~ 0.3) concentrate.
-  const dilution = 1 - wf * 0.7;
+  // Concentration ∝ productivity / water_volume — ocean worlds (wf ~ 1)
+  // dilute, paleo-shore worlds (wf ~ 0.3) concentrate.
+  const dilution = 1 - wf * CDOM_DILUTION_BY_WATER;
   const amount = Math.min(1, bca * dilution * CDOM_STRENGTH_SCALE);
   return { color: CDOM_TINT_COLOR.clone(), amount };
 }
@@ -233,14 +235,23 @@ function pigmentTintFor(body: Body): { color: Color; amount: number } {
 // suspended-sediment plumes go opaque and we want the deep ocean
 // underneath to still show through.
 const SEDIMENT_STRENGTH_SCALE = 0.30;
+// Coastline density ∝ 1/wf: BASELINE is the turbidity an ocean-world still
+// carries, PER_INV_WF scales the 1/wf term, WF_FLOOR clamps the blowup at
+// tiny water fractions, and COAST_MAX caps shallow worlds from over-
+// concentrating.
+const SEDIMENT_COAST_BASELINE = 0.35;
+const SEDIMENT_COAST_PER_INV_WF = 0.5;
+const SEDIMENT_WF_FLOOR = 0.2;
+const SEDIMENT_COAST_MAX = 1.5;
 
 function sedimentTintFor(body: Body): { color: Color; amount: number } {
   const wf = body.waterFraction ?? 0;
   if (wf <= 0) return { color: WHITE_COLOR, amount: 0 };
   const color = dustColorFor(body);
-  // Coastline density ∝ 1/wf, clamped so an ocean-world (wf=1) still
-  // carries a baseline turbidity rather than going zero.
-  const coastFactor = Math.min(1.5, 0.35 + 0.5 / Math.max(0.2, wf));
+  const coastFactor = Math.min(
+    SEDIMENT_COAST_MAX,
+    SEDIMENT_COAST_BASELINE + SEDIMENT_COAST_PER_INV_WF / Math.max(SEDIMENT_WF_FLOOR, wf),
+  );
   const ageFactor   = body.surfaceAge ?? 0.5;  // young = more sediment
   const amount = Math.min(0.6, coastFactor * ageFactor * SEDIMENT_STRENGTH_SCALE);
   return { color, amount };
@@ -285,9 +296,9 @@ export function oceanColorFor(body: Body): readonly [number, number, number] {
   // 1. Stellar SED tint applied last (multiplicative through the
   // entire stack — what light is even reaching the ocean).
   const stellar = stellarLightTintFor(body);
-  col.r = Math.min(1, Math.max(0, col.r * stellar.r));
-  col.g = Math.min(1, Math.max(0, col.g * stellar.g));
-  col.b = Math.min(1, Math.max(0, col.b * stellar.b));
+  col.r = clamp01(col.r * stellar.r);
+  col.g = clamp01(col.g * stellar.g);
+  col.b = clamp01(col.b * stellar.b);
 
   return [col.r, col.g, col.b];
 }
