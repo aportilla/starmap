@@ -20,6 +20,7 @@ import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
 import { frostLineAU, keplerSemiMajorAu } from './lib/astrophysics.mjs';
+import { parseCsv } from './lib/catalog-index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -184,33 +185,9 @@ function radiusToPxSize(radiusSolar) {
 }
 
 // =============================================================================
-// CSV parsing
+// CSV parsing — the low-level row tokenizer is shared with catalog-index.mjs
+// (imported above); the parseCsv*-prefixed helpers below add per-file schema.
 // =============================================================================
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let inQuote = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuote) {
-      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
-      else if (c === '"') inQuote = false;
-      else cell += c;
-    } else if (c === '"') {
-      inQuote = true;
-    } else if (c === ',') {
-      row.push(cell); cell = '';
-    } else if (c === '\n') {
-      row.push(cell); rows.push(row); row = []; cell = '';
-    } else if (c !== '\r') {
-      cell += c;
-    }
-  }
-  if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows;
-}
 
 function parseCsvCatalog(text, label) {
   const rows = parseCsv(text);
@@ -440,25 +417,35 @@ function pairsWithinBrute(stars, radius, cb) {
   }
 }
 
-function expandCoincidentSets(stars) {
-  const out = stars.map(s => ({ ...s }));
+// Single-linkage grouping by 3D proximity. Builds a union-find over the
+// star list, unions every pair within `radiusLy` (brute O(n²) — see
+// pairsWithinBrute), and returns root → member-index list in first-seen
+// order. Both the coincident-set expansion and the cluster detector group
+// the same way; only the radius and what they do with each group differ.
+function unionFindGroups(stars, radiusLy) {
   const n = stars.length;
   const parent = Array.from({ length: n }, (_, i) => i);
   const find = (x) => {
     while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
     return x;
   };
-  pairsWithinBrute(stars, COINCIDENT_EPS_LY, (i, j) => {
+  pairsWithinBrute(stars, radiusLy, (i, j) => {
     const ri = find(i), rj = find(j);
     if (ri !== rj) parent[ri] = rj;
   });
-  const sets = new Map();
+  const groups = new Map();
   for (let i = 0; i < n; i++) {
     const r = find(i);
-    let g = sets.get(r);
-    if (!g) { g = []; sets.set(r, g); }
+    let g = groups.get(r);
+    if (!g) { g = []; groups.set(r, g); }
     g.push(i);
   }
+  return groups;
+}
+
+function expandCoincidentSets(stars) {
+  const out = stars.map(s => ({ ...s }));
+  const sets = unionFindGroups(stars, COINCIDENT_EPS_LY);
   for (const set of sets.values()) {
     if (set.length < 2) continue;
     set.sort((a, b) => stars[b].mass - stars[a].mass);
@@ -477,23 +464,7 @@ function expandCoincidentSets(stars) {
 const CLUSTER_THRESHOLD_LY = 0.25;
 
 function buildClusters(stars) {
-  const n = stars.length;
-  const parent = Array.from({ length: n }, (_, i) => i);
-  const find = (x) => {
-    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
-    return x;
-  };
-  pairsWithinBrute(stars, CLUSTER_THRESHOLD_LY, (i, j) => {
-    const ri = find(i), rj = find(j);
-    if (ri !== rj) parent[ri] = rj;
-  });
-  const groups = new Map();
-  for (let i = 0; i < n; i++) {
-    const r = find(i);
-    let g = groups.get(r);
-    if (!g) { g = []; groups.set(r, g); }
-    g.push(i);
-  }
+  const groups = unionFindGroups(stars, CLUSTER_THRESHOLD_LY);
   return Array.from(groups.values()).map(members => {
     const primary = members.reduce(
       (best, m) => {
