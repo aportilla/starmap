@@ -21,6 +21,7 @@ import {
 import { discPxFromRadius, type RowSlot } from '../layout/row';
 import { writeLightUniforms } from '../lighting';
 import { hash32, mulberry32 } from '../geom/prng';
+import { hitCircle } from '../geom/hit';
 import type { DiagramPick, PlanetCenterIndex, StarLightSource } from '../types';
 
 interface MoonSlot {
@@ -141,9 +142,7 @@ function pickFromPool(pool: MoonPool | null, x: number, y: number): DiagramPick 
     const cx = pos[i * 3 + 0];
     const cy = pos[i * 3 + 1];
     const r = slot.discPx / 2;
-    const dx = x - cx;
-    const dy = y - cy;
-    if (dx * dx + dy * dy <= r * r) {
+    if (hitCircle(x, y, cx, cy, r)) {
       return { kind: 'moon', bodyIdx: slot.bodyIdx };
     }
   }

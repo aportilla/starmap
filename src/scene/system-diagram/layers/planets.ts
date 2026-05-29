@@ -10,6 +10,7 @@ import {
 } from 'three';
 import { makePlanetMaterial } from '../../materials';
 import { buildBodyDiscGeometry } from './body-disc';
+import { hitCircle } from '../geom/hit';
 import { disposePool } from './pool';
 import { RENDER_ORDER_PLANET, RENDER_ORDER_PLANET_HALO, Z_PLANET, Z_STRIDE } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
@@ -128,9 +129,7 @@ export class PlanetsLayer {
       const cx = pos[i * 3 + 0];
       const cy = pos[i * 3 + 1];
       const r = this.planetDiscPx[i] / 2;
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy <= r * r) {
+      if (hitCircle(x, y, cx, cy, r)) {
         return { kind: 'planet', bodyIdx: this.planetIndices[i] };
       }
     }

@@ -16,6 +16,7 @@ import {
   SYSTEM_VIEW_SATURATION_LIFT_MAX, SYSTEM_VIEW_SATURATION_LIFT_RATE,
 } from '../layout/constants';
 import { bigMiddleOrder, sumOf } from '../layout/row';
+import { hitCircle } from '../geom/hit';
 import { disposePool } from './pool';
 import type { DiagramPick, StarLightSource } from '../types';
 
@@ -230,9 +231,7 @@ export class StarsRowLayer {
       const cx = disc.mesh.position.x;
       const cy = disc.mesh.position.y;
       const r = disc.currentDiam / 2;
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy <= r * r) {
+      if (hitCircle(x, y, cx, cy, r)) {
         return { kind: 'star', starIdx: this.starMembers[slot] };
       }
     }
