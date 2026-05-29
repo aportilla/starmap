@@ -134,12 +134,13 @@ import {
   SCATTERING_COLOR, SCATTERING_POTENCY,
   WORLD_CLASS_COLOR, WORLD_CLASS_TINT, WORLD_CLASS_UNKNOWN_COLOR,
   biomePaintFor, deckGasesFor, RENDERER_SKIP_AEROSOLS,
-  cloudDeckPalette, dominantResources, rockArchetypeFor,
+  cloudDeckPalette, dominantResources, lerpColor, rockArchetypeFor,
   stratosphericHazeStrengthFor,
 } from '../body-palette';
 import { hash32 } from '../geom/prng';
 import { bodyVisualTiltRad } from '../geom/ring';
 import { PROCEDURAL_TEXTURE_MIN_PX } from '../layout/constants';
+import { atmFracOf, atmGasPairs, dustColorFor, WHITE_COLOR } from './shared';
 
 // Outward rim width buckets for surface bodies — integer pixels of
 // atmospheric halo extending INTO SPACE beyond the disc edge. Driven
@@ -331,7 +332,6 @@ const ABUNDANCE_VISUAL_FLOOR = 0.1;
 const BASE_DECK_LIGHTNESS_LIFT = 0.05;
 const BASE_DECK_COVERAGE = 0.95;
 const BASE_DECK_WIND_DEFAULT = 200;
-const WHITE_COLOR = new Color(1, 1, 1);
 
 // GLSL-style smoothstep — 0 below e0, 1 above e1, Hermite ease between.
 // Mirrors the shader's built-in so the lava drives derived here match the
@@ -344,16 +344,6 @@ function smoothstep(e0: number, e1: number, x: number): number {
 
 function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
-}
-
-// Lerp `c` toward `target` by `t` ∈ [0, 1]. Mutates and returns a new
-// Color so callers can chain.
-function lerpColor(c: Color, target: Color, t: number): Color {
-  return new Color(
-    c.r + (target.r - c.r) * t,
-    c.g + (target.g - c.g) * t,
-    c.b + (target.b - c.b) * t,
-  );
 }
 
 // Apply two per-body shifts to an archetype color: a deterministic
@@ -502,26 +492,6 @@ function solventBaseColorFor(species: SolventSpecies): Color {
     case 'NH3':     return SOLVENT_COLOR_NH3.clone();
     case 'CO2_SC':  return SOLVENT_COLOR_CO2_SC.clone();
   }
-}
-
-// All present atmospheric gases as [species, fraction] pairs, filtered to
-// positive fractions. The single walk over atm1/atm2/atm3 that every
-// atmosphere consumer shares (column color, haze contributors, Rayleigh
-// rim, solvent pick, lava sulfur) — the null/≤0 guards live here rather
-// than being re-derived at each call site.
-function atmGasPairs(body: Body): Array<[AtmGas, number]> {
-  const out: Array<[AtmGas, number]> = [];
-  if (body.atm1 !== null && (body.atm1Frac ?? 0) > 0) out.push([body.atm1 as AtmGas, body.atm1Frac as number]);
-  if (body.atm2 !== null && (body.atm2Frac ?? 0) > 0) out.push([body.atm2 as AtmGas, body.atm2Frac as number]);
-  if (body.atm3 !== null && (body.atm3Frac ?? 0) > 0) out.push([body.atm3 as AtmGas, body.atm3Frac as number]);
-  return out;
-}
-
-function atmFracOf(body: Body, gas: AtmGas): number {
-  for (const [g, frac] of atmGasPairs(body)) {
-    if (g === gas) return frac;
-  }
-  return 0;
 }
 
 // ─── Pathway 1: stellar SED tint ───────────────────────────────────────────
@@ -839,39 +809,6 @@ export interface DiscPalette {
   // green channel by this so sulfurous volcanism (Io) reads yellower than
   // pure silicate lava. 0 leaves the blackbody ember untouched.
   readonly lavaSulfurFrac: number;
-}
-
-// Per-body dust color. Lifted surface dust reflects the body's surface
-// mineralogy: Mars's ferric-oxide rust is one possibility, but alien
-// Mars-class bodies with different resource mixes lift different-colored
-// dust (iron-grey on metal-dominant, tan on silicate-dominant, rose on
-// rare-earth-rich). Weighted blend across the body's top-2 resource
-// colors — same source the surface texturing uses, so dust matches the
-// body's apparent surface.
-//
-// Fallback rust color when dust is present but the body has no resource
-// signal (procgen drift / missing data). Matches the canonical Mars-rust
-// hue so a data-thin body still reads as "dusty world."
-const DUST_FALLBACK_COLOR = new Color(0xa86040);
-
-function dustColorFor(body: Body): Color {
-  const resources = dominantResources(body, 2);
-  if (resources.length === 0) return DUST_FALLBACK_COLOR;
-  // Renormalize: dustColorFor is a hue blend across the body's
-  // mineralogy, so we want the relative ratio between the top resources,
-  // not their absolute abundance. A barren world still lifts dust that
-  // reflects its (sparse) surface composition; richness shows up in the
-  // surface palette grey-lerp, not here.
-  const total = resources.reduce((s, e) => s + e.abundance, 0);
-  if (total <= 0) return DUST_FALLBACK_COLOR;
-  let r = 0, g = 0, b = 0;
-  for (const { color, abundance } of resources) {
-    const w = abundance / total;
-    r += color.r * w;
-    g += color.g * w;
-    b += color.b * w;
-  }
-  return new Color(r, g, b);
 }
 
 // Unified haze contributor list — one entry per visible atmospheric
