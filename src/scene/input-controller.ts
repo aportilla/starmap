@@ -64,6 +64,11 @@ const DOUBLE_CLICK_MS = 350;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 8;
 
+// Wheel-zoom base: zoom factor is WHEEL_ZOOM_BASE^deltaY, so each wheel
+// notch multiplies the orbit distance by a small constant (a bit >1 zooms
+// out on positive deltaY, <1/notch zooms in on negative).
+const WHEEL_ZOOM_BASE = 1.0015;
+
 export interface InputHandlers {
   // Map a CSS-pixel client coord into HUD buffer coords. Scene owns the
   // cssW/H/bufferW/H cache populated by its own resize().
@@ -507,7 +512,7 @@ export class InputController {
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
-    this.handlers.zoomBy(Math.pow(1.0015, e.deltaY));
+    this.handlers.zoomBy(Math.pow(WHEEL_ZOOM_BASE, e.deltaY));
   }
 
   // -- keyboard ---------------------------------------------------------

@@ -9,7 +9,7 @@
 
 import { drawPixelText, getFont, measurePixelText } from '../../data/pixel-font';
 import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey } from '../../data/stars';
-import type { DiagramPick } from '../../scene/system-diagram';
+import { picksEqual, type DiagramPick } from '../../scene/system-diagram/types';
 import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
 import { colors, fonts, sizes } from '../theme';
@@ -264,7 +264,7 @@ export class BodyInfoCard extends BasePanel {
   private current: DiagramPick | null = null;
 
   setTarget(pick: DiagramPick): void {
-    if (picksMatch(pick, this.current)) return;
+    if (picksEqual(pick, this.current)) return;
     this.current = pick;
     this.rebuild();
   }
@@ -339,16 +339,4 @@ export class BodyInfoCard extends BasePanel {
       cursorY += bodyLineH;
     }
   }
-}
-
-// Local equivalent of system-diagram.ts's picksEqual — duplicated here
-// to avoid a circular dependency on a runtime export from the scene
-// module just for one tiny pure helper.
-function picksMatch(a: DiagramPick | null, b: DiagramPick | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (a.kind !== b.kind) return false;
-  if (a.kind === 'star' && b.kind === 'star') return a.starIdx === b.starIdx;
-  if (a.kind !== 'star' && b.kind !== 'star') return a.bodyIdx === b.bodyIdx;
-  return false;
 }

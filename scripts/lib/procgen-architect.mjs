@@ -911,7 +911,6 @@ function massRadiusFromDiskPhysics(star, formationAu, diskCtx, prngFor) {
 // pass it; null fallback exists only for defensive coding.
 function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', diskCtx = null) {
   if (diskCtx == null) return null;
-  const S = insolation(star.mass, formationAu);
 
   const dp = massRadiusFromDiskPhysics(
     star, formationAu, diskCtx,

@@ -667,31 +667,6 @@ export const HAZE_AEROSOL_SCALE  = 1.25;
 export const HAZE_DUST_SCALE     = 3.0;
 export const HAZE_RAYLEIGH_SCALE = 0.15;
 
-// Molecular weight per atmospheric gas (amu). Used historically for
-// altitude-stratification pickers; current renderer doesn't read it
-// but the table is kept for analytical scripts + future use.
-export const GAS_MOLECULAR_WEIGHT: Record<AtmGas, number> = {
-  H2:   2,
-  He:   4,
-  CH4: 16,
-  NH3: 17,
-  H2O: 18,
-  N2:  28,
-  CO:  28,
-  O2:  32,
-  Ar:  40,
-  CO2: 44,
-  SO2: 64,
-  H2SO4:        98,
-  SILICATE:    100,
-  DUST:        100,
-  THOLIN:      100,  // CnHmN mixed polymer mass
-  NH4SH:        51,
-  CHROMOPHORE: 100,  // PH3-derived phosphorus polymers, mass placeholder
-  SALT:         85,  // averaged across KCl (74) + ZnS (97)
-  SULFUR:      256,  // S8 elemental sulfur ring
-};
-
 // Per-gas clear-air scattering color — the visible tint of an
 // atmosphere viewed edge-on through a long column with no haze layer
 // to obscure it. Used by the disc rim's clear-air branch in

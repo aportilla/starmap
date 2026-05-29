@@ -41,6 +41,12 @@ const FOCUS_ANIM_MS = 400;
 // per second.
 const PAN_RATE_PER_DISTANCE = 0.5;
 const ORBIT_RATE_RAD = 1.5;
+// Pointer-drag orbit sensitivity: radians of yaw/pitch per CSS pixel of drag.
+// Shared by single-finger drag and two-finger pan-mode orbit so swapping the
+// gesture assignment doesn't change how fast the camera spins.
+const ORBIT_SENSITIVITY_RAD_PER_PX = 0.005;
+// Autospin yaw step per tick — the session-only "Auto-rotate" fidget.
+const AUTOSPIN_RAD_PER_TICK = 0.0015;
 // Clamp per-frame dt so a stalled tab or breakpoint resume doesn't hurl the
 // camera across the scene on the next frame.
 const MAX_TICK_DT_MS = 100;
@@ -218,6 +224,10 @@ export class StarmapScene {
         this.view.yaw = DEFAULT_VIEW.yaw;
         this.view.pitch = DEFAULT_VIEW.pitch;
         this.focusAnimating = false;
+        // Reset returns to the default (non-spinning) view, so clear the
+        // autospin fidget and sync the panel checkbox to match.
+        this.view.spin = false;
+        this.hud.setToggleState('spin', false);
       }
     };
     this.hud.onDeselect = () => this.deselect();
@@ -293,9 +303,10 @@ export class StarmapScene {
       zoomBy: (factor) => this.setZoom(this.view.distance * factor),
       onClickStar: (clusterIdx, button) => {
         if (button === 2) {
-          // Right-click hook. Logs so the wiring is observable in DevTools;
-          // body becomes a real game action when right-click gets a binding.
-          console.info('[scene] right-click hook on cluster', clusterIdx, STARS[STAR_CLUSTERS[clusterIdx].primary].name);
+          // Right-click hook. Logs in dev so the wiring is observable in
+          // DevTools (silent in prod); becomes a real game action when
+          // right-click gets a binding.
+          if (import.meta.env.DEV) console.info('[scene] right-click hook on cluster', clusterIdx, STARS[STAR_CLUSTERS[clusterIdx].primary].name);
           return;
         }
         if (button === 0) this.selectAndFocusCluster(clusterIdx);
@@ -303,9 +314,9 @@ export class StarmapScene {
       onDoubleClickStar: (clusterIdx) => this.onViewSystem(clusterIdx),
       onLongPressStar: (clusterIdx) => {
         // Long-press hook. Same shape as the right-click hook above —
-        // logs so the wiring is observable; body becomes a real action
-        // when touch long-press gets a binding.
-        console.info('[scene] long-press hook on cluster', clusterIdx, STARS[STAR_CLUSTERS[clusterIdx].primary].name);
+        // logs in dev only; becomes a real action when touch long-press
+        // gets a binding.
+        if (import.meta.env.DEV) console.info('[scene] long-press hook on cluster', clusterIdx, STARS[STAR_CLUSTERS[clusterIdx].primary].name);
       },
       onPointerHoverChanged: (x, y, has) => {
         if (has) {
@@ -409,12 +420,11 @@ export class StarmapScene {
   }
 
   // Yaw/pitch the camera by a screen-pixel delta. Shared by single-finger
-  // drag (the default) and two-finger pan-mode-when-singleTouchAction='pan'
-  // — same sensitivity (0.005 rad/CSS px) so swapping the gesture
-  // assignments doesn't change how fast the camera spins.
+  // drag (the default) and two-finger pan-mode-when-singleTouchAction='pan',
+  // both at ORBIT_SENSITIVITY_RAD_PER_PX.
   private applyOrbitDelta(dxPx: number, dyPx: number): void {
-    this.view.yaw   -= dxPx * 0.005;
-    this.view.pitch -= dyPx * 0.005;
+    this.view.yaw   -= dxPx * ORBIT_SENSITIVITY_RAD_PER_PX;
+    this.view.pitch -= dyPx * ORBIT_SENSITIVITY_RAD_PER_PX;
     this.view.pitch = Math.max(0.05, Math.min(Math.PI - 0.05, this.view.pitch));
   }
 
@@ -598,7 +608,7 @@ export class StarmapScene {
       : 0;
     this.lastTickMs = now;
 
-    if (this.view.spin) this.view.yaw += 0.0015;
+    if (this.view.spin) this.view.yaw += AUTOSPIN_RAD_PER_TICK;
     this.applyHeldKeys(dt);
 
     if (this.focusAnimating) {
