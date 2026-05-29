@@ -36,6 +36,7 @@ scripts/                    Star-data tooling — read scripts/README.md first
   README.md                 Workflow guide for star-data tasks
   build-catalog.mjs         Build step: CSV → catalog.generated.json (full derivation pipeline)
   scrape-wiki-stars.mjs     Initial-seeding Wikipedia → CSV scraper
+  scrape-planets-from-stellarcatalog.mjs   Bootstrap bodies.csv from cached catalog pages
   find-missing-stars.mjs    Diff a CSV against the catalog; --add inserts missing rows
   fill-from-stellarcatalog.mjs   Backfill empty cells from cached catalog detail pages
   sync-with-catalog.mjs     Assign stable id (catalog slug) + canonical name to every row
@@ -43,6 +44,11 @@ scripts/                    Star-data tooling — read scripts/README.md first
   import-system-from-catalog.mjs    Idempotent full rewrite of one system from its catalog page
   audit-unresolved.mjs      Categorize non-catalog rows as OVERLAP / NEAR / DISTINCT
   audit-procgen.mjs         Procgen distribution audit — observed vs. priors with z-scores
+  audit-variety.mjs         Exotic / iconic archetype rarity audit
+  check-disk-physics.mjs    Disk-physics anchor regression gate
+  check.mjs                 Umbrella gate: build:catalog + tsc + audit-procgen
+  inspect-body.mjs          Pretty-print one body's post-procgen record
+  inspect-csv.mjs           Pretty-print one CSV row with column names
   lookup-star.mjs           Ad-hoc: name (or distance range) → catalog URL
   lib/catalog-index.mjs     Shared catalog parsing, name matching, CSV, redirects
 src/
@@ -57,6 +63,7 @@ src/
       index.ts              Coordinator: owns scene/camera + layers, runs layout, picks, hovers
       types.ts              DiagramPick + PlanetCenterIndex shared across layers
       lighting.ts           writeLightUniforms: pushes StarLightSource[] into a planet/moon material (PlanetsLayer + MoonsLayer share it)
+      body-palette.ts       Stateless color LUTs + lookups (world-class / gas / condensate colors, GAS_POTENCY, biome paint, icyness) — shared by discs, belts, rings, HUD
       disc-palette/         buildDiscPalette: per-body palette + seed + terrain inputs for makePlanetMaterial
         index.ts            Orchestrator: DiscPalette contract + surface resource-slot logic + assembly
         shared.ts           Cross-model primitives: identity colors, atmGasPairs, dustColorFor
@@ -70,6 +77,7 @@ src/
         moons.ts            MoonsLayer: back/front pools split by hemisphere
         rings.ts            RingsLayer: back/front triangle-strip annulus halves per ring
         body-disc.ts        buildBodyDiscGeometry: shared planet/moon disc attribute + cloud-texture packing
+        pool.ts             disposePool: null-safe geometry / material / cloud-texture teardown shared by the layers
       layout/
         row.ts              RowSlot + buildRowSlots + layoutRow (dome arc) + bigMiddleOrder
         constants.ts        Tuning knobs (disc sizes, dome geometry, Z bands, render orders)
@@ -78,7 +86,9 @@ src/
         ring.ts             ringEllipseParams + hitsRing + bodyVisualTiltRad (shared band/ring tilt)
         prng.ts             hash32 + mulberry32; mirrors scripts/lib/prng.mjs
         cull.ts             disableCulling: frustum-cull opt-out for pools that rewrite vertex positions
+        hit.ts              hitCircle: point-in-disc pick test (sibling of ring.ts's hitsRing)
     input-controller.ts     InputController: classifies pointer/keyboard gestures into intents
+    selection-policy.ts     Per-tick view-state derivations: candidate rule, focus-proximity, orbit-keyed star-dim ramp
     grid.ts                 Range rings + axes + galactic-centre arrow; ring expand/collapse choreography
     droplines.ts            Per-cluster vertical pins to the selected COM.z plane
     cluster-fade.ts         Distance fade thresholds shared by labels, droplines, and the star pivot-dim
@@ -95,6 +105,7 @@ src/
       chunks.ts             Shared system-view GLSL: bayer4 + hueDir + star-crescent lighting + MAX_LIGHTS
       shared.ts             snappedMaterials registry + setSnappedLineViewport + glsl helper + RASTER_PAD
     render-scale.ts         RenderScaleObserver: picks integer N for setPixelRatio(DPR/N)
+    viewport-sizer.ts       Pixel-snap sizing for integer-multiple render buffers (shared by every scene's resize)
   ui/                       Pixel-art widget toolkit + per-screen HUD orchestrators.
                             Each HUD renders its own ortho pass at 1 unit = 1 buffer pixel.
     widget.ts               Widget base: Mesh + plane + optional CanvasTexture lifecycle
@@ -110,6 +121,8 @@ src/
       info-card.ts          Bottom-right cluster info card
     system-hud/
       index.ts              SystemHud: floating back button (top-left) + system name (top-right)
+      body-info-card.ts     BodyInfoCard: transient on-hover tooltip panel (class / temp / pressure / life / gases / resources per body kind)
+      body-label.ts         Composed descriptive world labels for the BodyInfoCard
   data/                     Star catalog + bitmap fonts. For data tasks see scripts/README.md.
     nearest-stars.csv       0–20 ly bracket; Wikipedia-seeded, hand-tunable
     stars-20-25ly.csv       20–25 ly bracket
@@ -119,6 +132,7 @@ src/
     stars-40-45ly.csv       40–45 ly bracket; catalog-seeded
     stars-45-50ly.csv       45–50 ly bracket; catalog-seeded
     bodies.csv              Planets + moons + belts + rings; host_id joins to a Star.id (planets/belts) or a Body.id (moons/rings)
+    body_layers.csv         body_id → atmospheric layer composition (gas, coverage, wind, altitude)
     catalog.generated.json  Build artifact (gitignored). Precomputed STARS + STAR_CLUSTERS + BODIES.
     stars.ts                Runtime catalog API — imports the JSON, exposes typed STARS/STAR_CLUSTERS/BODIES, k-d tree, lookups
     kdtree.ts               Static 3D k-d tree backing nearest-cluster queries
@@ -190,13 +204,13 @@ There's no UI plumbing between the bootstrap and the scenes: each scene owns its
 
 Each HUD captures pointer events first (in the scene's `onPointerDown` / `onPointerMove` via `clientToHud()`), so clicking a button or a panel row never starts a pan/orbit and hovering swaps the cursor to `pointer`. `MapHud` exposes `onToggle`, `onAction`, `onDeselect`, `onViewSystem`, `onFocus`, and `onSettingsChanged` callbacks; `SystemHud` exposes `onBack`. `src/settings.ts` is the single source of truth for persisted user preferences — `singleTouchAction`, the display toggles (`showLabels`, `showDroplines`), and `resolutionPreference`. The blob is versioned; old saves are merged over fresh defaults on read so adding new fields can't invalidate them. `MapHud` seeds its in-panel toggle state from `getSettings()` at construction and writes through `setSetting()` on each flip; the scene seeds the renderer-side state (`Labels`, `Droplines`) from the same source so the HUD checkbox and the rendered geometry agree on first paint. For touch input and resolution, the scene reads `getSettings()` at gesture/resize time (pull-on-read), so a flipped preference takes effect on the next pointer event or resize with no callback plumbing — `onSettingsChanged` triggers a `resize()` so the resolution radio applies immediately rather than waiting for a window event. The `spin` toggle is intentionally NOT persisted — it's a session fidget, not a preference that should survive a refresh.
 
-Each HUD also exposes `hitTest(bufX, bufY)` returning one of `'interactive' | 'opaque' | 'transparent'` (see `src/ui/hit-test.ts`). The scene queries it once per `pointermove` and only sets `pointer.has = true` when the result is `'transparent'`, so stars behind a button, panel, or info card body don't light up hover labels through the chrome above them. `'opaque'` covers visually-solid surfaces that aren't clickable (panel background, card body, disabled focus button) — they block scene picks and absorb clicks (so a mousedown on the card body doesn't start an orbit drag) without changing the cursor. `'interactive'` adds the cursor swap and dispatches the click. This three-way model is the seed of the layered input router described in [`FUTURE_PLANNING.md`](./FUTURE_PLANNING.md); each HUD's `hitTest` will become an `InputLayer` when modals / tooltips / context menus arrive.
+Each HUD also exposes `hitTest(bufX, bufY)` returning one of `'interactive' | 'opaque' | 'transparent'` (see `src/ui/hit-test.ts`). The scene queries it once per `pointermove` and only sets `pointer.has = true` when the result is `'transparent'`, so stars behind a button, panel, or info card body don't light up hover labels through the chrome above them. `'opaque'` covers visually-solid surfaces that aren't clickable (panel background, card body, disabled focus button) — they block scene picks and absorb clicks (so a mousedown on the card body doesn't start an orbit drag) without changing the cursor. `'interactive'` adds the cursor swap and dispatches the click. This three-way model is the seed of a layered input router: each HUD's `hitTest` will become an `InputLayer` when modals / tooltips / context menus arrive.
 
 The `scene/` modules know **nothing about the DOM** beyond the `HTMLCanvasElement` they render into and `window` for size/input listeners. Don't add DOM queries in there — route data through callbacks or new methods on the scene.
 
 ### UI subsystem
 
-Helio is a 4X game — the galaxy map is the *first* screen, not the only one. Future siblings (research tree, fleet management, diplomacy, system inspector, ship designer, encyclopedia) will share the same `WebGLRenderer`, the same pixel grid, and the same widget toolkit. That's why `src/ui/` houses *generic* primitives — `Widget`, `BasePanel`, `IconButton`, `ActionButton`, the painter module, theme tokens, the `HitResult` contract — rather than map-specific HUD chrome. When proposing structure (file layout, base classes, orchestrators), think "what does this look like with five more screens" rather than just optimizing for the map. Defer until concrete consumers exist: full input router (today each HUD owns its own `hitTest` directly — see [`FUTURE_PLANNING.md`](./FUTURE_PLANNING.md)), keyboard focus stack, ScrollPanel, world-anchored placement, modal/tooltip/popover taxonomies. Build what current screens need; design only what the next one will.
+Helio is a 4X game — the galaxy map is the *first* screen, not the only one. Future siblings (research tree, fleet management, diplomacy, system inspector, ship designer, encyclopedia) will share the same `WebGLRenderer`, the same pixel grid, and the same widget toolkit. That's why `src/ui/` houses *generic* primitives — `Widget`, `BasePanel`, `IconButton`, `ActionButton`, the painter module, theme tokens, the `HitResult` contract — rather than map-specific HUD chrome. When proposing structure (file layout, base classes, orchestrators), think "what does this look like with five more screens" rather than just optimizing for the map. Defer until concrete consumers exist: full input router (today each HUD owns its own `hitTest` directly), keyboard focus stack, ScrollPanel, world-anchored placement, modal/tooltip/popover taxonomies. Build what current screens need; design only what the next one will.
 
 ### Settings panel
 
@@ -508,7 +522,7 @@ Touch input is unified through Pointer Events, not a separate `touchmove` path. 
 
 ## Planned architecture
 
-Forward-looking design intent — the simulation layer (`src/sim/`), WASM port, save-state management, and desktop (Electron) distribution — lives in [`FUTURE_PLANNING.md`](./FUTURE_PLANNING.md). That document describes parts of the codebase that don't exist yet but whose boundaries are already decided, so implementation has a target to hit. It is durable architectural intent, distinct from session-scoped planning artifacts (which stay local-only via `.git/info/exclude`).
+Forward-looking design intent not yet built — the simulation layer (`src/sim/`), WASM port, save-state management, and desktop (Electron) distribution — has decided boundaries but no committed roadmap doc today; each is designed when concrete work on it begins. Session-scoped planning artifacts stay local-only via `.git/info/exclude`.
 
 ## Coding conventions
 
