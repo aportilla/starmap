@@ -9,6 +9,7 @@ export { setSnappedLineViewport } from './shared';
 export { MAX_LIGHTS } from './chunks';
 export {
   makeStarsMaterial,
+  renderedStarPxSize,
   snappedDotsMat,
   snappedLineMat,
   type SnappedLineOptions,

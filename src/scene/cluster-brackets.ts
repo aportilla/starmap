@@ -28,19 +28,13 @@ import {
   Vector3,
 } from 'three';
 import { STARS, STAR_CLUSTERS } from '../data/stars';
+import { renderedStarPxSize } from './materials';
 
 export type BracketStyle = 'arms' | 'dots';
 
 const BRACKET_GAP_PX  = 4;   // pixels between outermost disc edge and bracket corner
 const BRACKET_MIN_SIZE = 12; // floor (per axis) so tiny stars still get a visible bracket
 const BRACKET_COLOR   = '#ffe98a';
-
-// Stars shader constants — kept here so computeRenderedStarSize can mirror
-// the GPU-side size formula. If you change these in materials.ts, change
-// them here too. Sharing a const isn't worth the cross-module coupling for
-// two numbers that haven't moved in this file's history.
-const STAR_REF_DIST = 50;
-const STAR_PX_SCALE_DIVISOR = 800;
 
 function buildBracketTexture(size: number, style: BracketStyle): CanvasTexture {
   const c = document.createElement('canvas');
@@ -163,21 +157,15 @@ export class ClusterBrackets {
     return true;
   }
 
-  // CPU mirror of the stars shader's depth-attenuated size formula
-  // (materials.ts → makeStarsMaterial). Returns the on-screen disc diameter
-  // in buffer pixels for the given star under the current camera. Lets the
-  // brackets track what the user actually sees rather than sitting at a
-  // fixed size around tiny dwarfs and close-up giants alike. Keep this in
-  // sync with the shader if either drifts — there's unfortunately no
-  // shared source for the formula.
+  // On-screen disc diameter (buffer px) for a star under the current camera,
+  // so the brackets track what the user actually sees rather than sitting at a
+  // fixed size around tiny dwarfs and close-up giants alike. Delegates to
+  // renderedStarPxSize (materials/galaxy.ts), the canonical mirror of the
+  // stars shader's size math — both read the same shader constants.
   private computeRenderedStarSize(starIdx: number, camera: Camera): number {
     const s = STARS[starIdx];
     this._view.set(s.x, s.y, s.z).applyMatrix4(camera.matrixWorldInverse);
-    const dist = Math.max(-this._view.z, 0.5);
-    const rawScale = STAR_REF_DIST / dist;
-    const depthScale = rawScale > 1 ? Math.pow(rawScale, 1 / 3) : rawScale;
-    const sz = Math.max(s.pxSize * (this.pxScale / STAR_PX_SCALE_DIVISOR) * depthScale, 2);
-    return Math.floor(sz + 0.5);
+    return renderedStarPxSize(s.pxSize, this._view.z, this.pxScale);
   }
 
   // Rebuild the texture + quad when the bracket size changes. Cached by

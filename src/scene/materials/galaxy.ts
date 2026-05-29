@@ -44,6 +44,25 @@ const PX_SCALE_DIVISOR = 800;
 // classes O/B/A/F/G/K/M/BD/WD once the largest hit the ceiling.
 const MIN_STAR_PX = 2;
 
+// CPU reference implementation of the perspective stars shader's
+// depth-attenuated size formula (the `sz` computation inside makeStarsMaterial's
+// vertex shader). Both this function and the shader read the same module
+// constants above — REF_DIST / PX_SCALE_DIVISOR / CLOSE_UP_EXPONENT /
+// MIN_STAR_PX — so a tuning change to any of them moves the GPU disc and this
+// mirror in lockstep. GLSL can't import JS, but the *constants* are now the one
+// source and this is the canonical JS twin.
+//
+// `viewSpaceZ` is the star's view-space z (negative looking down -Z, as
+// produced by modelViewMatrix). Returns the on-screen disc diameter in buffer
+// pixels, floored to a whole pixel exactly as the shader does.
+export function renderedStarPxSize(pxSize: number, viewSpaceZ: number, pxScale: number): number {
+  const dist = Math.max(-viewSpaceZ, 0.5);
+  const rawScale = REF_DIST / dist;
+  const depthScale = rawScale > 1 ? Math.pow(rawScale, CLOSE_UP_EXPONENT) : rawScale;
+  const sz = Math.max(pxSize * (pxScale / PX_SCALE_DIVISOR) * depthScale, MIN_STAR_PX);
+  return Math.floor(sz + 0.5);
+}
+
 export interface SnappedLineOptions {
   color: number;
   opacity?: number;
