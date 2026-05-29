@@ -15,6 +15,7 @@ import {
 } from '../geom/blob';
 import { hash32, mulberry32 } from '../geom/prng';
 import { writeLightUniforms } from '../lighting';
+import { disposePool } from './pool';
 import type { DiagramPick, StarLightSource } from '../types';
 
 // One belt's footprint inside the shared chunk pool — vertex range +
@@ -127,8 +128,7 @@ export class BeltsLayer {
   }
 
   dispose(): void {
-    this.pool?.geometry.dispose();
-    this.pool?.material.dispose();
+    disposePool(this.pool);
   }
 }
 

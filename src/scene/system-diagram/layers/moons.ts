@@ -12,6 +12,7 @@ import {
 import { BODIES } from '../../../data/stars';
 import { makePlanetMaterial } from '../../materials';
 import { buildBodyDiscGeometry } from './body-disc';
+import { disposePool } from './pool';
 import {
   MOON_DISC_BASE, MOON_DISC_MAX, MOON_DISC_MIN, MOON_EDGE_BIAS,
   RENDER_ORDER_BACK_MOON, RENDER_ORDER_FRONT_MOON,
@@ -127,12 +128,8 @@ export class MoonsLayer {
   }
 
   dispose(): void {
-    this.backPool?.geometry.dispose();
-    this.backPool?.material.dispose();
-    this.backPool?.cloudTex?.dispose();
-    this.frontPool?.geometry.dispose();
-    this.frontPool?.material.dispose();
-    this.frontPool?.cloudTex?.dispose();
+    disposePool(this.backPool);
+    disposePool(this.frontPool);
   }
 }
 

@@ -10,6 +10,7 @@ import {
 } from 'three';
 import { makePlanetMaterial } from '../../materials';
 import { buildBodyDiscGeometry } from './body-disc';
+import { disposePool } from './pool';
 import { RENDER_ORDER_PLANET, RENDER_ORDER_PLANET_HALO, Z_PLANET, Z_STRIDE } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
 import { writeLightUniforms } from '../lighting';
@@ -146,9 +147,9 @@ export class PlanetsLayer {
   }
 
   dispose(): void {
-    this.geometry?.dispose();
-    this.discMaterial?.dispose();
+    // One geometry + cloudTex shared by both passes; the halo material is
+    // the second consumer of that shared geometry, so it frees separately.
+    disposePool({ geometry: this.geometry, material: this.discMaterial, cloudTex: this.cloudTex });
     this.haloMaterial?.dispose();
-    this.cloudTex?.dispose();
   }
 }

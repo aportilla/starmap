@@ -24,6 +24,7 @@ import {
 } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
 import { hitsRing, ringEllipseParams } from '../geom/ring';
+import { disposePool } from './pool';
 import type { DiagramPick, PlanetCenterIndex } from '../types';
 
 interface Ring {
@@ -101,9 +102,10 @@ export class RingsLayer {
 
   dispose(): void {
     for (const ring of this.rings) {
-      ring.backGeometry.dispose();
+      // Both halves share one material — free it with the back geometry,
+      // then the front geometry on its own (no second material to drop).
+      disposePool({ geometry: ring.backGeometry, material: ring.material });
       ring.frontGeometry.dispose();
-      ring.material.dispose();
     }
   }
 }

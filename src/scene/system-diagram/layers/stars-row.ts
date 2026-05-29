@@ -16,6 +16,7 @@ import {
   SYSTEM_VIEW_SATURATION_LIFT_MAX, SYSTEM_VIEW_SATURATION_LIFT_RATE,
 } from '../layout/constants';
 import { bigMiddleOrder, sumOf } from '../layout/row';
+import { disposePool } from './pool';
 import type { DiagramPick, StarLightSource } from '../types';
 
 // Tune a galaxy-view class color for the system view. Lifts the minor
@@ -265,10 +266,8 @@ export class StarsRowLayer {
 
   dispose(): void {
     for (const disc of this.starDiscs) {
-      disc.geometry.dispose();
-      disc.material.dispose();
-      disc.haloGeometry.dispose();
-      disc.haloMaterial.dispose();
+      disposePool({ geometry: disc.geometry, material: disc.material });
+      disposePool({ geometry: disc.haloGeometry, material: disc.haloMaterial });
     }
   }
 }
