@@ -1,6 +1,5 @@
-// Ring ellipse math — shared by both ring render paths (ice annulus
-// meshes in layers/ice-rings.ts and debris chunk pools in
-// layers/debris-rings.ts) and by the picker's tilted-ellipse hit test.
+// Ring ellipse math — shared by the ring renderer (layers/rings.ts builds
+// the tilted annulus halves) and the picker's tilted-ellipse hit test.
 // `bodyVisualTiltRad` is also consumed by disc-palette.ts so a banded
 // gas giant's atmospheric bands run parallel to its ring plane.
 

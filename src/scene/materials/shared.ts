@@ -8,8 +8,9 @@
 //   procedural-disc materials.
 //
 // Nothing in this file is view-specific. Galaxy materials live in
-// ./galaxy.ts; system materials live in ./system.ts; both push into
-// the registry below at construction time.
+// ./galaxy.ts, the system-view planet material in ./planet.ts, and the
+// smaller system-view materials in ./system-decor.ts; the snap-aware
+// ones push into the registry below at construction time.
 
 import type { ShaderMaterial } from 'three';
 
@@ -18,7 +19,7 @@ import type { ShaderMaterial } from 'three';
 // each material — far simpler than threading a callback through every
 // scene that owns one of these materials.
 //
-// Exported so galaxy.ts + system.ts can push into it, but treat it as
+// Exported so galaxy.ts + planet.ts can push into it, but treat it as
 // internal — outside consumers should call setSnappedLineViewport()
 // rather than pushing directly.
 export const snappedMaterials: ShaderMaterial[] = [];

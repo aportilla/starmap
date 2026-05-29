@@ -4,6 +4,10 @@
 // Architect's slot-zone choice doesn't match what the Filler reads when
 // classifying world_class later.
 
+// Earth masses per solar mass — the canonical Earth↔solar mass ratio,
+// shared so the Architect, Filler, and these helpers all spell it once.
+export const EARTH_PER_SOLAR_MASS = 333000;
+
 // Stellar luminosity in solar units from mass in solar units.
 // Piecewise empirical: M dwarfs follow a shallower relation than FGK+
 // (Eker et al. 2015). The 0.43 M☉ break point is the conventional
@@ -172,8 +176,7 @@ export function hillRadiusAu(aAu, planetMassEarth, starMassSun) {
   if (aAu == null || aAu <= 0) return null;
   if (planetMassEarth == null || planetMassEarth <= 0) return null;
   if (starMassSun == null || starMassSun <= 0) return null;
-  const EARTH_PER_SUN = 333000;
-  const massRatio = planetMassEarth / (3 * starMassSun * EARTH_PER_SUN);
+  const massRatio = planetMassEarth / (3 * starMassSun * EARTH_PER_SOLAR_MASS);
   return aAu * Math.pow(massRatio, 1 / 3);
 }
 

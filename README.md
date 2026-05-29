@@ -63,6 +63,7 @@ src/
         belts.ts            BeltsLayer: shared chunk pool, bbox picker
         moons.ts            MoonsLayer: back/front pools split by hemisphere
         rings.ts            RingsLayer: back/front triangle-strip annulus halves per ring
+        body-disc.ts        buildBodyDiscGeometry: shared planet/moon disc attribute + cloud-texture packing
       layout/
         row.ts              RowItem + buildRowItems + layoutRow (dome arc) + bigMiddleOrder
         constants.ts        Tuning knobs (disc sizes, dome geometry, Z bands, render orders)
@@ -81,7 +82,9 @@ src/
     materials/              ShaderMaterials, split by view
       index.ts              Barrel — re-exports everything for `from '.../materials'`
       galaxy.ts             makeStarsMaterial + snappedLineMat + snappedDotsMat
-      system.ts             makePlanetMaterial + makeBlobMaterial + makeRingMaterial + makeStarMeshMaterial + makeStarHaloMaterial
+      planet.ts             makePlanetMaterial — the layered procedural planet/moon disc + halo
+      system-decor.ts       makeBlobMaterial + makeRingMaterial + makeStarMeshMaterial + makeStarHaloMaterial
+      chunks.ts             Shared system-view GLSL: bayer4 + hueDir + star-crescent lighting + MAX_LIGHTS
       shared.ts             snappedMaterials registry + setSnappedLineViewport + glsl helper + RASTER_PAD
     render-scale.ts         RenderScaleObserver: picks integer N for setPixelRatio(DPR/N)
   ui/                       Pixel-art widget toolkit + per-screen HUD orchestrators.
@@ -256,12 +259,12 @@ Star discs are drawn by `makeStarMeshMaterial` — a Mesh-path shader that takes
 
 ### Procedural disc texture (planets + moons)
 
-The planet/moon disc shader (`makePlanetMaterial` in `materials/system.ts`) composes four data-driven layers per fragment — surface, cloud, haze, rim — and `disc-palette.ts:buildDiscPalette` derives the per-layer palettes and scalars from each body's data. A body with thin patchy H₂O cloud over a visible rocky surface (Earth) and a body with full-coverage banded NH₃ over a hidden gas-giant interior (Jupiter) run through the same shader path; only the layer alphas differ.
+The planet/moon disc shader (`makePlanetMaterial` in `materials/planet.ts`) composes four data-driven layers per fragment — surface, cloud, haze, rim — and `disc-palette.ts:buildDiscPalette` derives the per-layer palettes and scalars from each body's data. A body with thin patchy H₂O cloud over a visible rocky surface (Earth) and a body with full-coverage banded NH₃ over a hidden gas-giant interior (Jupiter) run through the same shader path; only the layer alphas differ.
 
 The detail lives in three module headers — read them when working on the corresponding concern:
 
 - **Palette derivation** — `disc-palette.ts` header. Three-slot resource-archetype model (single archetype + pair archetype + body-tinted barren regolith), the four-category haze contributor blend (bulk gases × Rayleigh × aerosols × dust, each gated by `log10(P+1)` and a global category scale), the rim color merger, the per-gas limb Rayleigh scatter color + Rayleigh-fraction strength (`scatteringRimFor`, feeding the lit-rim hue shift), the two-layer color tables (`GAS_COLOR` for gas-phase + photochemistry aerosols, `CONDENSATE_COLOR` for ice/frost appearance), and the six-pathway physically-parameterized ocean color derivation (`oceanColorFor`: solvent species → CDOM → pigment → sediment → sky reflection → stellar SED) so close-analog bodies get distinguishable surface-liquid hues.
-- **Shader composition** — `materials/system.ts` header on `makePlanetMaterial`. Layer order, sphere projection, worley/voronoi cells in `(lon, lat)`, surfaceAge-keyed crater + ejecta-ray + linea sub-passes, multi-deck cloud compositing with coverage rents revealing the next-deeper deck (and on no-surface bodies a synthetic base deck — atm column lifted slightly toward white — as the foundation under chemistry decks), the firing/firing + firing/non-firing Bayer-dither edge cases, the per-deck haze pre-tint, the star-lit atmospheric-loft rim halo (directional gas × starlight glow with a half-lambert wrap past the terminator + gated white forward-scatter tip, then a depth-graded hue-only Rayleigh shift toward the body's per-gas scatter color), the per-fragment crescent body lighting keyed off the in-scene star positions, parity-aware center snap. The surface block also paints a two-ring coastal fringe (solid +highlight ring 1 worley cell from any land continent block, dithered ring at distance 2) so large oceans don't read as flat fills.
+- **Shader composition** — `materials/planet.ts` header on `makePlanetMaterial`. Layer order, sphere projection, worley/voronoi cells in `(lon, lat)`, surfaceAge-keyed crater + ejecta-ray + linea sub-passes, multi-deck cloud compositing with coverage rents revealing the next-deeper deck (and on no-surface bodies a synthetic base deck — atm column lifted slightly toward white — as the foundation under chemistry decks), the firing/firing + firing/non-firing Bayer-dither edge cases, the per-deck haze pre-tint, the star-lit atmospheric-loft rim halo (directional gas × starlight glow with a half-lambert wrap past the terminator + gated white forward-scatter tip, then a depth-graded hue-only Rayleigh shift toward the body's per-gas scatter color), the per-fragment crescent body lighting keyed off the in-scene star positions, parity-aware center snap. The surface block also paints a two-ring coastal fringe (solid +highlight ring 1 worley cell from any land continent block, dithered ring at distance 2) so large oceans don't read as flat fills.
 - **Chemistry that feeds it** — `procgen.mjs:hazeContribution` per-species gates (THOLIN, NH4SH, CHROMOPHORE, SALT, H2SO4, SULFUR, SILICATE) and `procgen-priors.mjs:CONDENSABLES` (per-species condensation rows with peaked T windows, altitude offsets, precursor gates). Procgen owns the chemistry; the renderer paints exactly what's emitted.
 
 Two architectural commitments to remember:

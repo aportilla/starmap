@@ -16,7 +16,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash32, mulberry32 } from './lib/prng.mjs';
-import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
+import { fillBodies, radiusFromMass, keplerSemiMajorAu } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, SNOW_LINE_TEMPERATURES, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
 import { frostLineAU } from './lib/astrophysics.mjs';
@@ -1083,9 +1083,7 @@ async function main() {
     // later — we just need it available now). Write through so the
     // moon + ring backfill below sees the same value.
     if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
-      body.semiMajorAu = Number(
-        Math.pow(Math.pow(body.periodDays / 365.25, 2) * host.mass, 1 / 3).toFixed(5)
-      );
+      body.semiMajorAu = keplerSemiMajorAu(body.periodDays, host.mass);
       const u = body._unknowns;
       if (Array.isArray(u)) {
         const idx = u.indexOf('semiMajorAu');
@@ -1145,7 +1143,7 @@ async function main() {
     // so derive on the fly here to get a usable formation-zone proxy.
     let aBackfill = planet.semiMajorAu;
     if (aBackfill == null && planet.periodDays != null && host.mass > 0) {
-      aBackfill = Math.pow(Math.pow(planet.periodDays / 365.25, 2) * host.mass, 1 / 3);
+      aBackfill = keplerSemiMajorAu(planet.periodDays, host.mass);
     }
     // Moons + rings both inherit the host planet's formation zone — moons
     // for bulk composition, rings for water-ice vs rocky-debris feed.

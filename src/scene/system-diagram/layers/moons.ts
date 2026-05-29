@@ -3,19 +3,15 @@
 // goes in the "back" pool (draws under the parent disc); lower-half
 // moons go in the "front" pool (draws over the disc). Angles are
 // per-planet seeded so the same parent always lays its moons out the
-// same way across reloads.
+// same way across reloads. Disc geometry + cloud texture come from the
+// shared buildBodyDiscGeometry (body-disc.ts) — same packing as planets.
 
 import {
-  BufferAttribute, BufferGeometry, DataTexture, FloatType, NearestFilter,
-  Points, RGBAFormat, Scene, ShaderMaterial,
+  BufferAttribute, BufferGeometry, DataTexture, Points, Scene, ShaderMaterial,
 } from 'three';
 import { BODIES } from '../../../data/stars';
-import {
-  ATM_COLUMN_TEXEL_OFFSET, BODY_TEXTURE_WIDTH, DECK_COLOR_BASE_OFFSET,
-  LAVA_TINT_TEXEL_OFFSET, makePlanetMaterial, MAX_CLOUD_LAYERS,
-  OCEAN_COLOR_TEXEL_OFFSET, SCATTER_COLOR_TEXEL_OFFSET,
-} from '../../materials';
-import { buildDiscPalette } from '../disc-palette';
+import { makePlanetMaterial } from '../../materials';
+import { buildBodyDiscGeometry } from './body-disc';
 import {
   MOON_DISC_BASE, MOON_DISC_MAX, MOON_DISC_MIN, MOON_EDGE_BIAS,
   RENDER_ORDER_BACK_MOON, RENDER_ORDER_FRONT_MOON,
@@ -46,6 +42,8 @@ interface MoonPool {
   geometry: BufferGeometry;
   material: ShaderMaterial;
   points: Points;
+  // Per-body cloud-layer texture, kept so dispose() can free it.
+  cloudTex: DataTexture | null;
   // bodyIdx → slot index inside this pool. Built at construction so
   // setHovered can locate the moon's BufferAttribute slot in O(1).
   slotByBodyIdx: ReadonlyMap<number, number>;
@@ -131,8 +129,10 @@ export class MoonsLayer {
   dispose(): void {
     this.backPool?.geometry.dispose();
     this.backPool?.material.dispose();
+    this.backPool?.cloudTex?.dispose();
     this.frontPool?.geometry.dispose();
     this.frontPool?.material.dispose();
+    this.frontPool?.cloudTex?.dispose();
   }
 }
 
@@ -252,120 +252,9 @@ function distributeMoonAngles(
 // rewritten in layout() once parent positions exist.
 function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   const N = slots.length;
-  const positions = new Float32Array(N * 3);
-  // Packed render metadata: stride 4 = [size, surfaceOpacity, seed,
-  // tilt]. See planets.ts for the rationale.
-  const renderMeta = new Float32Array(N * 4);
-  const bodyIndex = new Float32Array(N);
-  const cloudLayerData = new Float32Array(N * BODY_TEXTURE_WIDTH * 4);
-  // Procedural-texture inputs — same shape as PlanetsLayer.
-  // Palette slots widened to vec4 to piggyback merged rim color in .w.
-  // See PlanetsLayer.
-  const palette0  = new Float32Array(N * 4);
-  const palette1  = new Float32Array(N * 4);
-  const palette2  = new Float32Array(N * 4);
-  // Weights (xyz, sum-to-1). The .w slot is reserved for layer payload
-  // in PR 3.
-  const weights   = new Float32Array(N * 4);
-  const surfaceScalars = new Float32Array(N * 4);
-  const atmoScalars    = new Float32Array(N * 4);
-  const biomeColors = new Float32Array(N * 4);
-  // Rim/haze color + per-vertex hover packed as vec4 [r, g, b, hover].
-  // See PlanetsLayer for the rationale (attribute-count cap).
-  const hazeColors  = new Float32Array(N * 4);
-  slots.forEach((slot, i) => {
-    const b = BODIES[slot.bodyIdx];
-    const disc = buildDiscPalette(b, slot.discPx);
-    palette0[i * 4 + 0] = disc.palette[0];
-    palette0[i * 4 + 1] = disc.palette[1];
-    palette0[i * 4 + 2] = disc.palette[2];
-    palette0[i * 4 + 3] = disc.rimColor[0];
-    palette1[i * 4 + 0] = disc.palette[3];
-    palette1[i * 4 + 1] = disc.palette[4];
-    palette1[i * 4 + 2] = disc.palette[5];
-    palette1[i * 4 + 3] = disc.rimColor[1];
-    palette2[i * 4 + 0] = disc.palette[6];
-    palette2[i * 4 + 1] = disc.palette[7];
-    palette2[i * 4 + 2] = disc.palette[8];
-    palette2[i * 4 + 3] = disc.rimColor[2];
-    weights[i * 4 + 0] = disc.weights[0];
-    weights[i * 4 + 1] = disc.weights[1];
-    weights[i * 4 + 2] = disc.weights[2];
-    // .w carries the per-body limb Rayleigh scatter strength for the
-    // rim hue shift (see scatteringRimFor / makePlanetMaterial).
-    weights[i * 4 + 3] = disc.scatterStrength;
-    renderMeta[i * 4 + 0] = slot.discPx;
-    renderMeta[i * 4 + 1] = disc.surfaceOpacity;
-    renderMeta[i * 4 + 2] = disc.seed;
-    renderMeta[i * 4 + 3] = disc.tilt;
-    bodyIndex[i] = i;
-    const rowBase = i * BODY_TEXTURE_WIDTH * 4;
-    for (let li = 0; li < disc.cloudLayers.length && li < MAX_CLOUD_LAYERS; li++) {
-      const l = disc.cloudLayers[li];
-      const scalarOff = rowBase + li * 4;
-      cloudLayerData[scalarOff + 0] = l.coverage;
-      cloudLayerData[scalarOff + 1] = l.windSpeedMS;
-      cloudLayerData[scalarOff + 2] = l.altitudeNorm;
-      cloudLayerData[scalarOff + 3] = li;
-      const colBase = rowBase + (DECK_COLOR_BASE_OFFSET + li) * 4;
-      cloudLayerData[colBase + 0] = l.color[0];
-      cloudLayerData[colBase + 1] = l.color[1];
-      cloudLayerData[colBase + 2] = l.color[2];
-    }
-    const atmOff = rowBase + ATM_COLUMN_TEXEL_OFFSET * 4;
-    cloudLayerData[atmOff + 0] = disc.atmColumnColor[0];
-    cloudLayerData[atmOff + 1] = disc.atmColumnColor[1];
-    cloudLayerData[atmOff + 2] = disc.atmColumnColor[2];
-    const oceanOff = rowBase + OCEAN_COLOR_TEXEL_OFFSET * 4;
-    cloudLayerData[oceanOff + 0] = disc.oceanColor[0];
-    cloudLayerData[oceanOff + 1] = disc.oceanColor[1];
-    cloudLayerData[oceanOff + 2] = disc.oceanColor[2];
-    // Per-body limb Rayleigh scatter color — target hue for the rim
-    // halo's depth-graded Rayleigh shift. One texel, RGB in xyz.
-    const scatOff = rowBase + SCATTER_COLOR_TEXEL_OFFSET * 4;
-    cloudLayerData[scatOff + 0] = disc.scatterColor[0];
-    cloudLayerData[scatOff + 1] = disc.scatterColor[1];
-    cloudLayerData[scatOff + 2] = disc.scatterColor[2];
-    // Lava composition signal — sulfur fraction in .r (gba reserved).
-    const lavaOff = rowBase + LAVA_TINT_TEXEL_OFFSET * 4;
-    cloudLayerData[lavaOff + 0] = disc.lavaSulfurFrac;
-    surfaceScalars[i * 4 + 0] = disc.waterFrac;
-    surfaceScalars[i * 4 + 1] = disc.iceFrac;
-    surfaceScalars[i * 4 + 2] = disc.surfaceAge;
-    surfaceScalars[i * 4 + 3] = disc.globalness;
-    atmoScalars[i * 4 + 0] = disc.hazeOpacity;
-    atmoScalars[i * 4 + 1] = disc.rimWidthPx;
-    atmoScalars[i * 4 + 2] = disc.moltenCoverage;
-    atmoScalars[i * 4 + 3] = disc.emissionTempNorm;
-    biomeColors[i * 4 + 0] = disc.biomeColor[0];
-    biomeColors[i * 4 + 1] = disc.biomeColor[1];
-    biomeColors[i * 4 + 2] = disc.biomeColor[2];
-    biomeColors[i * 4 + 3] = disc.biomeCoverage;
-    hazeColors[i * 4 + 0] = disc.hazeColor[0];
-    hazeColors[i * 4 + 1] = disc.hazeColor[1];
-    hazeColors[i * 4 + 2] = disc.hazeColor[2];
-    hazeColors[i * 4 + 3] = 0;
-  });
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position',        new BufferAttribute(positions, 3));
-  geometry.setAttribute('aRenderMeta',     new BufferAttribute(renderMeta, 4));
-  geometry.setAttribute('aPalette0',       new BufferAttribute(palette0, 4));
-  geometry.setAttribute('aPalette1',       new BufferAttribute(palette1, 4));
-  geometry.setAttribute('aPalette2',       new BufferAttribute(palette2, 4));
-  geometry.setAttribute('aWeights',        new BufferAttribute(weights, 4));
-  geometry.setAttribute('aSurfaceScalars', new BufferAttribute(surfaceScalars, 4));
-  geometry.setAttribute('aAtmoScalars',    new BufferAttribute(atmoScalars, 4));
-  geometry.setAttribute('aBiomeColor',     new BufferAttribute(biomeColors, 4));
-  geometry.setAttribute('aHazeColor',      new BufferAttribute(hazeColors, 4));
-  geometry.setAttribute('aBodyIndex',      new BufferAttribute(bodyIndex, 1));
-  const cloudTex = N > 0 ? new DataTexture(
-    cloudLayerData, BODY_TEXTURE_WIDTH, N, RGBAFormat, FloatType,
-  ) : null;
-  if (cloudTex !== null) {
-    cloudTex.minFilter = NearestFilter;
-    cloudTex.magFilter = NearestFilter;
-    cloudTex.needsUpdate = true;
-  }
+  const { geometry, cloudTex } = buildBodyDiscGeometry(
+    slots.map(s => ({ bodyIdx: s.bodyIdx, discPx: s.discPx })),
+  );
   const material = makePlanetMaterial(1.0);
   material.uniforms.uCloudLayerData.value = cloudTex;
   material.uniforms.uCloudLayerRows.value = N;
@@ -378,5 +267,5 @@ function makeMoonPool(slots: MoonSlot[], renderOrder: number): MoonPool {
   // actually off-screen.
   points.frustumCulled = false;
   const slotByBodyIdx = new Map(slots.map((s, i) => [s.bodyIdx, i]));
-  return { slots, geometry, material, points, slotByBodyIdx };
+  return { slots, geometry, material, points, cloudTex, slotByBodyIdx };
 }

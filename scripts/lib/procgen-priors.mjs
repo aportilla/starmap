@@ -227,22 +227,6 @@ export const ORBITAL_GEOMETRY_BY_CLASS = mergeTunes(
   ORBITAL_GEOMETRY_BY_CLASS_TUNE,
 );
 
-// Conservative habitable-zone bounds (AU). Not used at runtime — species
-// tolerance computes habitability per-species. Included here so the
-// Architect can bias the "temperate" insolation zone toward rocky worlds
-// rather than (say) sub-Neptunes.
-export const HABITABLE_ZONE_AU = {
-  O:  [50,    100  ],
-  B:  [20,     50  ],
-  A:  [ 2.5,    4.0],
-  F:  [ 1.3,    2.0],
-  G:  [ 0.95,   1.4],  // Sol baseline
-  K:  [ 0.4,    0.9],
-  M:  [ 0.05,   0.3],
-  WD: [ 0.01,   0.02],
-  BD: [ 0.002,  0.01],
-};
-
 // ---------------------------------------------------------------------------
 // Per-planet sampling
 // ---------------------------------------------------------------------------
@@ -779,10 +763,6 @@ export const INCLINATION_DEG = { mean: 0, sd: 2, min: 0, max: 30 };
 // pick from N(20, 15), 5% from U(60, 180) for the dramatic cases.
 // Architect can choose to implement the mixture or use this simpler form.
 export const AXIAL_TILT_DEG = { mean: 20, sd: 20, min: 0, max: 180 };
-
-// Orbital phase (starting angle around the orbit) — uniform 0..360. Each
-// body picks its own so the diagrammatic system view doesn't comb-align.
-export const ORBITAL_PHASE_DEG = { min: 0, max: 360 };
 
 // ---------------------------------------------------------------------------
 // Haze blend — universal category multipliers
@@ -1532,13 +1512,6 @@ export const ATMOSPHERE_REGIME_THRESHOLDS = mergeTunes(
 // kinetic exospheres rather than thermodynamic ones).
 export const ATMOSPHERE_MIN_PRESSURE_BAR = 0.01;
 
-// Insolation upper bound below which a body is treated as "cold" by the
-// cloud / haze / biosphere / iceFraction / thick-atm rules. Cold bodies
-// have S < this threshold; warm/temperate/hot bodies sit above. Anchored
-// roughly at Sol's Jupiter orbit (S ≈ 0.04); Mars is just above at 0.43,
-// Europa well below at ~0.04.
-export const INSOLATION_COLD_MAX = 0.1;
-
 // Atmospheric retention shape — Jeans escape sigmoid + magnetic-shield
 // floor. The Filler computes v_escape/v_thermal(N2, T_eq) per body and
 // smoothsteps the ratio into a 0..1 "long-term retained fraction" over
@@ -2025,5 +1998,3 @@ export const MICROBIAL_SURFACE_CONTRIBUTION = {
 // n/a`; etc.) — same cell-semantics convention as the rest of the
 // CSV, no separate override map.
 export const CURATED_SYSTEM_HOSTS = new Set(['sol']);
-
-// Per-(worldClass, archetype) rolls. `gate` constrains which insolation

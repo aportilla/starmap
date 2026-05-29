@@ -1,13 +1,15 @@
-// System-view materials: planet/moon disc, chunk pool (belts + debris
-// rings), ice ring, per-mesh star disc, outer star halo. All five are
-// designed to render under an OrthographicCamera at 1 unit = 1 buffer
-// pixel (see SystemDiagram in scene/system-diagram/). No depth
-// attenuation, no pivot dim — the system view is a static screen
-// layout, not a navigable 3D space.
+// Planet/moon disc material — the procedural layered-composite shader
+// (surface → cloud → haze → rim) for the system-view diagram. Renders
+// under an OrthographicCamera at 1 unit = 1 buffer pixel; no depth
+// attenuation, no pivot dim. Shares the Bayer dither + star-crescent
+// lighting GLSL with the decor materials (see ./chunks). The four smaller
+// system-view materials (blob, ring, star disc, star halo) live in
+// ./system-decor.
 
-import { AdditiveBlending, Color, ShaderMaterial, Vector2 } from 'three';
+import { Color, ShaderMaterial, Vector2 } from 'three';
 import { RING_MINOR_OVER_MAJOR } from '../system-diagram/layout/constants';
 import { glsl, RASTER_PAD, snappedMaterials } from './shared';
+import { MAX_LIGHTS, BAYER4_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
 
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
 // is a layered composite, bottom to top:
@@ -125,14 +127,6 @@ const LAVA_TINT_TEXEL_OFFSET = MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1 + 1;
 export const BODY_TEXTURE_WIDTH =
   MAX_CLOUD_LAYERS + 1 + MAX_CLOUD_LAYERS + 1 + 1 + 1;
 export { ATM_COLUMN_TEXEL_OFFSET, DECK_COLOR_BASE_OFFSET, OCEAN_COLOR_TEXEL_OFFSET, SCATTER_COLOR_TEXEL_OFFSET, LAVA_TINT_TEXEL_OFFSET };
-
-// Body lighting (per-fragment colored highlight arc, driven by star
-// disc positions). Five-slot ceiling covers the largest realistic
-// multi-star clusters in the catalog (Capella's 4-star + room for a
-// distant companion) with headroom; per-fragment fragments past the
-// active count are gated by uLightCount, so unused slots cost nothing.
-// Layer code clamps the source list to MAX_LIGHTS before uploading.
-export const MAX_LIGHTS = 5;
 
 // mode='all' renders disc + halo (moons; keeps the original single-pass
 // behavior). mode='disc' or 'halo' splits the disc-interior and the
@@ -725,7 +719,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
 
       // ── Body lighting ──
       // Pixel-art colored highlight arc keyed off the in-scene star disc
-      // positions (see MAX_LIGHTS in this file's preamble + StarsRowLayer.
+      // positions (see MAX_LIGHTS in ./chunks + StarsRowLayer.
       // getLightSources). The body is treated as a sphere — un-inset
       // normal N = (d.x/r, d.y/r, sqrt(1 − …)) covers the full visible
       // hemisphere, no SPHERE_VISIBLE_FRAC inset because we want the
@@ -757,13 +751,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // stipple rather than ring. LIT band adds a per-light-color tint
       // (weighted-average hue across all stars). HOT band stacks an
       // additional brightness boost on the brightest crescent tip.
-      // Unlit fragments pass through untouched.
-      const float LIGHT_Z_BIAS         = -0.55;
-      const float LIGHT_BAND_LOW       = 0.18;
-      const float LIGHT_BAND_HIGH      = 0.52;
-      const float LIGHT_DITHER_WIDTH   = 0.08;
-      const float LIGHT_TINT_STRENGTH  = 0.12;
-      const float LIGHT_HOT_BOOST      = 0.10;
+      // Unlit fragments pass through untouched. The LIGHT_* constants +
+      // applyStarCrescent come from ./chunks (inserted with bayer4 below).
 
       // ── Atmospheric loft glow ──
       // The outward rim halo (the puffy atmosphere lofted past the limb)
@@ -858,14 +847,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // an ordered-dither threshold against per-cell coverage gates
       // so cells whose hash lands near the threshold render stippled
       // rather than binary-fire.
-      float bayer4(vec2 p) {
-        vec2 q = mod(floor(p), vec2(4.0));
-        vec2 outer = floor(q / 2.0);
-        vec2 inner = mod(q, vec2(2.0));
-        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
-        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
-        return (4.0 * bInner + bOuter) / 16.0;
-      }
+      ${BAYER4_GLSL}
+      ${STAR_CRESCENT_LIGHTING_GLSL}
 
       // Elect a region's (primary, secondary, tertiary) palette slots.
       // Primary and secondary are weighted draws against weights;
@@ -1906,23 +1889,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         // each star physically dominates its own rim segment.
         vec3 N_lit = vec3(d.x / vRadius, d.y / vRadius,
                           sqrt(max(0.0, 1.0 - (d.x * d.x + d.y * d.y) / (vRadius * vRadius))));
-        for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-          if (i >= uLightCount) break;
-          vec2 dir2d = normalize(uLightPos[i] - vCenter);
-          vec3 L = normalize(vec3(dir2d, LIGHT_Z_BIAS));
-          float lam = max(0.0, dot(N_lit, L)) * uLightIntensity[i];
-          // Per-light dither offset (7·i, 11·i) keeps each star's Bayer
-          // fringe from cascading on top of the next — independent
-          // stipple patterns per source.
-          float bL = bayer4(gl_FragCoord.xy + vec2(31.0 + float(i) * 7.0, 17.0 + float(i) * 11.0));
-          float ditheredMag = lam + (bL - 0.5) * 2.0 * LIGHT_DITHER_WIDTH;
-          if (ditheredMag > LIGHT_BAND_LOW) {
-            col = clamp(col + uLightColor[i] * LIGHT_TINT_STRENGTH, 0.0, 1.0);
-          }
-          if (ditheredMag > LIGHT_BAND_HIGH) {
-            col = clamp(col + uLightColor[i] * LIGHT_HOT_BOOST, 0.0, 1.0);
-          }
-        }
+        col = applyStarCrescent(col, N_lit, vCenter);
 
         // ── Lava self-luminous emission ──
         // Added AFTER the reflectance lighting pass so molten zones exceed
@@ -1959,461 +1926,4 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
   });
   snappedMaterials.push(m);
   return m;
-}
-
-// Blob material — flat-color triangle-mesh fill for irregular polygon
-// chunks (belt + debris-ring debris). Geometry is indexed triangles
-// authored CPU-side in buffer-pixel coords; the rasterizer determines
-// the visible silhouette. Per-vertex color (so one pool can mix
-// asteroid + ice + debris hues) and per-vertex hover flag — when set,
-// the fragment shader inverts the triangle to white. Every vertex in
-// one chunk shares the same hover value by construction, so the whole
-// polygon highlights as a unit on hover.
-//
-// No pixel snapping: triangle vertices are placed at CPU-rounded
-// integer pixel coords and the rasterizer handles fragment coverage
-// from there. The polygon silhouette is what makes a chunk feel like
-// debris rather than a sprite, so any sub-pixel edge variation reads
-// as a coarse-pixel-art feature rather than noise.
-export function makeBlobMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: {
-      // Body lighting — same contract as makePlanetMaterial. Each chunk
-      // is treated as a tiny sphere clipped to its irregular polygon
-      // silhouette; the fragment shader reconstructs the chunk-local
-      // sphere normal from gl_FragCoord vs the per-chunk center +
-      // extent (threaded via aChunkCenter/aChunkSize attributes), then
-      // applies per-light Lambert + banded tint identical to the
-      // planet shader. See writeLightUniforms in lighting.ts.
-      uLightCount:     { value: 0 },
-      uLightPos:       { value: Array.from({ length: MAX_LIGHTS }, () => new Vector2()) },
-      uLightColor:     { value: Array.from({ length: MAX_LIGHTS }, () => new Color()) },
-      uLightIntensity: { value: new Float32Array(MAX_LIGHTS) },
-    },
-    vertexShader: `
-      attribute float aHovered;
-      // Each vertex carries its CHUNK's center + half-extent (same value
-      // across every vertex of a single chunk) so the fragment shader
-      // can reconstruct the chunk's local sphere normal without a per-
-      // primitive uniform path.
-      attribute vec2  aChunkCenter;
-      attribute float aChunkSize;
-      varying vec3  vColor;
-      varying float vHovered;
-      varying vec2  vChunkCenter;
-      varying float vChunkSize;
-      void main() {
-        vColor = color;
-        vHovered = aHovered;
-        vChunkCenter = aChunkCenter;
-        vChunkSize   = aChunkSize;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      varying vec3  vColor;
-      varying float vHovered;
-      varying vec2  vChunkCenter;
-      varying float vChunkSize;
-      uniform int       uLightCount;
-      uniform vec2      uLightPos[${MAX_LIGHTS}];
-      uniform vec3      uLightColor[${MAX_LIGHTS}];
-      uniform float     uLightIntensity[${MAX_LIGHTS}];
-
-      // Mirror of the planet shader's lighting constants — same crescent
-      // model at a smaller scale. At chunk-radius 2-6 px the LIT band
-      // gives a 1-3 pixel colored highlight on the limb facing each
-      // star; the HOT band pins to the brightest 1-2 limb pixels. See
-      // makePlanetMaterial for the full rationale.
-      const float LIGHT_Z_BIAS         = -0.55;
-      const float LIGHT_BAND_LOW       = 0.18;
-      const float LIGHT_BAND_HIGH      = 0.52;
-      const float LIGHT_DITHER_WIDTH   = 0.08;
-      const float LIGHT_TINT_STRENGTH  = 0.12;
-      const float LIGHT_HOT_BOOST      = 0.10;
-
-      float bayer4(vec2 p) {
-        vec2 q = mod(floor(p), vec2(4.0));
-        vec2 outer = floor(q / 2.0);
-        vec2 inner = mod(q, vec2(2.0));
-        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
-        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
-        return (4.0 * bInner + bOuter) / 16.0;
-      }
-
-      void main() {
-        // Hover wins early — chunks under hover flip to solid white
-        // exactly like the previous behavior; lighting doesn't paint
-        // over the highlight.
-        if (vHovered > 0.5) {
-          gl_FragColor = vec4(1.0);
-          return;
-        }
-        vec3 col = vColor;
-
-        // Per-fragment sphere lighting — treat the chunk as a unit-disc-
-        // inscribed shape. Polygon silhouette already clips the
-        // rasterizer to the chunk's actual outline; the disc math just
-        // yields a smooth depth signal inside the polygon. chunkR floor
-        // at 1 px keeps the tiniest chunks (size = 2 px half-extent)
-        // from divide-by-zero on the normalize.
-        vec2 dLocal = gl_FragCoord.xy - vChunkCenter;
-        float chunkR = max(vChunkSize, 1.0);
-        float tSq = dot(dLocal, dLocal) / (chunkR * chunkR);
-        float nz = sqrt(max(0.0, 1.0 - tSq));
-        vec3 N = vec3(dLocal / chunkR, nz);
-        for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-          if (i >= uLightCount) break;
-          vec2 dir2d = normalize(uLightPos[i] - vChunkCenter);
-          vec3 L = normalize(vec3(dir2d, LIGHT_Z_BIAS));
-          float lam = max(0.0, dot(N, L)) * uLightIntensity[i];
-          float bL = bayer4(gl_FragCoord.xy + vec2(31.0 + float(i) * 7.0, 17.0 + float(i) * 11.0));
-          float ditheredMag = lam + (bL - 0.5) * 2.0 * LIGHT_DITHER_WIDTH;
-          if (ditheredMag > LIGHT_BAND_LOW) {
-            col = clamp(col + uLightColor[i] * LIGHT_TINT_STRENGTH, 0.0, 1.0);
-          }
-          if (ditheredMag > LIGHT_BAND_HIGH) {
-            col = clamp(col + uLightColor[i] * LIGHT_HOT_BOOST, 0.0, 1.0);
-          }
-        }
-
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-    vertexColors: true,
-    transparent: false,
-    // See makePlanetMaterial — the system diagram uses vertex z to
-    // bundle each planet's elements as one z-layer; the chunks need to
-    // write depth too so adjacent planets' rings/discs occlude this
-    // pool correctly.
-    depthWrite: true,
-  });
-}
-
-// Solid-fill mesh material for planetary rings — used by the
-// triangle-strip annulus halves in SystemDiagram. Flat color, no
-// shading, no AA. The caller provides geometry whose vertex positions
-// live in the host planet's local frame (origin at planet center,
-// env-pixel units); the mesh is positioned at the planet's cx/cy.
-//
-// The caller pre-lerps `color` from the icy/dusty palette endpoints
-// based on the ring's resource mix (see bodyIcyness in data/stars.ts).
-// `alpha` is similarly lerped — icy rings paint opaque (Saturn-class
-// bright band) while dusty rings paint translucent (Uranus/Neptune-
-// class faint dust). When alpha < 1 the material flips to transparent
-// so the alpha lane of the fragment actually blends.
-//
-// Per-mesh uHovered uniform (0 / 1) inverts the entire fill to white
-// on hover. No per-vertex outline math because the geometry is a
-// continuous arc rather than a sprite — a 1-px rim would need a
-// second pass.
-export function makeRingMaterial(color: Color, alpha: number): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: {
-      uColor:   { value: new Color().copy(color) },
-      uAlpha:   { value: alpha },
-      uHovered: { value: 0 },
-    },
-    vertexShader: `
-      void main() {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 uColor;
-      uniform float uAlpha;
-      uniform float uHovered;
-      void main() {
-        vec3 col = uHovered > 0.5 ? vec3(1.0) : uColor;
-        float a  = uHovered > 0.5 ? 1.0 : uAlpha;
-        gl_FragColor = vec4(col, a);
-      }
-    `,
-    transparent: alpha < 1,
-    // depthWrite stays on even when translucent. The diagram threads
-    // a per-row-item z so each planet's stack (back-ring / disc /
-    // front-ring / moons) reads as one occluding band against its
-    // neighbors; without depthWrite the back half wouldn't block a
-    // left-neighbor planet from painting over it at the planets pass
-    // (renderOrder primary, z secondary).
-    depthWrite: true,
-  });
-}
-
-// Mesh-based pixel-disc material — same procedural circle as the flat
-// stars material, but rasterized through a PlaneGeometry quad instead
-// of a GL_POINTS sprite. The Mesh path lets the disc's center sit
-// outside the viewport (above the top edge): triangle primitives are
-// clipped per-fragment by the GPU, whereas GL_POINTS discards any
-// point sprite whose vertex falls outside the clip volume — so the
-// "star peeks down from above the screen" framing is only possible
-// with the mesh path.
-//
-// Interior is a solid uColor body with one Bayer-dithered ring of
-// hotter/darker pixels stippled just inside the outer edge. The ring
-// density falls off from the rim inward, so it reads as a noisy edge
-// fringe that tapers into the body rather than as a hard inner band.
-// No core brightening, no mid band — the body is the body, and the
-// dither ring is what differentiates "edge of star" from a flat puck.
-//
-// Per-star uniforms: uCenter (buffer-pixel coords, parity-snapped by
-// the caller), uRadius, uColor. Geometry should be a PlaneGeometry
-// sized to fully enclose the disc bounding box (typically d×d where
-// d = 2·radius). Caller positions the mesh at uCenter.
-export function makeStarMeshMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: {
-      uCenter:  { value: new Vector2() },
-      uRadius:  { value: 0 },
-      uColor:   { value: new Color() },
-      // Hover outline toggle (0 = off, 1 = on). One material per disc, so
-      // this lives as a uniform — no need for a per-vertex attribute path
-      // here. Outline rings the bottom-strip of the top-clipped disc.
-      uHovered: { value: 0 },
-    },
-    vertexShader: `
-      void main() {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec2 uCenter;
-      uniform float uRadius;
-      uniform vec3 uColor;
-      uniform float uHovered;
-
-      // 4x4 Bayer matrix lookup keyed on env-pixel coords. Same closed
-      // form as the planet shader's bayer4 (see this file's planet
-      // material) — values in {0/16..15/16}, no branches, no texture.
-      float bayer4(vec2 p) {
-        vec2 q = mod(floor(p), vec2(4.0));
-        vec2 outer = floor(q / 2.0);
-        vec2 inner = mod(q, vec2(2.0));
-        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
-        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
-        return (4.0 * bInner + bOuter) / 16.0;
-      }
-
-      // Normalize a color to its "hue direction" — divide by the max
-      // channel so the dominant channel pins at 1.0 and the others
-      // express their ratio to it. Raising the result to a power then
-      // suppresses the minor channels (crushes them toward 0) while
-      // leaving the dominant one untouched — a saturation operator
-      // that works for ANY input hue. For a warm star the dominant
-      // channel is R so saturating shifts toward deep red; for a cool
-      // blue star the dominant channel is B so the same operation
-      // shifts toward deep blue. Hardcoded per-channel modulators
-      // only worked for one of those directions.
-      vec3 hueDir(vec3 c) {
-        float m = max(max(c.r, c.g), c.b);
-        return c / max(m, 1e-3);
-      }
-
-      // Width of the inner-edge dithered ring, in pixels. The ring
-      // hugs the outer edge of the disc; stipple density falls
-      // linearly from 1.0 at the edge to 0.0 at INNER_EDGE_DEPTH_PX
-      // into the body, so the fringe tapers into the solid fill
-      // rather than ending on a sharp inner border.
-      const float INNER_EDGE_DEPTH_PX = 8.0;
-
-      // Inner-edge fringe parameters:
-      //   - SAT_EXP saturates uColor's natural hue. Higher = the
-      //     minor channels get crushed harder (more saturated
-      //     fringe). 3.0 is subtle — enough to read as "richer
-      //     than the body" without going neon on stars whose
-      //     dominant channel is already pinned at 1.0 (cool stars
-      //     have R pegged low, so high exponents pop the B fringe
-      //     against the pale body).
-      //   - BRIGHTNESS is a scalar dim factor (< 1.0 darkens the
-      //     fringe relative to the body without touching hue).
-      //     Keeping the fringe dimmer than the body is what makes
-      //     it read as "shadow under the limb" rather than "hot
-      //     ring around it".
-      // Final fringe color = pow(hueDir(uColor), SAT_EXP) × uColor × BRIGHTNESS.
-      const float INNER_EDGE_SAT_EXP    = 3.0;
-      const float INNER_EDGE_BRIGHTNESS = 0.85;
-
-      void main() {
-        vec2 d = gl_FragCoord.xy - uCenter;
-        float r = length(d);
-        if (r > uRadius) discard;
-
-        // Hover wins — outer 1-px ring fills white regardless of
-        // body/edge shading below.
-        if (uHovered > 0.5 && r > uRadius - 1.0) {
-          gl_FragColor = vec4(1.0);
-          return;
-        }
-
-        vec3 col = uColor;
-
-        // Distance from the disc's outer edge, in pixels (0 at the
-        // outermost rasterized pixel, growing inward). Drives the
-        // density of the inner-edge stipple — pixels closer to the
-        // edge are more likely to flip to the hotter shade.
-        float distFromEdgePx = uRadius - r;
-        if (distFromEdgePx < INNER_EDGE_DEPTH_PX) {
-          float density = 1.0 - distFromEdgePx / INNER_EDGE_DEPTH_PX;
-          if (density > bayer4(gl_FragCoord.xy)) {
-            col = pow(hueDir(uColor), vec3(INNER_EDGE_SAT_EXP)) * uColor * INNER_EDGE_BRIGHTNESS;
-          }
-        }
-
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-    transparent: false,
-    depthWrite: false,
-  });
-}
-
-// Outer halo for star discs — sized large around the disc and rendered
-// with additive blending so uColor bleeds into the dark background and
-// any planets/chrome below. The fragment shader runs an ordered Bayer
-// dither against a quadratic radial falloff, so pixels thin out with
-// distance — no smooth gradient, just a stippled cloud that hugs the
-// disc and fades. Each radial band paints uColor saturated by a
-// different exponent so the halo cools through the star's own hue
-// (orange-red for warm stars, deep blue for cool stars). Pixels
-// inside uDiscRadius are discarded; the disc material paints there.
-//
-// Per-star uniforms: uCenter (same as the disc's uCenter), uDiscRadius
-// (matches the disc's uRadius), uHaloRadius (outer extent of the halo
-// in env-px), uColor (same hue as the disc — typically the system-view
-// tuned class color from tuneStarColorForSystemView in stars-row.ts).
-// Geometry should be a PlaneGeometry sized to fully enclose the halo
-// bounding box (typically 2·uHaloRadius square). Caller positions the
-// mesh at uCenter and renders BEFORE planets/belts/etc so their
-// opaque/transparent passes can overpaint the halo where they overlap.
-export function makeStarHaloMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: {
-      uCenter:     { value: new Vector2() },
-      uDiscRadius: { value: 0 },
-      uHaloRadius: { value: 0 },
-      uColor:      { value: new Color() },
-    },
-    vertexShader: `
-      void main() {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec2 uCenter;
-      uniform float uDiscRadius;
-      uniform float uHaloRadius;
-      uniform vec3 uColor;
-
-      float bayer4(vec2 p) {
-        vec2 q = mod(floor(p), vec2(4.0));
-        vec2 outer = floor(q / 2.0);
-        vec2 inner = mod(q, vec2(2.0));
-        float bInner = inner.x * 2.0 + inner.y * 3.0 - inner.x * inner.y * 4.0;
-        float bOuter = outer.x * 2.0 + outer.y * 3.0 - outer.x * outer.y * 4.0;
-        return (4.0 * bInner + bOuter) / 16.0;
-      }
-
-      // Normalize a color to its hue direction (max channel = 1.0).
-      // Raising the result to a power crushes the minor channels —
-      // a saturation operator that works for any uColor hue. See the
-      // matching helper in makeStarMeshMaterial for the longer
-      // rationale.
-      vec3 hueDir(vec3 c) {
-        float m = max(max(c.r, c.g), c.b);
-        return c / max(m, 1e-3);
-      }
-
-      // Falloff exponent — higher = density drops off faster (tighter
-      // halo). 2.5 keeps the hot ring tight against the disc while the
-      // ember + dark bands fan out into the broader fringe.
-      const float FALLOFF_EXP = 2.5;
-
-      // Intensity range — far pixels paint at INTENSITY_MIN, near pixels
-      // burn at INTENSITY_MAX. Both are well under 1.0 so the halo
-      // reads as a deep wash rather than a second bright disc — the
-      // disc itself is supposed to be the bright object.
-      const float INTENSITY_MIN = 0.10;
-      const float INTENSITY_MAX = 0.30;
-
-      // Heat-spectrum band thresholds in t (t = 0 at disc edge, t = 1 at
-      // halo edge). Each band paints uColor with a different saturation
-      // strength so the halo reads as a "cooling iron" gradient through
-      // the star's OWN hue — warm stars cool toward deep red, cool
-      // stars cool toward deep blue. Bayer dither on the boundary so
-      // the transitions stipple instead of ringing.
-      const float HOT_END   = 0.18;
-      const float WARM_END  = 0.40;
-      const float EMBER_END = 0.68;
-
-      // Per-band saturation exponents — higher = harder crush on the
-      // minor channels. Each successive band saturates more, so the
-      // halo's outer fringe shifts deeper into uColor's dominant hue
-      // (red for warm stars, blue for cool stars, etc) rather than
-      // toward a hardcoded direction. With color management OFF these
-      // values feed pow() directly on sRGB-coded channels (consistent
-      // with the rest of the project's shader math).
-      const float HOT_SAT_EXP   = 2.0;
-      const float WARM_SAT_EXP  = 5.0;
-      const float EMBER_SAT_EXP = 10.0;
-      const float DARK_SAT_EXP  = 18.0;
-
-      // Half-width of the band-boundary dither in t-space. Larger =
-      // noisier band transitions. ~0.07 lands a few pixels of fuzz on
-      // a typical halo width.
-      const float BAND_DITHER = 0.07;
-
-      void main() {
-        vec2 d = gl_FragCoord.xy - uCenter;
-        float r = length(d);
-
-        // Discard inside the disc (the disc material owns those pixels)
-        // and outside the halo extent (the bounding plane is square; we
-        // want a round halo).
-        if (r <= uDiscRadius) discard;
-        if (r >= uHaloRadius) discard;
-
-        // t ∈ [0, 1] across the halo annulus (0 = touching disc, 1 = far
-        // edge). Density-falloff gates pixel visibility; color-band
-        // bucketing gates pixel hue.
-        float t = (r - uDiscRadius) / max(uHaloRadius - uDiscRadius, 1.0);
-        float density = pow(1.0 - t, FALLOFF_EXP);
-
-        // Ordered-dither visibility gate — pixel only plots when density
-        // beats the Bayer threshold. No smooth alpha — falloff is purely
-        // a function of how many pixels survive the threshold.
-        float bVis = bayer4(gl_FragCoord.xy);
-        if (density < bVis) discard;
-
-        // Color-band lookup uses a separately-keyed dither (offset bayer
-        // sample) so band-edge stipple doesn't correlate with visibility
-        // stipple — keeps the band-color transition reading as a fuzzy
-        // boundary rather than ghosting onto the visibility pattern.
-        float bBand = bayer4(gl_FragCoord.xy + vec2(7.0, 13.0));
-        float td = t + (bBand - 0.5) * 2.0 * BAND_DITHER;
-
-        // Band color = pow(hueDir, SAT_EXP) × uColor. The pow term is
-        // pure hue saturation (always ≤ 1 in each channel); multiplying
-        // by uColor restores the original brightness scale and pulls
-        // each band back toward the star's actual color. Final pixel
-        // brightness comes from the intensity ramp below.
-        vec3 hue = hueDir(uColor);
-        vec3 hotCol   = pow(hue, vec3(HOT_SAT_EXP))   * uColor;
-        vec3 warmCol  = pow(hue, vec3(WARM_SAT_EXP))  * uColor;
-        vec3 emberCol = pow(hue, vec3(EMBER_SAT_EXP)) * uColor;
-        vec3 darkCol  = pow(hue, vec3(DARK_SAT_EXP))  * uColor;
-
-        vec3 col;
-        if (td < HOT_END)        col = hotCol;
-        else if (td < WARM_END)  col = warmCol;
-        else if (td < EMBER_END) col = emberCol;
-        else                     col = darkCol;
-
-        float intensity = mix(INTENSITY_MIN, INTENSITY_MAX, density);
-        gl_FragColor = vec4(col * intensity, 1.0);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-  });
 }

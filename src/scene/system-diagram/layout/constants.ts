@@ -31,7 +31,7 @@ export const MIN_STAR_GAP = 2;
 // Outer radius of the star halo as a multiple of the disc radius. The
 // halo is a dithered additive cloud that bleeds a saturation-stepped
 // gradient (hot/warm/ember/dark, all in the star's own hue) into the
-// surrounding scene (see makeStarHaloMaterial in materials/system.ts).
+// surrounding scene (see makeStarHaloMaterial in materials/system-decor.ts).
 // 3.0 pushes the dark fringe well into the dome area so the wash
 // bleeds past the planet row before fading to black, giving the
 // system a sense of being bathed in the star's light rather than

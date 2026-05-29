@@ -103,7 +103,6 @@ import {
   ATMOSPHERE_GASES_BY_REGIME,
   ATMOSPHERE_REGIME_THRESHOLDS,
   ATMOSPHERE_MIN_PRESSURE_BAR,
-  INSOLATION_COLD_MAX,
   ATMOSPHERIC_RETENTION,
   OUTGASSING,
   PRESSURE_HISTORY_MULTIPLIER,
@@ -140,7 +139,7 @@ const BIOTIC_FIELD_BY_ARCH = {
 };
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
-import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU } from './astrophysics.mjs';
+import { insolation, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineAU, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
   return mulberry32(hash32(`${body.id}:${field}:${PROCGEN_VERSION}`));
@@ -164,11 +163,6 @@ const EARTH_RADIUS_M = 6.371e6;
 // species (H2, He) escape more easily; heavier (CO2) retain longer.
 // One-species model is the agreed-on simplification for Phase 2.
 const RETENTION_SPECIES_AMU = 28;
-
-// Earth masses per solar mass. Used to convert planet mass to solar
-// units for Kepler's third law applied to moons (whose "host" is their
-// parent planet, not a star).
-const EARTH_PER_SOLAR_MASS = 333000;
 
 function smoothstep(a, b, x) {
   if (x <= a) return 0;
@@ -225,7 +219,7 @@ function keplerPeriodDays(aAu, hostMassSolar) {
 }
 
 // Inverse: a = ((P_years)² · M)^(1/3).
-function keplerSemiMajorAu(periodDays, hostMassSolar) {
+export function keplerSemiMajorAu(periodDays, hostMassSolar) {
   if (periodDays == null || hostMassSolar == null || hostMassSolar <= 0) return null;
   const pYears = periodDays / 365.25;
   return Number(Math.pow(pYears * pYears * hostMassSolar, 1 / 3).toFixed(5));
@@ -359,7 +353,6 @@ function cloudBumpFromComposition(body) {
   const P = body.surfacePressureBar ?? 0;
   const T = body.avgSurfaceTempK;
   if (P <= 0 || T == null) return 0;
-  const atmGases = new Set();
   let bump = 0;
   const addContribution = (gas, frac) => {
     if (!gas || frac == null || frac <= 0) return;
@@ -378,7 +371,6 @@ function cloudBumpFromComposition(body) {
   ]) {
     const gas = body[gasField];
     if (gas) {
-      atmGases.add(gas);
       addContribution(gas, body[fracField]);
     }
   }
@@ -429,7 +421,6 @@ function greenhouseKFromPressure(surfacePressureBar) {
 function greenhouseKFromComposition(body) {
   const P = body.surfacePressureBar ?? 0;
   if (P <= 0) return 0;
-  const atmGases = new Set();
   let K = 0;
   const addContribution = (gas, frac) => {
     if (!gas || frac == null || frac <= 0) return;
@@ -450,7 +441,6 @@ function greenhouseKFromComposition(body) {
   ]) {
     const gas = body[gasField];
     if (gas) {
-      atmGases.add(gas);
       addContribution(gas, body[fracField]);
     }
   }
@@ -1351,14 +1341,6 @@ function bodyGravityEarth(body) {
   return body.massEarth / (body.radiusEarth * body.radiusEarth);
 }
 
-// Insolation in Earth units (S/S_earth). Approximates L ≈ M^4 for MS
-// stars per the same calibration as astrophysics.luminositySun.
-function insolationFor(body, hostStar) {
-  if (!hostStar || body.semiMajorAu == null || body.semiMajorAu <= 0) return 0;
-  const L = Math.pow(hostStar.mass, 4);
-  return L / (body.semiMajorAu * body.semiMajorAu);
-}
-
 const GASEOUS_CLASSES = new Set([
   'gas_giant', 'ice_giant', 'gas_dwarf', 'hycean', 'helium',
 ]);
@@ -1431,7 +1413,7 @@ function productivityPreAtm(body, hostStar, hostBody) {
     const hostMassEarth = hostBody?.massEarth ?? 0;
     const a = body.semiMajorAu ?? 0;
     const tidalProxy = (e > 0 && hostMassEarth > 0 && a > 0)
-      ? e * (hostMassEarth / 333000) / Math.pow(a, 3)
+      ? e * (hostMassEarth / EARTH_PER_SOLAR_MASS) / Math.pow(a, 3)
       : 0;
     const tidal_score = smoothstep(0, 0.1, tidalProxy);
     const radio_score = smoothstep(2, 6, body.resRadioactives ?? 0);
@@ -1455,7 +1437,11 @@ function productivityPostAtm(body, hostStar) {
   const colMass = P > 0 ? Math.log10(P / g + 1) : 0;
   const tect = body.tectonicActivity ?? 0;
   const age = hostStar?.ageGyr ?? 5.0;
-  const insol = insolationFor(body, hostStar);
+  // Shares astrophysics.insolation so the biosphere insolation input
+  // matches the M-dwarf luminosity break used everywhere else (a raw
+  // M^4 here would over-darken low-mass hosts). Null → 0 keeps the
+  // downstream smoothstep windows well-defined.
+  const insol = insolation(hostStar?.mass, body.semiMajorAu) ?? 0;
   const isGaseous = body.worldClass != null && GASEOUS_CLASSES.has(body.worldClass);
   const isTerrestrialSolid = body.worldClass != null && TERRESTRIAL_SOLID_CLASSES.has(body.worldClass);
 
