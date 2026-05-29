@@ -888,6 +888,47 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       ${BAYER4_GLSL}
       ${STAR_CRESCENT_LIGHTING_GLSL}
 
+      // Worley F1/F2 cell scan over the 3×3 neighborhood. For a fragment
+      // at cellFrac within integer cell cellId, finds the nearest (F1)
+      // and second-nearest (F2) jittered cell centers and returns their
+      // squared distances (d1 ≤ d2) and owning cell ids by out-param.
+      // saltA/saltB are the per-pass hash-salt offsets added to each
+      // candidate cell before its two jitter hashes (two decorrelated
+      // seeds → two salts); the caller folds any per-layer salt in. The
+      // closest two cells to any interior fragment are always inside the
+      // 3×3 neighborhood, so the scan is exhaustive. One body for the
+      // three identical scans — surface (1.5a), cloud decks, and lava
+      // calderas (which read only F1) — so the cell math can't drift.
+      void worleyF1F2(vec2 cellId, vec2 cellFrac, vec2 saltA, vec2 saltB,
+                      out vec2 f1cell, out vec2 f2cell, out float d1, out float d2) {
+        d1 = 1e9;
+        d2 = 1e9;
+        f1cell = cellId;
+        f2cell = cellId;
+        for (int dx = -1; dx <= 1; dx++) {
+          for (int dy = -1; dy <= 1; dy++) {
+            vec2 off = vec2(float(dx), float(dy));
+            vec2 nCell = cellId + off;
+            vec2 jitter = vec2(
+              hash21(nCell + saltA),
+              hash21(nCell + saltB)
+            );
+            vec2 nCenter = off + jitter;
+            vec2 diff = nCenter - cellFrac;
+            float dd = dot(diff, diff);
+            if (dd < d1) {
+              d2 = d1;
+              f2cell = f1cell;
+              d1 = dd;
+              f1cell = nCell;
+            } else if (dd < d2) {
+              d2 = dd;
+              f2cell = nCell;
+            }
+          }
+        }
+      }
+
       // Elect a region's (primary, secondary, tertiary) palette slots.
       // Primary and secondary are weighted draws against weights;
       // secondary samples from the non-primary slots only. Tertiary is
@@ -1166,38 +1207,15 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           vec2 cellPos = vec2(lon, lat) * vRadius / SURFACE_PATCH_PX;
           vec2 cellId  = floor(cellPos);
           vec2 cellFrac = cellPos - cellId;
-          // Track F1 (closest) AND F2 (second-closest) cells. F2-F1
-          // worley distance is the cell-boundary distance the 1.5d
-          // linea pass uses to draw cracks along cell edges. Closest
-          // TWO cells to any fragment in the central cell are always
-          // adjacent to it, so the 3x3 neighborhood scan is sufficient
-          // — no off-window candidates can sneak past.
-          float minDist2 = 1e9;
-          float secondMinDist2 = 1e9;
-          vec2  winnerCell = cellId;
-          vec2  secondCell = cellId;
-          for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-              vec2 off = vec2(float(dx), float(dy));
-              vec2 nCell = cellId + off;
-              vec2 jitter = vec2(
-                hash21(nCell + vec2(vSeed * 13.0,  vSeed * 19.0)),
-                hash21(nCell + vec2(vSeed * 23.0,  vSeed * 29.0))
-              );
-              vec2 nCenter = off + jitter;
-              vec2 diff = nCenter - cellFrac;
-              float d2 = dot(diff, diff);
-              if (d2 < minDist2) {
-                secondMinDist2 = minDist2;
-                secondCell = winnerCell;
-                minDist2 = d2;
-                winnerCell = nCell;
-              } else if (d2 < secondMinDist2) {
-                secondMinDist2 = d2;
-                secondCell = nCell;
-              }
-            }
-          }
+          // Track F1 (closest) AND F2 (second-closest) cells. The F2-F1
+          // worley distance is the cell-boundary distance the 1.5d linea
+          // pass draws cracks along. Salts 13/19, 23/29 distinct from
+          // every other surface-pass salt.
+          float minDist2, secondMinDist2;
+          vec2  winnerCell, secondCell;
+          worleyF1F2(cellId, cellFrac,
+                     vSeed * vec2(13.0, 19.0), vSeed * vec2(23.0, 29.0),
+                     winnerCell, secondCell, minDist2, secondMinDist2);
 
           // Phase 1.6 — ice is a contextual surface state composed onto
           // the body's bulk surface, not its own latitude-band override.
@@ -1630,31 +1648,22 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             // surface worley (patch grows with coverage), so lakes read as a
             // few coherent pools rather than per-cell confetti — and a near-
             // fully-molten world becomes large lava lakes between dark crust
-            // islands instead of speckle. Own 3×3 worley scan in the coarse
-            // frame for round blobby lakes. Sparse cells (coverage²) so they
-            // read as a handful of volcanic centers; core hotter than the
-            // rim via distance to the coarse cell center. Salts 859/863,
+            // islands instead of speckle. Uses the shared worleyF1F2 scan in
+            // the coarse frame (F1 only — the lake cell that contains the
+            // fragment) for round blobby lakes. Sparse cells (coverage²) so
+            // they read as a handful of volcanic centers; core hotter than
+            // the rim via distance to the coarse cell center. Salts 859/863,
             // 877/881 (jitter), 883/887 (existence) distinct from every
             // other surface-pass salt.
             float poolPatch = SURFACE_PATCH_PX * mix(LAVA_POOL_PATCH_MIN, LAVA_POOL_PATCH_MAX, vMoltenCoverage);
             vec2  pCellPos  = vec2(lon, lat) * vRadius / poolPatch;
             vec2  pCellId   = floor(pCellPos);
             vec2  pFrac     = pCellPos - pCellId;
-            float pBestD2   = 1e9;
-            vec2  pWinner   = pCellId;
-            for (int pdx = -1; pdx <= 1; pdx++) {
-              for (int pdy = -1; pdy <= 1; pdy++) {
-                vec2 off = vec2(float(pdx), float(pdy));
-                vec2 nC  = pCellId + off;
-                vec2 j   = vec2(
-                  hash21(nC + vec2(vSeed * 859.0, vSeed * 863.0)),
-                  hash21(nC + vec2(vSeed * 877.0, vSeed * 881.0))
-                );
-                vec2 diff = (off + j) - pFrac;
-                float d2  = dot(diff, diff);
-                if (d2 < pBestD2) { pBestD2 = d2; pWinner = nC; }
-              }
-            }
+            float pBestD2, pIgnoreD2;
+            vec2  pWinner, pIgnoreCell;
+            worleyF1F2(pCellId, pFrac,
+                       vSeed * vec2(859.0, 863.0), vSeed * vec2(877.0, 881.0),
+                       pWinner, pIgnoreCell, pBestD2, pIgnoreD2);
             float poolH    = hash21(pWinner + vec2(vSeed * 883.0, vSeed * 887.0));
             float isPool   = step(poolH, min(vMoltenCoverage * vMoltenCoverage, LAVA_POOL_MAX_COVER));
             float poolDist = sqrt(pBestD2);
@@ -1789,32 +1798,14 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // centers. F2 is consulted by the edge-dither check below — the
           // distance to the F1/F2 boundary tells us how far inside our
           // own cell we are, and whether the neighbor would have fired.
-          float minD2 = 1e9;
-          float secondD2 = 1e9;
-          vec2 winnerCell = cellId;
-          vec2 secondCell = cellId;
-          for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-              vec2 off = vec2(float(dx), float(dy));
-              vec2 nCell = cellId + off;
-              vec2 jitter = vec2(
-                hash21(nCell + vec2(vSeed * 991.0 + layerSeed * 13.0, vSeed * 997.0 + layerSeed * 17.0)),
-                hash21(nCell + vec2(vSeed * 1013.0 + layerSeed * 19.0, vSeed * 1019.0 + layerSeed * 23.0))
-              );
-              vec2 nCenter = off + jitter;
-              vec2 diff = nCenter - cellFrac;
-              float d2 = dot(diff, diff);
-              if (d2 < minD2) {
-                secondD2 = minD2;
-                secondCell = winnerCell;
-                minD2 = d2;
-                winnerCell = nCell;
-              } else if (d2 < secondD2) {
-                secondD2 = d2;
-                secondCell = nCell;
-              }
-            }
-          }
+          // Per-layer salt folds layerSeed into the base 991/997, 1013/
+          // 1019 pairs so each deck's cells land on different positions.
+          float minD2, secondD2;
+          vec2 winnerCell, secondCell;
+          worleyF1F2(cellId, cellFrac,
+                     vec2(vSeed * 991.0 + layerSeed * 13.0, vSeed * 997.0 + layerSeed * 17.0),
+                     vec2(vSeed * 1013.0 + layerSeed * 19.0, vSeed * 1019.0 + layerSeed * 23.0),
+                     winnerCell, secondCell, minD2, secondD2);
 
           // Existence gate — binary per-cell hash. Cells whose hash sits
           // below coverage paint the deck; above this they skip, revealing
