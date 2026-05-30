@@ -1545,6 +1545,25 @@ export const ATMOSPHERE_REGIME_THRESHOLDS = mergeTunes(
 // kinetic exospheres rather than thermodynamic ones).
 export const ATMOSPHERE_MIN_PRESSURE_BAR = 0.01;
 
+// Per-gas mean molecular weight in atomic-mass-units. Feeds the per-gas
+// Jeans-escape filter (gasRetentionFraction in procgen.mjs), which zeroes a
+// gas's weight when the body's escape/thermal velocity ratio is too low to
+// retain it. Sits beside ATMOSPHERIC_RETENTION because the two are read
+// together by that filter.
+export const GAS_MOLECULAR_WEIGHT_AMU = {
+  H2:  2,
+  He:  4,
+  CH4: 16,
+  NH3: 17,
+  H2O: 18,
+  CO:  28,
+  N2:  28,
+  O2:  32,
+  Ar:  40,
+  CO2: 44,
+  SO2: 64,
+};
+
 // Atmospheric retention shape — Jeans escape sigmoid + magnetic-shield
 // floor. The Filler computes v_escape/v_thermal(N2, T_eq) per body and
 // smoothsteps the ratio into a 0..1 "long-term retained fraction" over
@@ -1957,6 +1976,18 @@ export const RESOURCE_KEYS = [
 //                              contribution at the microbial/complex
 //                              tiers. Continuous, never identically zero
 //                              once life is present.
+
+// PAR (Photosynthetically Active Radiation) availability by stellar
+// spectral class. G-class is the Sol baseline; cooler M-class stars
+// deliver fewer high-energy photons (calibrated against Kiang et al.
+// on alien photosynthesis — M-dwarf photosynthesis is more constrained
+// than Sol's, requires longer-wavelength chlorophyll analogs); A-class
+// drops because UV damages biomass faster than photosynthesis can fix
+// carbon. O/B too short-lived for biospheres to evolve; WD/BD lack
+// surface-luminance for photo-driven metabolism.
+export const PAR_BY_CLASS = {
+  O: 0, B: 0, A: 0.6, F: 0.95, G: 1.0, K: 0.7, M: 0.3, WD: 0, BD: 0,
+};
 
 // Biosphere productivity calibration — the per-archetype gate windows that
 // productivityPreAtm / productivityPostAtm (procgen.mjs) multiply into a

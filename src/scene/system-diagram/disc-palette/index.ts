@@ -142,7 +142,7 @@ import {
 } from './atmosphere';
 import { lavaDrivesFor } from './lava';
 import { oceanColorFor, OCEAN_FALLBACK_COLOR } from './ocean';
-import { BLACK_COLOR, WHITE_COLOR } from './shared';
+import { BLACK_COLOR, smoothstep01, weightedColorBlend, WHITE_COLOR } from './shared';
 
 // Phase 1.6 ice-geometry temperature thresholds. globalness lerps from
 // 0 (cap-latitude pattern) at ICE_TEMP_CAP_K down to 1 (global pattern)
@@ -242,11 +242,10 @@ function applyPerBodyTints(c: Color, body: Body, seed: number): Color {
 // whether any ice renders at all).
 function globalnessForTemp(avgT: number | null): number {
   if (avgT == null) return 0;
-  if (avgT <= ICE_TEMP_GLOBAL_K) return 1;
-  if (avgT >= ICE_TEMP_CAP_K)    return 0;
-  const t = (avgT - ICE_TEMP_GLOBAL_K) / (ICE_TEMP_CAP_K - ICE_TEMP_GLOBAL_K);
-  const sm = t * t * (3 - 2 * t);
-  return 1 - sm;
+  // Inverted ramp — full global ice at/below the cold threshold, none at/above
+  // the cap. ICE_TEMP_GLOBAL_K < ICE_TEMP_CAP_K, so smoothstep01 climbs 0→1 with
+  // temperature and the 1 − … flip turns it into the ice-melts-as-it-warms curve.
+  return 1 - smoothstep01(ICE_TEMP_GLOBAL_K, ICE_TEMP_CAP_K, avgT);
 }
 
 export interface DiscPalette {
@@ -592,29 +591,24 @@ export function buildDiscPalette(
   let rimWidthPx = 0;
 
   if (!tinyDisc) {
-    let mr = 0, mg = 0, mb = 0, mw = 0;
-    const add = (c: { r: number; g: number; b: number }, w: number) => {
-      if (w <= 0) return;
-      mr += c.r * w; mg += c.g * w; mb += c.b * w; mw += w;
-    };
+    const entries: Array<{ color: { r: number; g: number; b: number }; weight: number }> = [];
 
     // Per-deck cloud bases weighted by that deck's coverage. Higher
     // decks aren't preferred over lower decks at the limb — the rim
     // sees the sum of cloud chemistry.
     for (const dl of cloudLayers) {
       const cr = dl.color[0], cg = dl.color[1], cb = dl.color[2];
-      if ((cr + cg + cb) > 0) add({ r: cr, g: cg, b: cb }, dl.coverage);
+      if ((cr + cg + cb) > 0) entries.push({ color: { r: cr, g: cg, b: cb }, weight: dl.coverage });
     }
     if (hasSurface) {
-      for (const { color, weight } of surfaceHazeContributors(body)) {
-        add(color, weight);
-      }
+      for (const c of surfaceHazeContributors(body)) entries.push(c);
     } else if (atmColC !== null) {
-      add(atmColC, 1);
+      entries.push({ color: atmColC, weight: 1 });
     }
 
-    if (mw > 0) {
-      rimColorRgb = [mr / mw, mg / mw, mb / mw];
+    const { r, g, b, totalWeight } = weightedColorBlend(entries);
+    if (totalWeight > 0) {
+      rimColorRgb = [r, g, b];
       rimWidthPx = hasSurface
         ? rimWidthForSurfaceAtmosphere(body)
         : rimWidthForNoSurfaceAtmosphere(body);

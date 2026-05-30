@@ -89,6 +89,7 @@ import {
   CLOUD_DECK,
   HAZE_GATES,
   DUST_GATE,
+  PAR_BY_CLASS,
   BIOSPHERE_PRODUCTIVITY,
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
@@ -107,6 +108,7 @@ import {
   ATMOSPHERE_GASES_BY_REGIME,
   ATMOSPHERE_REGIME_THRESHOLDS,
   ATMOSPHERE_MIN_PRESSURE_BAR,
+  GAS_MOLECULAR_WEIGHT_AMU,
   ATMOSPHERIC_RETENTION,
   OUTGASSING,
   PRESSURE_HISTORY_MULTIPLIER,
@@ -131,18 +133,6 @@ import {
   OTEGI_MR,
 } from './procgen-priors.mjs';
 
-// Per-archetype productivity field — used by the CSV-authored biosphere
-// path to scale impact off the body's measured productivity for the
-// authored archetype (the productivity scalars still describe what life
-// COULD exist; the authored value picks which one labels the body).
-const BIOTIC_FIELD_BY_ARCH = {
-  carbon_aqueous:     'bioticCarbonAqueous',
-  subsurface_aqueous: 'bioticSubsurfaceAqueous',
-  aerial:             'bioticAerial',
-  cryogenic:          'bioticCryogenic',
-  silicate:           'bioticSilicate',
-  sulfur:             'bioticSulfur',
-};
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
 import { insolation, jeansEscapeRatio, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS, SIGMA_SB, SOLAR_CONSTANT } from './astrophysics.mjs';
@@ -203,6 +193,21 @@ export function radiusFromMass(massEarth) {
   if (m < OTEGI_MR.rockyMaxMass)  return Number(Math.pow(m, OTEGI_MR.rockyExp).toFixed(3));
   if (m < OTEGI_MR.subNepMaxMass) return Number((OTEGI_MR.subNepCoeff * Math.pow(m, OTEGI_MR.subNepExp)).toFixed(3));
   return OTEGI_MR.giantRadius;
+}
+
+// The shared orbital-flavor draw: eccentricity (mixture), inclination and
+// axial tilt (truncated normals), and a uniform orbital phase, each with the
+// catalog's field rounding baked in. Three call sites feed it their own PRNGs
+// — architect planets, architect moons, and the Filler backfill — so the draw
+// shape and rounding live once. Each field reads an independent stream, so the
+// order they're drawn here is immaterial; the caller owns stream identity.
+export function sampleOrbitalFlavor({ eccPrng, incPrng, tiltPrng, phasePrng }) {
+  return {
+    eccentricity: Number(sampleMixture(eccPrng, ECCENTRICITY).toFixed(4)),
+    inclinationDeg: Number(sampleTruncated(incPrng, INCLINATION_DEG).toFixed(2)),
+    axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
+    orbitalPhaseDeg: Number((phasePrng() * 360).toFixed(2)),
+  };
 }
 
 // =============================================================================
@@ -725,23 +730,6 @@ function surfaceTempRangeFor(body) {
 // Atmosphere composition — physics-keyed regime dispatch (no class input)
 // =============================================================================
 
-// Per-gas mean molecular weight in atomic-mass-units. Used by the Jeans
-// escape filter to zero out light-gas weights when the body's escape
-// velocity / thermal velocity ratio is too low to retain that gas.
-const GAS_MOLECULAR_WEIGHT_AMU = {
-  H2:  2,
-  He:  4,
-  CH4: 16,
-  NH3: 17,
-  H2O: 18,
-  CO:  28,
-  N2:  28,
-  O2:  32,
-  Ar:  40,
-  CO2: 44,
-  SO2: 64,
-};
-
 // Per-gas Jeans-retention check. Reuses the smoothstep gates from the
 // ATMOSPHERIC_RETENTION prior (calibrated against N2). Returns a 0..1
 // retention scalar for the gas — light gases on small bodies return ~0
@@ -868,6 +856,13 @@ function surfaceOpacityFor(body) {
 // T + atm + waterFraction + bulkWaterFraction. Coverage / wind / strength
 // tuning lives in CLOUD_DECK (procgen-priors).
 
+// The single "is this body gaseous" predicate. Radius-keyed so the physics
+// passes (pressure, age, atmosphere regime, magnetic, opacity) can ask it
+// before worldClass exists. The biosphere passes — which run after
+// classification — share it too: worldClassFor routes every r ≥ gasDwarfRadius
+// body into a gaseous class and nothing below it, so the radius test and the
+// gaseous-class label are equivalent for any classified body. One predicate,
+// no margin where the two could drift.
 function isGaseousBody(body) {
   return body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
 }
@@ -1238,18 +1233,6 @@ function resourcesFor(body, hostStar, hostBody) {
 // classifications — nothing in the procgen pipeline rolls a separate
 // biosphere outcome.
 
-// PAR (Photosynthetically Active Radiation) availability by stellar
-// spectral class. G-class is the Sol baseline; cooler M-class stars
-// deliver fewer high-energy photons (calibrated against Kiang et al.
-// on alien photosynthesis — M-dwarf photosynthesis is more constrained
-// than Sol's, requires longer-wavelength chlorophyll analogs); A-class
-// drops because UV damages biomass faster than photosynthesis can fix
-// carbon. O/B too short-lived for biospheres to evolve; WD/BD lack
-// surface-luminance for photo-driven metabolism.
-const PAR_BY_CLASS = {
-  O: 0, B: 0, A: 0.6, F: 0.95, G: 1.0, K: 0.7, M: 0.3, WD: 0, BD: 0,
-};
-
 // Bell curve gate — peaks at `center`, falls to 0 at `center ± halfwidth`.
 // Quadratic falloff. Used by productivity factors that want a "best at
 // this value, falls off either direction" shape (T windows, ice-shell
@@ -1270,9 +1253,13 @@ function bodyGravityEarth(body) {
   return body.massEarth / (body.radiusEarth * body.radiusEarth);
 }
 
-const GASEOUS_CLASSES = new Set([
-  'gas_giant', 'ice_giant', 'gas_dwarf', 'hycean', 'helium',
-]);
+// The set of worldClasses with a solid/liquid surface a surface biosphere
+// can inhabit. Genuinely label-specific: it separates a *classified*
+// terrestrial body from one still awaiting classification (worldClass null),
+// a distinction no physical predicate captures — so unlike "is gaseous"
+// (single-sourced through isGaseousBody) this stays keyed on the label.
+// Every gaseous worldClass sits in the r ≥ gasDwarfRadius bracket, so its
+// complement here is exactly the non-null terrestrial classes.
 const TERRESTRIAL_SOLID_CLASSES = new Set([
   'rocky', 'desert', 'ocean', 'ice', 'carbon', 'iron', 'lava',
   'magma_ocean', 'chthonian', 'solid_giant',
@@ -1298,7 +1285,7 @@ function productivityPreAtm(body, hostStar, hostBody) {
   const e = body.eccentricity ?? 0;
   const age = hostStar?.ageGyr ?? 5.0;
   const cls = hostStar?.cls ?? null;
-  const isGaseous = body.worldClass != null && GASEOUS_CLASSES.has(body.worldClass);
+  const isGaseous = isGaseousBody(body);
 
   const aw = BIOSPHERE_PRODUCTIVITY.ageWindow;
   const ageWindowCarbon     = smoothstep(aw.carbonAqueous.rise[0], aw.carbonAqueous.rise[1], age) * (1 - smoothstep(aw.carbonAqueous.fall[0], aw.carbonAqueous.fall[1], age));
@@ -1374,7 +1361,7 @@ function productivityPostAtm(body, hostStar) {
   // M^4 here would over-darken low-mass hosts). Null → 0 keeps the
   // downstream smoothstep windows well-defined.
   const insol = insolation(hostStar?.mass, body.semiMajorAu) ?? 0;
-  const isGaseous = body.worldClass != null && GASEOUS_CLASSES.has(body.worldClass);
+  const isGaseous = isGaseousBody(body);
   const isTerrestrialSolid = body.worldClass != null && TERRESTRIAL_SOLID_CLASSES.has(body.worldClass);
 
   const aw = BIOSPHERE_PRODUCTIVITY.ageWindow;
@@ -1770,19 +1757,20 @@ function fillBody(b, allBodies, stars) {
   working = { ...working, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction };
 
   // Orbital flavor early so tilt + eccentricity are available when temp
-  // range and surface age run later.
-  if (unknowns.has('eccentricity')) {
-    eccentricity = Number(sampleMixture(fieldPrng(b, 'eccentricity'), ECCENTRICITY).toFixed(4));
-  }
-  if (unknowns.has('inclinationDeg')) {
-    inclinationDeg = Number(sampleTruncated(fieldPrng(b, 'inclinationDeg'), INCLINATION_DEG).toFixed(2));
-  }
-  if (unknowns.has('axialTiltDeg')) {
-    axialTiltDeg = Number(sampleTruncated(fieldPrng(b, 'axialTiltDeg'), AXIAL_TILT_DEG).toFixed(2));
-  }
-  if (unknowns.has('orbitalPhaseDeg')) {
-    orbitalPhaseDeg = Number((fieldPrng(b, 'orbitalPhaseDeg')() * 360).toFixed(2));
-  }
+  // range and surface age run later. The four fields ride independent
+  // per-field PRNG streams, so drawing the full set and assigning only the
+  // unknown ones is identical to drawing each in isolation — a discarded
+  // draw can't perturb a sibling stream.
+  const orbital = sampleOrbitalFlavor({
+    eccPrng: fieldPrng(b, 'eccentricity'),
+    incPrng: fieldPrng(b, 'inclinationDeg'),
+    tiltPrng: fieldPrng(b, 'axialTiltDeg'),
+    phasePrng: fieldPrng(b, 'orbitalPhaseDeg'),
+  });
+  if (unknowns.has('eccentricity'))    eccentricity = orbital.eccentricity;
+  if (unknowns.has('inclinationDeg'))  inclinationDeg = orbital.inclinationDeg;
+  if (unknowns.has('axialTiltDeg'))    axialTiltDeg = orbital.axialTiltDeg;
+  if (unknowns.has('orbitalPhaseDeg')) orbitalPhaseDeg = orbital.orbitalPhaseDeg;
   working = { ...working, eccentricity, inclinationDeg, axialTiltDeg, orbitalPhaseDeg };
 
   // Class-free physical scalar chain: tectonics → rotation → magnetic.

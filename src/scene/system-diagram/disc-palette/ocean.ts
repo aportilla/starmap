@@ -39,8 +39,8 @@
 // path stays uniform.
 
 import { Color } from 'three';
-import { BODIES, Body, CLASS_COLOR, STARS } from '../../../data/stars';
-import { lerpColor } from '../color-science';
+import { Body, CLASS_COLOR, STARS } from '../../../data/stars';
+import { hostStarIdxOf, lerpColor } from '../color-science';
 import { hazeBlendFor } from './atmosphere';
 import { atmFracOf, clamp01, dustColorFor, WHITE_COLOR } from './shared';
 
@@ -117,13 +117,7 @@ function solventBaseColorFor(species: SolventSpecies): Color {
 const STELLAR_TINT_PULL_TO_WHITE = 0.55;
 
 function hostStarOf(body: Body): { cls: string } | null {
-  let starIdx: number | null = null;
-  if (body.kind === 'planet' && body.hostStarIdx !== null) {
-    starIdx = body.hostStarIdx;
-  } else if (body.kind === 'moon' && body.hostBodyIdx !== null) {
-    const host = BODIES[body.hostBodyIdx];
-    if (host !== undefined && host.hostStarIdx !== null) starIdx = host.hostStarIdx;
-  }
+  const starIdx = hostStarIdxOf(body);
   if (starIdx === null) return null;
   const star = STARS[starIdx];
   return star ? { cls: star.cls } : null;

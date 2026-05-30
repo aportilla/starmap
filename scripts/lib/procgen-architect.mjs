@@ -108,7 +108,7 @@
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, sampleBinomial, drawWeightedDeposits } from './prng.mjs';
 import { insolation, frostLineTrio, moonRadiusFromMass, solidSurfaceDensity, isolationMass, hillRadiusAu, keplerPeriodDays, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
-import { radiusFromMass } from './procgen.mjs';
+import { radiusFromMass, sampleOrbitalFlavor } from './procgen.mjs';
 import {
   PROCGEN_VERSION,
   PLANET_COUNT_BY_CLASS,
@@ -136,9 +136,6 @@ import {
   BULK_WATER_FRACTION_BY_ZONE,
   BULK_METAL_FRACTION_BY_ZONE,
   BULK_VOLATILE_FRACTION_BY_ZONE,
-  ECCENTRICITY,
-  INCLINATION_DEG,
-  AXIAL_TILT_DEG,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_PLACEMENT,
   BELT_RESOURCE_OCCURRENCE,
@@ -392,6 +389,7 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
     const eccPrng = moonPrng(planet.id, mIdx, 'ecc');
     const incPrng = moonPrng(planet.id, mIdx, 'inc');
     const tiltPrng = moonPrng(planet.id, mIdx, 'tilt');
+    const orbital = sampleOrbitalFlavor({ eccPrng, incPrng, tiltPrng, phasePrng });
     const bulkWaterPrng = moonPrng(planet.id, mIdx, 'bulk_water');
     const bulkMetalPrng = moonPrng(planet.id, mIdx, 'bulk_metal');
     const bulkVolatilePrng = moonPrng(planet.id, mIdx, 'bulk_volatile');
@@ -429,11 +427,11 @@ export function generateMoons(planet, star, hostFormationAu = null, frostLinesAu
       name: `${planet.formalName} ${ROMAN[mIdx] ?? `M${mIdx + 1}`}`,
       source: 'procgen',
       semiMajorAu: Number(semiMajorAu.toFixed(5)),
-      eccentricity: Number(sampleMixture(eccPrng, ECCENTRICITY).toFixed(4)),
-      inclinationDeg: Number(sampleTruncated(incPrng, INCLINATION_DEG).toFixed(2)),
+      eccentricity: orbital.eccentricity,
+      inclinationDeg: orbital.inclinationDeg,
       periodDays: Number(periodDays.toFixed(3)),
-      orbitalPhaseDeg: Number((phasePrng() * 360).toFixed(2)),
-      axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
+      orbitalPhaseDeg: orbital.orbitalPhaseDeg,
+      axialTiltDeg: orbital.axialTiltDeg,
       massEarth: Number(massEarth.toFixed(4)),
       radiusEarth: Number(radiusEarth.toFixed(4)),
       // CPD pebble-drift floor: any procgen moon's bulkWater is at
@@ -921,6 +919,7 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
   const incPrng = slotPrng(star.id, slotIdx, saltPrefix + 'inclination');
   const tiltPrng = slotPrng(star.id, slotIdx, saltPrefix + 'axial_tilt');
   const phasePrng = slotPrng(star.id, slotIdx, saltPrefix + 'orbital_phase');
+  const orbital = sampleOrbitalFlavor({ eccPrng, incPrng, tiltPrng, phasePrng });
   const bulkWaterPrng = slotPrng(star.id, slotIdx, saltPrefix + 'bulk_water');
   const bulkWaterFraction = sampleBulkWaterFraction(bulkWaterPrng, formationAu, diskCtx.frostLines);
   const bulkMetalPrng = slotPrng(star.id, slotIdx, saltPrefix + 'bulk_metal');
@@ -942,11 +941,11 @@ function buildPlanetCore(star, slotIdx, formationAu, letter, saltPrefix = '', di
     source: 'procgen',
     semiMajorAu: Number(formationAu.toFixed(4)),
     formationAu: Number(formationAu.toFixed(4)),
-    eccentricity: Number(sampleMixture(eccPrng, ECCENTRICITY).toFixed(4)),
-    inclinationDeg: Number(sampleTruncated(incPrng, INCLINATION_DEG).toFixed(2)),
+    eccentricity: orbital.eccentricity,
+    inclinationDeg: orbital.inclinationDeg,
     periodDays: Number(periodDays.toFixed(2)),
-    orbitalPhaseDeg: Number((phasePrng() * 360).toFixed(2)),
-    axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
+    orbitalPhaseDeg: orbital.orbitalPhaseDeg,
+    axialTiltDeg: orbital.axialTiltDeg,
     massEarth: Number(massEarth.toFixed(3)),
     radiusEarth: Number(radiusEarth.toFixed(3)),
     bulkWaterFraction,

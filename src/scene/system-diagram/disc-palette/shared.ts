@@ -21,6 +21,38 @@ export function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
 
+// GLSL-style smoothstep clamped to [0, 1] — 0 at/below e0, 1 at/above e1,
+// Hermite ease between. Mirrors the shader's built-in so CPU-derived ramps
+// match the curve the disc sub-passes (lava melt gates, ice globalness)
+// expect. Degenerate e0 === e1 acts as a hard step at e0.
+export function smoothstep01(e0: number, e1: number, x: number): number {
+  if (e0 === e1) return x < e0 ? 0 : 1;
+  const t = clamp01((x - e0) / (e1 - e0));
+  return t * t * (3 - 2 * t);
+}
+
+// Weighted RGB blend. Sums color × weight across entries (skipping
+// non-positive weights), returns the hue normalized by the total weight
+// plus that total. Normalization is folded in because every consumer wants
+// the averaged color, but the total weight is handed back because each uses
+// it differently downstream — the haze pass soft-caps it as 1 − exp(−w),
+// the rim merger treats it as a presence floor, the Rayleigh rim feeds it a
+// strength ratio. totalWeight 0 (channels zeroed) means nothing contributed,
+// so callers branch on totalWeight rather than re-checking emptiness.
+export interface ColorBlend { r: number; g: number; b: number; totalWeight: number; }
+export function weightedColorBlend(
+  entries: Iterable<{ color: { r: number; g: number; b: number }; weight: number }>,
+): ColorBlend {
+  let r = 0, g = 0, b = 0, totalWeight = 0;
+  for (const { color, weight } of entries) {
+    if (weight <= 0) continue;
+    r += color.r * weight; g += color.g * weight; b += color.b * weight;
+    totalWeight += weight;
+  }
+  if (totalWeight <= 0) return { r: 0, g: 0, b: 0, totalWeight: 0 };
+  return { r: r / totalWeight, g: g / totalWeight, b: b / totalWeight, totalWeight };
+}
+
 // All present atmospheric gases as [species, fraction] pairs, filtered to
 // positive fractions. The single walk over atm1/atm2/atm3 that every
 // atmosphere consumer shares (column color, haze contributors, Rayleigh

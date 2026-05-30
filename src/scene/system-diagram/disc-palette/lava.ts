@@ -22,16 +22,7 @@
 // deliberate — CPU resolves coverage/temp, GPU resolves where on the disc.
 
 import { Body } from '../../../data/stars';
-import { atmFracOf, clamp01 } from './shared';
-
-// GLSL-style smoothstep — 0 below e0, 1 above e1, Hermite ease between.
-// Mirrors the shader's built-in so the lava drives derived here match the
-// curve the molten sub-pass expects.
-function smoothstep(e0: number, e1: number, x: number): number {
-  if (e0 === e1) return x < e0 ? 0 : 1;
-  const t = clamp01((x - e0) / (e1 - e0));
-  return t * t * (3 - 2 * t);
-}
+import { atmFracOf, clamp01, smoothstep01 } from './shared';
 
 // Silicate-solidus melt ramp for INSOLATION-driven heat. Below ~700 K
 // rock is solid; by ~1500 K the surface is fully molten. A hot lava world
@@ -134,22 +125,22 @@ export function lavaDrivesFor(body: Body, surfaceAge: number): LavaDrives {
   const wf = body.waterFraction ?? 0;
   const iceF = body.iceFraction ?? 0;
   const resVolNorm = clamp01((body.resVolatiles ?? 0) / 10);
-  const heatMelt = smoothstep(LAVA_SOLIDUS_LOW_K, LAVA_SOLIDUS_HIGH_K, T);
+  const heatMelt = smoothstep01(LAVA_SOLIDUS_LOW_K, LAVA_SOLIDUS_HIGH_K, T);
   // Refractory (rock/metal vs. ice/volatile/water) surface fraction, fed
   // through a sharp gate. Io (water 0, ice 0, resVol 2) ≈ 0.86 → 1; lava /
   // magma worlds (dry) ≈ 1; Europa / frost worlds / hot water worlds
   // (0.1-0.3) → 0, so their internal heat or insolation never renders as
   // silicate lava.
   const refractory = (1 - wf) * (1 - iceF) * (1 - LAVA_VOLATILE_DAMP * resVolNorm);
-  const refractoryGate = smoothstep(LAVA_REFRACTORY_LOW, LAVA_REFRACTORY_HIGH, refractory);
+  const refractoryGate = smoothstep01(LAVA_REFRACTORY_LOW, LAVA_REFRACTORY_HIGH, refractory);
   // Tidal resurfacing (Io) — perpetually-repaved surface.
   const ventDrive =
-    smoothstep(LAVA_VENT_AGE_LOW, LAVA_VENT_AGE_HIGH, surfaceAge) *
-    smoothstep(LAVA_VENT_TECT_LOW, LAVA_VENT_TECT_HIGH, tect);
+    smoothstep01(LAVA_VENT_AGE_LOW, LAVA_VENT_AGE_HIGH, surfaceAge) *
+    smoothstep01(LAVA_VENT_TECT_LOW, LAVA_VENT_TECT_HIGH, tect);
   // Magma ocean — hot active interior surfacing melt below the solidus.
   const magmaDrive =
-    smoothstep(LAVA_MAGMA_TECT_LOW, LAVA_MAGMA_TECT_HIGH, tect) *
-    smoothstep(LAVA_MAGMA_T_LOW, LAVA_MAGMA_T_HIGH, T);
+    smoothstep01(LAVA_MAGMA_TECT_LOW, LAVA_MAGMA_TECT_HIGH, tect) *
+    smoothstep01(LAVA_MAGMA_T_LOW, LAVA_MAGMA_T_HIGH, T);
   const internalDrive = Math.max(ventDrive, magmaDrive);
   // Insolation fills the whole disc; internal melt stays sparse (capped)
   // so even Io / a magma ocean keeps dark crust between glowing lakes.
@@ -164,7 +155,7 @@ export function lavaDrivesFor(body: Body, surfaceAge: number): LavaDrives {
   // but the refractory gate scales it back to cold (no glow) on icy
   // bodies, so a high-activity cryovolcanic world doesn't fake silicate
   // lava.
-  const internalEmit = smoothstep(0, LAVA_INTERNAL_EMIT_SAT, internalDrive) * refractoryGate;
+  const internalEmit = smoothstep01(0, LAVA_INTERNAL_EMIT_SAT, internalDrive) * refractoryGate;
   const emissionT = Math.max(T, internalEmit * LAVA_INTERNAL_LAVA_T);
   const emissionTempNorm = clamp01((emissionT - LAVA_EMIT_T_MIN) / (LAVA_EMIT_T_MAX - LAVA_EMIT_T_MIN));
   // Composition hue nudge — abiotic surface sulfur (Io's SO2 outgassing,

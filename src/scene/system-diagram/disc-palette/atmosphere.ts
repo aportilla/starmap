@@ -12,7 +12,7 @@ import {
   RENDERER_SKIP_AEROSOLS, SCATTERING_COLOR, SCATTERING_POTENCY,
   stratosphericHazeStrengthFor,
 } from '../color-science';
-import { atmGasPairs, dustColorFor } from './shared';
+import { atmGasPairs, dustColorFor, weightedColorBlend } from './shared';
 
 // Outward rim width buckets for surface bodies — integer pixels of
 // atmospheric halo extending INTO SPACE beyond the disc edge. Driven
@@ -156,20 +156,21 @@ export function surfaceHazeContributors(body: Body): Array<{ color: Color; weigh
 export function scatteringRimFor(body: Body): { color: readonly [number, number, number]; strength: number } {
   const P = body.surfacePressureBar;
   if (P === null || P <= 0) return { color: [0, 0, 0], strength: 0 };
-  let mr = 0, mg = 0, mb = 0, rayW = 0, bulkW = 0;
+  // Rayleigh contributors feed the color blend; bulk-gas weight accrues over
+  // every gas (not just the scattering ones) so it stays a separate tail.
+  let bulkW = 0;
+  const scatter: Array<{ color: { r: number; g: number; b: number }; weight: number }> = [];
   for (const [gas, frac] of atmGasPairs(body)) {
     const sCol = SCATTERING_COLOR[gas];
     const sPotency = SCATTERING_POTENCY[gas] ?? 0;
-    if (sCol && sPotency > 0) {
-      const w = frac * sPotency;
-      mr += sCol.r * w; mg += sCol.g * w; mb += sCol.b * w; rayW += w;
-    }
+    if (sCol && sPotency > 0) scatter.push({ color: sCol, weight: frac * sPotency });
     bulkW += frac * (GAS_POTENCY[gas] ?? 0);
   }
+  const { r, g, b, totalWeight: rayW } = weightedColorBlend(scatter);
   if (rayW <= 0) return { color: [0, 0, 0], strength: 0 };
   const rs = rayW * HAZE_RAYLEIGH_SCALE;
   const bs = bulkW * HAZE_BULK_GAS_SCALE;
-  return { color: [mr / rayW, mg / rayW, mb / rayW], strength: rs / (rs + bs) };
+  return { color: [r, g, b], strength: rs / (rs + bs) };
 }
 
 // Multiplier applied to stratosphericHazeStrengthFor when folding the
@@ -198,16 +199,11 @@ export function hazeBlendFor(body: Body): { color: Color; opacity: number } {
       if (w > 0) contribs.push({ color: atmCol, weight: w });
     }
   }
-  let mr = 0, mg = 0, mb = 0, mw = 0;
-  for (const { color, weight } of contribs) {
-    if (weight <= 0) continue;
-    mr += color.r * weight; mg += color.g * weight; mb += color.b * weight;
-    mw += weight;
-  }
-  if (mw <= 0) return { color: new Color(0, 0, 0), opacity: 0 };
+  const { r, g, b, totalWeight } = weightedColorBlend(contribs);
+  if (totalWeight <= 0) return { color: new Color(0, 0, 0), opacity: 0 };
   return {
-    color: new Color(mr / mw, mg / mw, mb / mw),
-    opacity: 1 - Math.exp(-mw),
+    color: new Color(r, g, b),
+    opacity: 1 - Math.exp(-totalWeight),
   };
 }
 

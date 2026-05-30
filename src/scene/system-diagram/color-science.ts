@@ -148,6 +148,21 @@ export function lerpColor(base: Color, target: Color, amount: number): Color {
 // Resolves through the host chain: planet → its host star; moon → its
 // host planet → that planet's host star. Hostless bodies (procgen edge)
 // return null rather than guessing.
+// Resolve a body to the catalog index of the star it orbits, walking
+// moon → host-planet → star. Returns null when the chain is broken (no
+// host, or a moon whose host has no star). The single source for that
+// walk, shared by ocean stellar-tinting and biome stellar-shift — if the
+// host model grows (moons-of-moons, binary-host disambiguation) the change
+// lands here once instead of in two hand-synced copies.
+export function hostStarIdxOf(body: Body): number | null {
+  if (body.kind === 'planet' && body.hostStarIdx !== null) return body.hostStarIdx;
+  if (body.kind === 'moon' && body.hostBodyIdx !== null) {
+    const host = BODIES[body.hostBodyIdx];
+    if (host !== undefined && host.hostStarIdx !== null) return host.hostStarIdx;
+  }
+  return null;
+}
+
 export function biomePaintFor(body: Body): { color: Color; coverage: number } | null {
   const arch = body.biosphereArchetype;
   const impact = body.biosphereSurfaceImpact;
@@ -156,13 +171,7 @@ export function biomePaintFor(body: Body): { color: Color; coverage: number } | 
   const base = BIOME_TINT_COLOR[arch];
   if (base === null) return null;
 
-  let starIdx: number | null = null;
-  if (body.kind === 'planet' && body.hostStarIdx !== null) {
-    starIdx = body.hostStarIdx;
-  } else if (body.kind === 'moon' && body.hostBodyIdx !== null) {
-    const host = BODIES[body.hostBodyIdx];
-    if (host !== undefined && host.hostStarIdx !== null) starIdx = host.hostStarIdx;
-  }
+  const starIdx = hostStarIdxOf(body);
   if (starIdx === null) return null;
   const shift = BIOME_STELLAR_SHIFT[STARS[starIdx].cls];
   if (shift === null) return null;
