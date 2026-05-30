@@ -136,9 +136,10 @@ export const BELT_HEIGHT_FACTOR = 3.0;
 export const BELT_CHUNKS_MIN = 20;
 export const BELT_CHUNKS_MAX = 50;
 // Per-chunk polygon half-extent in env-px. A chunk's silhouette is one
-// of the BLOB_SHAPES inscribed in a unit circle, scaled by this size
-// and rotated by a per-chunk angle, so the visible footprint is roughly
-// (2*size) × (2*size) with the polygon filling ~60% of the bbox.
+// of the blob.ts shape-library polygons (POTATO_SHAPES / CRYSTAL_SHAPES)
+// inscribed in a unit circle, scaled by this size and rotated by a
+// per-chunk angle, so the visible footprint is roughly (2*size) ×
+// (2*size) with the polygon filling ~60% of the bbox.
 export const BELT_CHUNK_SIZES = [2, 3, 4, 5, 6];
 
 // --- Rings ---
