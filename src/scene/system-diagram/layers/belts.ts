@@ -7,13 +7,14 @@ import { BODIES } from '../../../data/stars';
 import { beltRingColor, bodyIcyness } from '../color-science';
 import {
   BELT_CHUNKS_MAX, BELT_CHUNKS_MIN, BELT_CHUNK_SIZES, BELT_HEIGHT_FACTOR,
-  BELT_SLOT_WIDTH, PLANET_DISC_MIN, RENDER_ORDER_BELT, Z_BELT, Z_STRIDE,
+  BELT_SLOT_WIDTH, PLANET_DISC_MIN, RENDER_ORDER_BELT, Z_BELT,
 } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
 import {
   bakeBlob, buildChunkPool, sampleBeltChunks, shapesFor, type ChunkPool,
 } from './blob';
 import { hash32, mulberry32 } from '../geom/prng';
+import { bandZ, snapPx } from '../geom/snap';
 import { writeLightUniforms } from '../lighting';
 import { disposePool } from './dispose';
 import type { DiagramPick, StarLightSource } from '../types';
@@ -40,7 +41,10 @@ interface BeltSlot {
   // without re-walking rowSlots (matches the moon/planet picker shape).
   cx: number;
   cy: number;
-  // Bounding box half-extents used by the picker.
+  // Bounding box half-extents used by the picker. halfH is clamped to
+  // the baked chunk-cluster extent (not the full slot height) so the
+  // hit-box bounds the visible scatter rather than the empty sky above
+  // and below a tall row.
   halfW: number;
   halfH: number;
 }
@@ -84,15 +88,15 @@ export class BeltsLayer {
       const slot = this.pool.slots[bi];
       slot.cx = item.cx;
       slot.cy = item.cy;
-      const z = slot.rowIdx * Z_STRIDE + Z_BELT;
+      const z = bandZ(slot.rowIdx, Z_BELT);
       for (let v = slot.startVertex; v < slot.endVertex; v++) {
         const off    = slot.chunkOffsets[v - slot.startVertex];
         const cOff   = slot.chunkCenterOffsets[v - slot.startVertex];
-        positions[v * 3 + 0] = Math.round(item.cx + off.dx);
-        positions[v * 3 + 1] = Math.round(item.cy + off.dy);
+        positions[v * 3 + 0] = snapPx(item.cx + off.dx);
+        positions[v * 3 + 1] = snapPx(item.cy + off.dy);
         positions[v * 3 + 2] = z;
-        chunkCenters[v * 2 + 0] = Math.round(item.cx + cOff.dx);
-        chunkCenters[v * 2 + 1] = Math.round(item.cy + cOff.dy);
+        chunkCenters[v * 2 + 0] = snapPx(item.cx + cOff.dx);
+        chunkCenters[v * 2 + 1] = snapPx(item.cy + cOff.dy);
       }
       bi++;
     }
@@ -136,6 +140,12 @@ export class BeltsLayer {
   }
 }
 
+// Extra pixels added around the baked chunk-cluster extent when sizing
+// the picker hit-box, so a click landing just outside the outermost
+// chunk still selects the belt without re-extending into the empty
+// sky the full slot box used to cover.
+const BELT_PICK_PAD_PX = 2;
+
 // For each belt, sample N center-weighted non-overlapping chunks via
 // sampleBeltChunks, bake each chunk's polygon vertices, and concatenate
 // into one indexed triangle mesh. Chunk counts scale log-uniformly with
@@ -170,6 +180,18 @@ function buildBeltPool(
     const shapes = shapesFor(icyness);
     const chunks = sampleBeltChunks(rng, N, halfW, halfH, BELT_CHUNK_SIZES, shapes);
 
+    // Picker halfH tracks the real chunk scatter, not the full slot box.
+    // Chunks cluster near center (Gaussian SD = halfH·CHUNK_CY_SD_FRAC), so
+    // a tall slot (sized off the largest planet on the row) leaves empty
+    // sky above/below the band that would otherwise still report a hit.
+    // Each shape is inscribed in the unit circle, so a chunk reaches at
+    // most |cy| + size from center; clamp to that extent plus a small pad.
+    let chunkHalfH = 0;
+    for (const chunk of chunks) {
+      chunkHalfH = Math.max(chunkHalfH, Math.abs(chunk.cy) + chunk.size);
+    }
+    const pickHalfH = Math.min(halfH, chunkHalfH + BELT_PICK_PAD_PX);
+
     const slotStart = cursor;
     const offsets:        { dx: number; dy: number }[] = [];
     const centerOffsets:  { dx: number; dy: number }[] = [];
@@ -201,7 +223,7 @@ function buildBeltPool(
       chunkOffsets: offsets,
       chunkCenterOffsets: centerOffsets,
       cx: 0, cy: 0,   // filled by layout()
-      halfW, halfH,
+      halfW, halfH: pickHalfH,
     });
   }
   return buildChunkPool(

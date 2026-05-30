@@ -29,6 +29,7 @@ import {
 } from 'three';
 import { STARS, STAR_CLUSTERS } from '../data/stars';
 import { renderedStarPxSize } from './materials';
+import { projectWorldToBuffer } from './project-buffer';
 
 export type BracketStyle = 'arms' | 'dots';
 
@@ -83,13 +84,14 @@ export class ClusterBrackets {
   private currentSize = -1;
 
   // Reusable per-frame scratch.
-  private readonly _proj = new Vector3();
   private readonly _world = new Vector3();
   private readonly _view = new Vector3();
-  private readonly _screen = { x: 0, y: 0 };
+  // Doubles as projectWorldToBuffer's projection scratch + screen-coord out
+  // vector (.x/.y are the buffer-pixel result; .z is throwaway NDC depth).
+  private readonly _screen = new Vector3();
 
-  // Set per-frame from scene.ts so projectToBuffer can short-circuit the
-  // orbit-target equality case (see projectToBuffer).
+  // Set per-frame from scene.ts so projectWorldToBuffer can short-circuit the
+  // orbit-target equality case (see project-buffer.ts).
   private viewTarget: Vector3 | null = null;
 
   constructor(style: BracketStyle) {
@@ -117,44 +119,6 @@ export class ClusterBrackets {
   // members and sizes the bracket to enclose them.
   setCluster(idx: number): void {
     this.clusterIdx = idx;
-  }
-
-  // Project a world position into buffer-pixel coords (Y-up, origin at
-  // bottom-left). Returns false if the point sits behind the near plane or
-  // beyond the far plane — caller skips it from the bbox.
-  //
-  // Two stability gates, same shape as Labels.projectToBuffer:
-  //
-  // 1. **viewTarget short-circuit.** When the world point is bit-exactly
-  //    the camera's orbit target, the projection is NDC (0,0) by
-  //    construction; skipping the matrix math pins the result to exact
-  //    buffer center. Fires for the COM-anchor on every selected cluster
-  //    and additionally for the member projection on any cluster where
-  //    (mass * x) / mass round-trips to the primary's coordinates bit-
-  //    exact (Sol, YZ Ceti, every power-of-2 mass).
-  //
-  // 2. **Pre-snap to nearest 0.5 buffer px.** Catches the cases where
-  //    the short-circuit silently misses by 1 ULP — e.g. Tau Ceti's
-  //    (mass=0.783, x=10.293…) round-trips with a single-bit error on x.
-  //    Without this snap, the member's screen.x lands at `cx + ε` with
-  //    ε non-zero but tiny, `dx = r + |ε|`, and
-  //    `Math.ceil(2 * (r + 4 + |ε|))` flips between `2r+8` and `2r+9`
-  //    as ε's magnitude crosses the ULP threshold of the addition.
-  //    Snapping screen.x/y to a multiple of 0.5 here zeroes |screen − cx|
-  //    when the projection lands within ¼ px of the snapped anchor (which
-  //    a focused star always does), so the ceil input is an exact
-  //    integer and the size is deterministic.
-  private projectToBuffer(world: Vector3, camera: Camera): boolean {
-    if (this.viewTarget && world.equals(this.viewTarget)) {
-      this._screen.x = this.bufferW * 0.5;
-      this._screen.y = this.bufferH * 0.5;
-      return true;
-    }
-    this._proj.copy(world).project(camera);
-    if (this._proj.z < -1 || this._proj.z > 1) return false;
-    this._screen.x = Math.round((this._proj.x * 0.5 + 0.5) * this.bufferW * 2) / 2;
-    this._screen.y = Math.round((this._proj.y * 0.5 + 0.5) * this.bufferH * 2) / 2;
-    return true;
   }
 
   // On-screen disc diameter (buffer px) for a star under the current camera,
@@ -203,16 +167,16 @@ export class ClusterBrackets {
 
     // Anchor the bracket on the cluster COM rather than the bbox midpoint
     // of projected members. When view.target sits on this COM (i.e. the
-    // camera is orbiting the selected cluster), projectToBuffer's NDC-(0,0)
-    // short-circuit pins the anchor to exact buffer center — otherwise the
-    // bbox midpoint inherits the matrix's ~1e-7 NDC FP noise and the
-    // bracket twitches 1px laterally every orbit frame as placeAt()'s
+    // camera is orbiting the selected cluster), projectWorldToBuffer's
+    // NDC-(0,0) short-circuit pins the anchor to exact buffer center —
+    // otherwise the bbox midpoint inherits the matrix's ~1e-7 NDC FP noise
+    // and the bracket twitches 1px laterally every orbit frame as placeAt()'s
     // Math.round crosses pixel boundaries. Routing the anchor through
-    // projectToBuffer (rather than through the per-member bbox midpoint)
+    // projectWorldToBuffer (rather than through the per-member bbox midpoint)
     // is what lets the trick apply: view.target only ever equals the COM,
     // never an arbitrary member.
     this._world.set(cluster.com.x, cluster.com.y, cluster.com.z);
-    if (!this.projectToBuffer(this._world, camera)) {
+    if (!projectWorldToBuffer(this._world, camera, this.viewTarget, this.bufferW, this.bufferH, this._screen)) {
       this.mesh.visible = false;
       return;
     }
@@ -225,13 +189,13 @@ export class ClusterBrackets {
     // single-member clusters collapse to a tight square around the disc.
     // Per-member FP noise now only nudges this radius (one Math.ceil hop),
     // never the position. If a member is behind the camera
-    // (projectToBuffer false) we still draw brackets around the visible
+    // (projectWorldToBuffer false) we still draw brackets around the visible
     // ones rather than hiding the whole bracket.
     let radius = 0;
     for (const memIdx of cluster.members) {
       const s = STARS[memIdx];
       this._world.set(s.x, s.y, s.z);
-      if (!this.projectToBuffer(this._world, camera)) continue;
+      if (!projectWorldToBuffer(this._world, camera, this.viewTarget, this.bufferW, this.bufferH, this._screen)) continue;
       const r = this.computeRenderedStarSize(memIdx, camera) * 0.5;
       const dx = Math.abs(this._screen.x - cx) + r;
       const dy = Math.abs(this._screen.y - cy) + r;

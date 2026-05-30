@@ -288,9 +288,9 @@ export const CONDENSATE_COLOR: Partial<Record<AtmGas, Color>> = {
 // surface-pressure model implied. These scales are calibrated against
 // thick-column anchors (Titan-class for aerosol, Venus-class for bulk
 // gas). Tune these globals, not per-species coefficients, if anchors
-// drift. Mirror of HAZE_*_SCALE in procgen-priors.mjs — kept in sync
-// by hand (a future refactor could ship them via the catalog JSON so
-// there's one source of truth).
+// drift. This is the single source of truth: the haze category scales
+// are applied renderer-side (disc-palette/atmosphere.ts), not in procgen,
+// which emits raw 0..1 strengths.
 export const HAZE_BULK_GAS_SCALE = 0.2;
 export const HAZE_AEROSOL_SCALE  = 1.25;
 export const HAZE_DUST_SCALE     = 3.0;

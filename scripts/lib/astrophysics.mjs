@@ -61,6 +61,16 @@ export function keplerSemiMajorAu(periodDays, hostMassSolar) {
   return Math.pow(pYears * pYears * hostMassSolar, 1 / 3);
 }
 
+// Kepler-derived semi-major axis rounded to the 5 dp the catalog
+// serializes at. Returns the rounded NUMBER, or null when the inverse
+// has no solution (missing period / non-positive host mass). The three
+// backfill/fill sites that recover semiMajorAu from periodDays share this
+// so the inversion + rounding precision can't drift between them.
+export function deriveSemiMajorAu(periodDays, hostMassSolar) {
+  const a = keplerSemiMajorAu(periodDays, hostMassSolar);
+  return a == null ? null : Number(a.toFixed(5));
+}
+
 // Stellar metallicity proxy from spectral class. Returns a coarse [Fe/H]
 // estimate (-0.5 to +0.3 dex) per spectral class typical-population
 // mapping. Higher metallicity → more refractory + radioactive material

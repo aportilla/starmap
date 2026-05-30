@@ -11,7 +11,7 @@
 
 import { BufferGeometry, Group, Line, LineSegments, Object3D, ShaderMaterial, Vector3 } from 'three';
 import { snappedLineMat } from './materials';
-import { GRID_FADE_NEAR, GRID_FADE_FAR } from './cluster-fade';
+import { GRID_FADE_NEAR, GRID_FADE_FAR, clampRamp } from './cluster-fade';
 
 const GRID_OPACITY  = 0.32;
 const ARROW_OPACITY = 0.45;
@@ -264,10 +264,7 @@ export class Grid {
   private applyZoomFade(f: Frame, cameraPos: Vector3): void {
     if (f.state === 'idle') return;
     const dCam = cameraPos.distanceTo(f.position);
-    let ramp: number;
-    if (dCam <= GRID_FADE_NEAR) ramp = 1;
-    else if (dCam >= GRID_FADE_FAR) ramp = 0;
-    else ramp = 1 - (dCam - GRID_FADE_NEAR) / (GRID_FADE_FAR - GRID_FADE_NEAR);
+    const ramp = clampRamp(dCam, GRID_FADE_NEAR, GRID_FADE_FAR);
     f.lineMat.uniforms.uOpacity.value  = ramp * GRID_OPACITY;
     f.arrowMat.uniforms.uOpacity.value = ramp * ARROW_OPACITY;
   }

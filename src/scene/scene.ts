@@ -1,4 +1,5 @@
 import {
+  type Intersection,
   PerspectiveCamera,
   Raycaster,
   Scene,
@@ -137,6 +138,10 @@ export class StarmapScene {
   // Used to hand a Vector3-shaped COM to subsystems (Grid.setSelection)
   // whose APIs expect a Vector3 — STAR_CLUSTERS[i].com is a plain {x,y,z}.
   private readonly _comScratch = new Vector3();
+  // Reused raycast result target — pickStar runs every tick the pointer is
+  // over the canvas, so the hits array is cleared and refilled in place
+  // rather than letting intersectObject allocate a fresh array per call.
+  private readonly _hits: Intersection[] = [];
   private static readonly WORLD_UP = new Vector3(0, 0, 1);
 
   private lastTickMs = 0;
@@ -480,7 +485,8 @@ export class StarmapScene {
       -(clientY / this.viewport.cssH) * 2 + 1,
     );
     this.raycaster.setFromCamera(this._ndc, this.camera);
-    const hits = this.raycaster.intersectObject(this.starPoints.points);
+    this._hits.length = 0;
+    const hits = this.raycaster.intersectObject(this.starPoints.points, false, this._hits);
     let bestD = Infinity;
     let bestIdx = -1;
     for (const h of hits) {

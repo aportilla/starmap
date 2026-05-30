@@ -4,7 +4,7 @@
 
 import { Color, ShaderMaterial, Vector2, Vector3 } from 'three';
 import { PIVOT_FADE_FAR, PIVOT_FADE_NEAR } from '../cluster-fade';
-import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snappedMaterials } from './shared';
+import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snapClipToGlPosition, snappedMaterials } from './shared';
 
 // ─── Stars shader style constants ──────────────────────────────────────────
 // Tuning knobs hoisted out of the raw shader source so they sit at the top
@@ -87,16 +87,16 @@ export function snappedLineMat(opts: SnappedLineOptions): ShaderMaterial {
     uniforms: {
       uColor:    { value: new Color(opts.color) },
       uOpacity:  { value: opts.opacity ?? 1.0 },
-      uViewport: { value: new Vector2(window.innerWidth, window.innerHeight) },
+      // 0,0 until first resize overwrites via setSnappedLineViewport — the
+      // snap math needs the drawing-buffer size, not CSS px.
+      uViewport: { value: new Vector2() },
     },
     vertexShader: `
       uniform vec2 uViewport;
       ${PIXEL_SNAP_GLSL}
       void main() {
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        vec2 px  = snapToPixelGrid(clip.xy / clip.w, uViewport, 0.0);
-        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
-        gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
+        ${snapClipToGlPosition('clip.xy / clip.w', '0.0')}
       }
     `,
     fragmentShader: `
@@ -127,7 +127,9 @@ export function snappedDotsMat(opts: { color: number; opacity?: number }): Shade
     uniforms: {
       uColor:    { value: new Color(opts.color) },
       uOpacity:  { value: opts.opacity ?? 1.0 },
-      uViewport: { value: new Vector2(window.innerWidth, window.innerHeight) },
+      // 0,0 until first resize overwrites via setSnappedLineViewport — the
+      // snap math needs the drawing-buffer size, not CSS px.
+      uViewport: { value: new Vector2() },
     },
     vertexShader: `
       uniform vec2 uViewport;
@@ -136,9 +138,7 @@ export function snappedDotsMat(opts: { color: number; opacity?: number }): Shade
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         // oddOff 0.5 snaps to pixel CENTER (integer + 0.5) so a size-1
         // point covers exactly one buffer pixel rather than straddling two.
-        vec2 px  = snapToPixelGrid(clip.xy / clip.w, uViewport, 0.5);
-        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
-        gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
+        ${snapClipToGlPosition('clip.xy / clip.w', '0.5')}
         gl_PointSize = 1.0;
       }
     `,
@@ -171,7 +171,9 @@ export function makeStarsMaterial(initialPxScale: number): ShaderMaterial {
   const m = new ShaderMaterial({
     uniforms: {
       uPxScale: { value: initialPxScale },
-      uViewport: { value: new Vector2(window.innerWidth, window.innerHeight) },
+      // 0,0 until first resize overwrites via setSnappedLineViewport — the
+      // snap math needs the drawing-buffer size, not CSS px.
+      uViewport: { value: new Vector2() },
       // World position of the camera's orbit target. The vertex with this
       // exact position projects to NDC (0,0) by construction; bypassing the
       // matrix math for that one vertex kills the 1px disc twitch caused by
@@ -277,10 +279,8 @@ export function makeStarsMaterial(initialPxScale: number): ShaderMaterial {
         // noise to flip the parity-aware snap below by 1 pixel each frame
         // as yaw/pitch rotate. Substitute exact (0,0) for that vertex only.
         vec2 ndcSeed = all(equal(position, uFocusWorld)) ? vec2(0.0) : (clip.xy / clip.w);
-        vec2 px = snapToPixelGrid(ndcSeed, uViewport, oddOff);
+        ${snapClipToGlPosition('ndcSeed', 'oddOff')}
         vCenter = px;
-        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
-        gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
       }
     `,
     fragmentShader: `

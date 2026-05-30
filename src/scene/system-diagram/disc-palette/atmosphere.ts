@@ -218,19 +218,18 @@ export function hazeBlendFor(body: Body): { color: Color; opacity: number } {
 // GAS_COLOR entries are already chosen pale enough that the result
 // reads as a natural "lighter at the limb" effect.
 export function atmColumnColor(body: Body): Color | null {
-  let r = 0, g = 0, b = 0, totalW = 0;
+  // Potency fallback is `?? 1` here (not the haze path's `?? 0`): the column
+  // tint must resolve even for a gas with no curated potency, since it's the
+  // disc base on no-surface bodies — a missing entry shouldn't blank the void.
+  const entries: Array<{ color: { r: number; g: number; b: number }; weight: number }> = [];
   for (const [gas, frac] of atmGasPairs(body)) {
     const col = GAS_COLOR[gas];
     if (!col) continue;
-    const w = frac * (GAS_POTENCY[gas] ?? 1);
-    if (w <= 0) continue;
-    r += col.r * w;
-    g += col.g * w;
-    b += col.b * w;
-    totalW += w;
+    entries.push({ color: col, weight: frac * (GAS_POTENCY[gas] ?? 1) });
   }
-  if (totalW <= 0) return null;
-  return new Color(r / totalW, g / totalW, b / totalW);
+  const { r, g, b, totalWeight } = weightedColorBlend(entries);
+  if (totalWeight <= 0) return null;
+  return new Color(r, g, b);
 }
 
 // Earth-normalized atmospheric column-mass proxy for vertical viewing

@@ -110,7 +110,7 @@
 // comments in `procgen.mjs:hazeContribution` and the `CONDENSABLES`
 // table in `procgen-priors.mjs` for per-species rationale.
 //
-// Color tables (two layers) live in `src/data/stars.ts`:
+// Color tables (two layers) live in `../color-science`:
 //   GAS_COLOR        — visible hue when the species is gas-phase or
 //                      photochemistry aerosol (CH4 cyan, H2/He cream,
 //                      THOLIN orange, NH4SH brown, H2SO4 sulfate, etc.)
@@ -293,7 +293,7 @@ export interface DiscPalette {
   // suppression gates as waterFrac.
   readonly iceFrac: number;
   // Biome stipple — pigment color (archetype × stellar shift; see
-  // biomePaintFor in stars.ts) packed as [r,g,b], and coverage density
+  // biomePaintFor in color-science.ts) packed as [r,g,b], and coverage density
   // [0..1] scaled off biosphereSurfaceImpact. Suppressed on no-surface
   // bodies, tiny discs, and bodies with no surface signature.
   readonly biomeColor: readonly [number, number, number];
@@ -457,6 +457,9 @@ export function buildDiscPalette(
       const a0 = res[0].abundance;
       const a1 = res[1]?.abundance ?? 0;
       const arch0 = applyPerBodyTints(rockArchetypeFor(k0, null, 1), body, seed);
+      // a0 / (a0 + a1) needs no zero guard: dominantResources filters to
+      // value > 0, so res[0] (and thus a0) is always strictly positive when
+      // res.length > 0 — the denominator can't vanish.
       const arch1 = applyPerBodyTints(
         k1 !== null ? rockArchetypeFor(k0, k1, a0 / (a0 + a1)) : arch0,
         body, seed,
@@ -505,7 +508,20 @@ export function buildDiscPalette(
   const iceFrac    = surfaceSuppressed ? 0   : (body.iceFraction   ?? 0);
   const surfaceAge = surfaceSuppressed ? 0.5 : (body.surfaceAge ?? 0.5);
   const globalness = surfaceSuppressed ? 0   : globalnessForTemp(body.avgSurfaceTempK);
-  const oceanColor = surfaceSuppressed ? OCEAN_FALLBACK_COLOR : oceanColorFor(body);
+
+  // Unified haze blend — one color + one opacity per body, derived
+  // from the atmospheric contributor list (bulk gases × pressure ×
+  // potency, Rayleigh scattering, formation-gated aerosol products,
+  // lifted dust). Runs for every body now that the surface gate is
+  // gone; gas giants typically land at low hazeOpacity from bulk
+  // atm contributions alone (no surfacePressureBar → 0 for those
+  // contributors, only aerosol formation gates fire). Computed once
+  // here and threaded into oceanColorFor (its Fresnel sky-reflect
+  // pathway needs the same blend) so the contributor walk runs once.
+  const hazeRaw = tinyDisc
+    ? { color: new Color(0, 0, 0), opacity: 0 }
+    : hazeBlendFor(body);
+  const oceanColor = surfaceSuppressed ? OCEAN_FALLBACK_COLOR : oceanColorFor(body, hazeRaw);
 
   // ── LAVA / MOLTEN-SURFACE EMISSION — three continuous melt drives folded
   // to (coverage, emission temp, sulfur hue). See lavaDrivesFor in ./lava.
@@ -569,16 +585,6 @@ export function buildDiscPalette(
         return decks;
       })();
 
-  // Unified haze blend — one color + one opacity per body, derived
-  // from the atmospheric contributor list (bulk gases × pressure ×
-  // potency, Rayleigh scattering, formation-gated aerosol products,
-  // lifted dust). Runs for every body now that the surface gate is
-  // gone; gas giants typically land at low hazeOpacity from bulk
-  // atm contributions alone (no surfacePressureBar → 0 for those
-  // contributors, only aerosol formation gates fire).
-  const hazeRaw = tinyDisc
-    ? { color: new Color(0, 0, 0), opacity: 0 }
-    : hazeBlendFor(body);
   const hazeOpacity = hazeRaw.opacity;
   const hazeColorRgb: readonly [number, number, number] = [hazeRaw.color.r, hazeRaw.color.g, hazeRaw.color.b];
 
@@ -598,6 +604,11 @@ export function buildDiscPalette(
     // sees the sum of cloud chemistry.
     for (const dl of cloudLayers) {
       const cr = dl.color[0], cg = dl.color[1], cb = dl.color[2];
+      // Channel-sum > 0 is a proxy for "real condensate" — it drops the
+      // BLACK_COLOR fallback cloudDeckPalette emits for a gas with no
+      // CONDENSATE_COLOR/GAS_COLOR entry. Safe only because every curated
+      // condensate/gas color is non-black; a legitimately near-black deck
+      // would be silently skipped here.
       if ((cr + cg + cb) > 0) entries.push({ color: { r: cr, g: cg, b: cb }, weight: dl.coverage });
     }
     if (hasSurface) {

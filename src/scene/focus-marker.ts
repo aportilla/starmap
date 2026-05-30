@@ -38,6 +38,7 @@ import {
   DROPLINE_COLOR_DOTS,
   DROPLINE_DOT_PERIOD_LY,
   DROPLINE_DEGENERATE_DIST,
+  invRamp,
 } from './cluster-fade';
 
 // Ring matches the grid rings (same blue, same base opacity at full ramp)
@@ -142,9 +143,7 @@ export class FocusMarker {
     this.group.visible = true;
     this.group.position.copy(viewTarget);
 
-    const ramp = anchorDist >= FOCUS_MARKER_FAR
-      ? 1
-      : (anchorDist - FOCUS_MARKER_NEAR) / (FOCUS_MARKER_FAR - FOCUS_MARKER_NEAR);
+    const ramp = invRamp(anchorDist, FOCUS_MARKER_NEAR, FOCUS_MARKER_FAR);
     this.ringMat.uniforms.uOpacity.value = ramp * RING_BASE_OPACITY;
 
     // Dropline portion: only when a cluster is selected — that's the

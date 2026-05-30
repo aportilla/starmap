@@ -51,6 +51,12 @@ scripts/                    Star-data tooling — read scripts/README.md first
   inspect-csv.mjs           Pretty-print one CSV row with column names
   lookup-star.mjs           Ad-hoc: name (or distance range) → catalog URL
   lib/catalog-index.mjs     Shared catalog parsing, name matching, CSV, redirects
+  lib/procgen-architect.mjs Architect: top-down system gen (generateSystem/Overlay, moons, rings, belts) from disk physics
+  lib/procgen.mjs           Filler: bottom-up fillBody (14 passes) → every _unknowns field; shared body-derivation helpers
+  lib/procgen-priors.mjs    Procgen tuning surface — all priors as plain JS data (counts, zones, occurrence, thresholds)
+  lib/astrophysics.mjs      Shared physics: luminositySun / insolation / Kepler / isolationMass / deriveSemiMajorAu
+  lib/prng.mjs              hash32 + mulberry32 + sampling helpers + drawWeightedDeposits (+ .d.mts type surface)
+  lib/gas-potency.mjs       GAS_POTENCY table — single source for renderer + procgen cirrus gate (+ .d.mts type surface)
 src/
   main.ts                   Bootstrap: fonts, canvas, AppController, splash dismissal
   styles.css                Body reset + canvas (splash CSS is inline in index.html)
@@ -87,13 +93,15 @@ src/
         prng.ts             re-exports hash32 + mulberry32 from scripts/lib/prng.mjs (single source)
         cull.ts             disableCulling: frustum-cull opt-out for pools that rewrite vertex positions
         hit.ts              hitCircle point-in-disc test + pickDiscPool slot-walk shared by the disc layers (sibling of ring.ts's hitsRing)
+        snap.ts             snapPx + parity-aware snapPxParity + bandZ (rowIdx·Z_STRIDE+layerZ) — pixel-snap + z-band math shared by the diagram layers
     input-controller.ts     InputController: classifies pointer/keyboard gestures into intents
     selection-policy.ts     Per-tick view-state derivations: candidate rule, focus-proximity, orbit-keyed star-dim ramp
     grid.ts                 Range rings + axes + galactic-centre arrow; ring expand/collapse choreography
     droplines.ts            Per-cluster vertical pins to the selected COM.z plane
-    cluster-fade.ts         Distance fade thresholds shared by labels, droplines, and the star pivot-dim
+    cluster-fade.ts         Distance fade thresholds + clampRamp/invRamp ramp helpers shared by labels, droplines, grid, focus-marker, selection-policy
     focus-marker.ts         view.target ring + dropline; fades in when pivot pans off anchors
     dot-pin.ts              fillVerticalDotPin: shared dotted Z-column writer (droplines + focus-marker)
+    project-buffer.ts       projectWorldToBuffer: shared world→buffer-pixel projection (view-target short-circuit + 0.5-px pre-snap) used by labels + cluster-brackets
     cluster-brackets.ts     Yellow corner brackets — selection arms + candidate dots
     stars.ts                gl.POINTS starfield with per-star size + color
     labels.ts               Bitmap-font overlay pass: star names + axis ticks
@@ -477,7 +485,7 @@ Suppressed entirely during the focus glide — while `view.target` is in transit
 
 Yellow corner brackets enclosing a cluster's rendered-disc bbox live in `src/scene/cluster-brackets.ts` (`ClusterBrackets`). Two instances render simultaneously into the labels overlay scene:
 
-- **Selection brackets** (`style: 'arms'`) — full L-corner reticle around the currently-selected cluster. Anchored on the cluster's COM (which is exactly where `view.target` parks after focus completes) and sized as a square large enough to enclose every member's rendered disc — single-member clusters collapse to a tight box, binaries/triples grow symmetrically around the COM. Anchoring on the COM rather than the per-frame member bbox midpoint pins the bracket to the same NDC-(0,0) short-circuit `Labels.projectToBuffer` uses, so sub-pixel FP noise in the matrix math can't twitch the reticle 1 px laterally while the camera orbits. Cleared when the selection clears.
+- **Selection brackets** (`style: 'arms'`) — full L-corner reticle around the currently-selected cluster. Anchored on the cluster's COM (which is exactly where `view.target` parks after focus completes) and sized as a square large enough to enclose every member's rendered disc — single-member clusters collapse to a tight box, binaries/triples grow symmetrically around the COM. Anchoring on the COM rather than the per-frame member bbox midpoint pins the bracket to the same NDC-(0,0) short-circuit the shared `projectWorldToBuffer` (in `project-buffer.ts`) applies, so sub-pixel FP noise in the matrix math can't twitch the reticle 1 px laterally while the camera orbits. Cleared when the selection clears.
 - **Candidate brackets** (`style: 'dots'`) — single-pixel corners (same color, same brightness, same corner positions as the selection arms) around the *candidate* cluster. The dot corners sit exactly where the arms would, so promoting a candidate to selection grows arms outward from the same dots with no positional shift.
 
 **Only one candidate at a time.** The candidate slot is filled by, in priority order:

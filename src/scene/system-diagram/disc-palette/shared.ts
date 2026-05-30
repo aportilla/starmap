@@ -97,6 +97,11 @@ export function dustColorFor(body: Body): Color {
   // surface palette grey-lerp, not here.
   const total = resources.reduce((s, e) => s + e.abundance, 0);
   if (total <= 0) return DUST_FALLBACK_COLOR;
+  // Kept as a hand-rolled pre-divide blend (Σ color·(abundance/total)) rather
+  // than routed through weightedColorBlend, which normalizes post-divide
+  // (Σ color·abundance / total). The two differ in IEEE-754 rounding order, so
+  // converting would shift this actively-tuned color path; the inline form is
+  // the canonical one.
   let r = 0, g = 0, b = 0;
   for (const { color, abundance } of resources) {
     const w = abundance / total;

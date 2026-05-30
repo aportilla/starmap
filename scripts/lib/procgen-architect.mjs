@@ -15,7 +15,7 @@
 //
 //   Σ(a) = MMSN_NORMALIZATION × M_star × a^(-1.5)  with per-frost-line
 //          jumps from SNOW_LINE_BOOSTS at H2O / NH3 / CH4 lines
-//   M_iso(a) = (2π a² Σ)^1.5 / √(3 M_star)              isolation mass
+//   M_iso(a) = (8π a² Σ)^1.5 / √(3 M_star)              isolation mass
 //   core mass = M_iso × ACCRETION_EFFICIENCY[zone]      inner: heavy-
 //                                                      tailed mergers;
 //                                                      outer: modest
@@ -108,7 +108,7 @@
 
 import { hash32, mulberry32, sampleNormal, sampleTruncated, sampleLogTruncated, samplePhysical, sampleMixture, sampleBinomial, drawWeightedDeposits } from './prng.mjs';
 import { insolation, frostLineTrio, moonRadiusFromMass, solidSurfaceDensity, isolationMass, hillRadiusAu, keplerPeriodDays, EARTH_PER_SOLAR_MASS } from './astrophysics.mjs';
-import { radiusFromMass, sampleOrbitalFlavor } from './procgen.mjs';
+import { radiusFromMass, sampleOrbitalFlavor, sampleBulkWaterFraction, sampleBulkMetalFraction, sampleBulkVolatileFraction } from './procgen.mjs';
 import {
   PROCGEN_VERSION,
   PLANET_COUNT_BY_CLASS,
@@ -132,10 +132,6 @@ import {
   MOON_CPD_WATER_FLOOR,
   MOON_MASS_LOG_EARTH,
   MOON_MAX_HOST_MASS_RATIO,
-  sampleBulkFraction,
-  BULK_WATER_FRACTION_BY_ZONE,
-  BULK_METAL_FRACTION_BY_ZONE,
-  BULK_VOLATILE_FRACTION_BY_ZONE,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_PLACEMENT,
   BELT_RESOURCE_OCCURRENCE,
@@ -191,38 +187,9 @@ function partialPrng(planetId, salt) {
   return mulberry32(hash32(`${planetId}:partial:${salt}:${PROCGEN_VERSION}`));
 }
 
-// Sample a body's bulkWaterFraction (0..1 H₂O mass fraction) keyed on
-// the formation zone — which snow lines the body accreted past. Threads
-// formationAu + frostLinesAu rather than current insolation, so a
-// migrated hot Jupiter still draws its outer-zone water budget.
-// Sub-Mercury-or-airless bodies still draw the floor of their zone —
-// composition is set at formation and persists, even if surface state
-// later reads as "dry."
-function sampleBulkWaterFraction(prng, formationAu, frostLinesAu) {
-  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_WATER_FRACTION_BY_ZONE);
-}
-
-// Refractory metals condense first in the protoplanetary disk; bodies
-// forming inside_H2O draw from a metal-rich distribution, each further
-// zone dilutes metal fraction as more volatiles join the solid budget.
-// Independent per-body draw — moons sample independently, same posture
-// as bulkWater.
-function sampleBulkMetalFraction(prng, formationAu, frostLinesAu) {
-  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_METAL_FRACTION_BY_ZONE);
-}
-
-// Non-water condensable volatile inventory (NH3, CH4, CO/CO2, N2,
-// organics). Climbs past each successive snow line: inside_H2O has only
-// the refractory-trapped fraction; past CH4 it dominates. Feeds
-// atmosphere regime decisions and methane-world variety.
-function sampleBulkVolatileFraction(prng, formationAu, frostLinesAu) {
-  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_VOLATILE_FRACTION_BY_ZONE);
-}
-
 // Per-(star, context, salt) PRNG. Belts are system-level structural
-// features — one per context (discrete_warm, discrete_cold,
-// collisional_warm, collisional_cold) per star at most — so the slot
-// key is the context name rather than an index.
+// features — at most one per BELT_CONTEXTS entry (warm, cold) per star —
+// so the slot key is the context name rather than an index.
 function beltPrng(starId, context, salt) {
   return mulberry32(hash32(`${starId}:belt:${context}:${salt}:${PROCGEN_VERSION}`));
 }
@@ -507,10 +474,68 @@ function findGiants(placedPlanets) {
 // size draw; free-float belts get a dust-cascade-scale size draw —
 // see BELT_LARGEST_BODY_KM.
 //
-// Exported so the catalog backfill in build-catalog.mjs could add belts
-// to partially-observed catalog stars later (v1 only emits during
-// generateSystem and generateOverlay).
-export function generateBelts(star, placedPlanets = []) {
+// Driven from generateSystem and generateOverlay — the two in-module
+// entry points that lay down the planet stream this anchors against.
+// Build one belt Body from already-resolved placement. The per-context
+// roll/penalty/shepherd-anchoring logic lives in the callers; this is the
+// body-construction the normal and floor paths share — mass draw, resource
+// occurrence, largestBodyKm draw, naming. `saltPrefix` (''/'floor_') keys
+// the seed salts so each caller reproduces its own deterministic draws;
+// `massScale` (1 for normal, 0.5 for the trace floor belt) scales the
+// log-uniform mass span. `hasShepherd` selects the largestBodyKm range.
+function buildBeltBody({ star, context, hasShepherd, innerAu, outerAu, shepherdId, saltPrefix = '', massScale = 1 }) {
+  const placement = BELT_PLACEMENT[context];
+  const centerAu = (innerAu + outerAu) / 2;
+
+  // Mass: log-uniform between placement.mass.min and .max (× massScale on
+  // the span — the floor belt squeezes into the lower half).
+  const massPrng = beltPrng(star.id, context, saltPrefix + 'mass');
+  const logMin = Math.log10(placement.mass.min);
+  const logMax = Math.log10(placement.mass.max);
+  const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin) * massScale);
+
+  // Resources: two-deposit occurrence draw (shared with planets/moons).
+  // Carries composition signal — the renderer reads it back to lerp
+  // chunk color between rocky-tan and icy-cyan via bodyIcyness.
+  const resources = drawWeightedDeposits(
+    RESOURCE_KEYS,
+    BELT_RESOURCE_OCCURRENCE[context],
+    BELT_RESOURCE_OCCURRENCE.abundance,
+    (name) => beltPrng(star.id, context, `${saltPrefix}res_occ_${name}`),
+  );
+
+  // largestBodyKm: log-uniform within the shepherding-conditional
+  // range. Shepherded belts pull from the parent-body scale (Ceres/
+  // Pluto class); free-float belts pull from the dust-cascade scale
+  // (tens of km max). Captures the real bimodality of belt
+  // populations without exposing a discrete enum.
+  const kmRange = BELT_LARGEST_BODY_KM[context][hasShepherd ? 'shepherded' : 'freeFloat'];
+  const sizePrng = beltPrng(star.id, context, saltPrefix + 'largest');
+  const logKmMin = Math.log10(kmRange.min);
+  const logKmMax = Math.log10(kmRange.max);
+  const largestBodyKm = Math.pow(10, logKmMin + sizePrng() * (logKmMax - logKmMin));
+
+  const composition = describeBeltComposition(resources);
+  const formal = `${star.name} ${describeBeltLocation(centerAu)} ${composition} Belt`;
+  return makeBody({
+    id: `${star.id}-belt-${context}`,
+    hostId: star.id,
+    kind: 'belt',
+    formalName: formal,
+    name: formal,
+    source: 'procgen',
+    largestBodyKm: Number(largestBodyKm.toFixed(1)),
+    shepherdId,
+    semiMajorAu: Number(centerAu.toFixed(3)),
+    innerAu: Number(innerAu.toFixed(3)),
+    outerAu: Number(outerAu.toFixed(3)),
+    massEarth: Number(massEarth.toFixed(5)),
+    ...resources,
+    _unknowns: [],
+  });
+}
+
+function generateBelts(star, placedPlanets = []) {
   const cls = star.cls;
   const occurrence = BELT_OCCURRENCE_BY_CLASS[cls];
   const geom = ORBITAL_GEOMETRY_BY_CLASS[cls];
@@ -545,53 +570,8 @@ export function generateBelts(star, placedPlanets = []) {
       outerAu = geom.outerEdgeAu * placement.outerFrac;
       shepherdId = null;
     }
-    const centerAu = (innerAu + outerAu) / 2;
 
-    // Mass: log-uniform between placement.mass.min and .max.
-    const massPrng = beltPrng(star.id, context, 'mass');
-    const logMin = Math.log10(placement.mass.min);
-    const logMax = Math.log10(placement.mass.max);
-    const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin));
-
-    // Resources: two-deposit occurrence draw (shared with planets/moons).
-    // Carries composition signal — the renderer reads it back to lerp
-    // chunk color between rocky-tan and icy-cyan via bodyIcyness.
-    const resources = drawWeightedDeposits(
-      RESOURCE_KEYS,
-      BELT_RESOURCE_OCCURRENCE[context],
-      BELT_RESOURCE_OCCURRENCE.abundance,
-      (name) => beltPrng(star.id, context, `res_occ_${name}`),
-    );
-
-    // largestBodyKm: log-uniform within the shepherding-conditional
-    // range. Shepherded belts pull from the parent-body scale (Ceres/
-    // Pluto class); free-float belts pull from the dust-cascade scale
-    // (tens of km max). Captures the real bimodality of belt
-    // populations without exposing a discrete enum.
-    const kmRange = BELT_LARGEST_BODY_KM[context][hasShepherd ? 'shepherded' : 'freeFloat'];
-    const sizePrng = beltPrng(star.id, context, 'largest');
-    const logKmMin = Math.log10(kmRange.min);
-    const logKmMax = Math.log10(kmRange.max);
-    const largestBodyKm = Math.pow(10, logKmMin + sizePrng() * (logKmMax - logKmMin));
-
-    const composition = describeBeltComposition(resources);
-    const formal = `${star.name} ${describeBeltLocation(centerAu)} ${composition} Belt`;
-    belts.push(makeBody({
-      id: `${star.id}-belt-${context}`,
-      hostId: star.id,
-      kind: 'belt',
-      formalName: formal,
-      name: formal,
-      source: 'procgen',
-      largestBodyKm: Number(largestBodyKm.toFixed(1)),
-      shepherdId,
-      semiMajorAu: Number(centerAu.toFixed(3)),
-      innerAu: Number(innerAu.toFixed(3)),
-      outerAu: Number(outerAu.toFixed(3)),
-      massEarth: Number(massEarth.toFixed(5)),
-      ...resources,
-      _unknowns: [],
-    }));
+    belts.push(buildBeltBody({ star, context, hasShepherd, innerAu, outerAu, shepherdId }));
   }
   return belts;
 }
@@ -614,50 +594,23 @@ export function generateFloorBelt(star) {
   const geom = ORBITAL_GEOMETRY_BY_CLASS[cls];
   if (!geom) return null;
 
+  // Always free-float by definition (the system has no qualifying planet),
+  // placed on the cold system-edge band. The 'floor_' salt prefix keeps
+  // its draws independent of the normal cold-belt path, and massScale 0.5
+  // squeezes mass into the lower half so it reads as trace debris.
   const placement = BELT_PLACEMENT.cold;
   const innerAu = geom.outerEdgeAu * placement.innerFrac;
   const outerAu = geom.outerEdgeAu * placement.outerFrac;
-  const centerAu = (innerAu + outerAu) / 2;
 
-  // Mass log-uniform in the lower half of the cold placement range so the
-  // floor belt reads as trace rather than as a primary mining target.
-  const massPrng = beltPrng(star.id, 'cold', 'floor_mass');
-  const logMin = Math.log10(placement.mass.min);
-  const logMax = Math.log10(placement.mass.max);
-  const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin) * 0.5);
-
-  // Resources: cold-context two-deposit draw (volatile-dominant).
-  const resources = drawWeightedDeposits(
-    RESOURCE_KEYS,
-    BELT_RESOURCE_OCCURRENCE.cold,
-    BELT_RESOURCE_OCCURRENCE.abundance,
-    (name) => beltPrng(star.id, 'cold', `floor_res_occ_${name}`),
-  );
-
-  // Free-float dust-cascade parent-body scale.
-  const kmRange = BELT_LARGEST_BODY_KM.cold.freeFloat;
-  const sizePrng = beltPrng(star.id, 'cold', 'floor_largest');
-  const logKmMin = Math.log10(kmRange.min);
-  const logKmMax = Math.log10(kmRange.max);
-  const largestBodyKm = Math.pow(10, logKmMin + sizePrng() * (logKmMax - logKmMin));
-
-  const composition = describeBeltComposition(resources);
-  const formal = `${star.name} ${describeBeltLocation(centerAu)} ${composition} Belt`;
-  return makeBody({
-    id: `${star.id}-belt-cold`,
-    hostId: star.id,
-    kind: 'belt',
-    formalName: formal,
-    name: formal,
-    source: 'procgen',
-    largestBodyKm: Number(largestBodyKm.toFixed(1)),
+  return buildBeltBody({
+    star,
+    context: 'cold',
+    hasShepherd: false,
+    innerAu,
+    outerAu,
     shepherdId: null,
-    semiMajorAu: Number(centerAu.toFixed(3)),
-    innerAu: Number(innerAu.toFixed(3)),
-    outerAu: Number(outerAu.toFixed(3)),
-    massEarth: Number(massEarth.toFixed(5)),
-    ...resources,
-    _unknowns: [],
+    saltPrefix: 'floor_',
+    massScale: 0.5,
   });
 }
 
@@ -778,6 +731,17 @@ export function generateSystem(star, clusterRole = 'primary', clusterPlanetBudge
     const ratioPrng = slotPrng(star.id, i + 1, 'spacing');
     const periodRatio = Math.exp(sampleNormal(ratioPrng, Math.log(geom.spacingRatio.mean), geom.spacingRatio.sd));
     a *= Math.pow(periodRatio, 2 / 3);
+  }
+  // The cap only harms output when it truncated the walk below the
+  // player-visible target K — i.e. K wanted more orbits than the walk
+  // could supply before exhausting MAX_ORBITAL_SLOTS. Tight-spacing
+  // classes (notably BD) routinely fill all 30 candidate slots while
+  // still inside outerEdgeAu, but K prunes those extras away, so a bare
+  // cap-hit is benign and not worth a warning. Warn only on the genuine
+  // inventory-truncation case so a future tuning regression surfaces
+  // instead of silently capping the visible planet count.
+  if (a <= geom.outerEdgeAu && K > orbits.length) {
+    console.warn(`procgen-architect: ${star.id} (${cls}) hit MAX_ORBITAL_SLOTS=${MAX_ORBITAL_SLOTS}; walk supplied ${orbits.length} orbits but K=${K} — visible planet count truncated`);
   }
 
   const diskCtx = buildStarDiskContext(star);

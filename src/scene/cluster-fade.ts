@@ -24,6 +24,28 @@ export const PIVOT_FADE_FAR   = 20;
 export const CAMERA_FADE_NEAR = 30;
 export const CAMERA_FADE_FAR  = 60;
 
+// Linear distance-fade ramp, shared by every fade consumer so the
+// "≤near full, ≥far gone, lerp between" shape lives in one place. `near`
+// and `far` are the threshold pair (near < far); `d` is the measured
+// distance.
+//
+// clampRamp: ≤near → 1, ≥far → 0 (the dominant polarity — closer is
+// brighter). invRamp: ≤near → 0, ≥far → 1 (waymarker / focus-marker
+// fade-IN — closer is dimmer). Both clamp to [0, 1] at the bounds, so a
+// caller can drop them in unconditionally where it previously guarded the
+// interior case by hand.
+export function clampRamp(d: number, near: number, far: number): number {
+  if (d <= near) return 1;
+  if (d >= far) return 0;
+  return 1 - (d - near) / (far - near);
+}
+
+export function invRamp(d: number, near: number, far: number): number {
+  if (d <= near) return 0;
+  if (d >= far) return 1;
+  return (d - near) / (far - near);
+}
+
 // ── Dropline subsystem shared geometry + palette ───────────────────────
 // Shared by Droplines (per-cluster vertical pins) and FocusMarker (the
 // view.target dropline) so the two render in one identical visual language.

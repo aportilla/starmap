@@ -8,7 +8,7 @@
 
 import { Color, ShaderMaterial, Vector2 } from 'three';
 import { RING_MINOR_OVER_MAJOR } from '../system-diagram/layout/constants';
-import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snappedMaterials } from './shared';
+import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snapClipToGlPosition, snappedMaterials } from './shared';
 import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
 
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
@@ -21,24 +21,25 @@ import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from 
 //      so disc-center cells stay at SURFACE_PATCH_PX while limb cells
 //      compress under foreshortening. Driven CPU-side by world-class
 //      color + dominant resources. Skipped on gas/ice giants — the
-//      cloud layer is their canvas; a fallback to aCloudPalette0
-//      provides their base color.
-//   2. **Cloud** (when aAtmoScalars.x > 0) — coverage + structure scalars
-//      pick one of two geometries per body:
-//        - cloudStructure < 0.5: anisotropic worley patches in the
-//          equator-aligned frame, paints aCloudPalette0 on cells whose
-//          per-cell hash < cloudCoverage. Earth's broken trade-wind
-//          decks.
-//        - cloudStructure ≥ 0.5: two-layer worley stack in sphere-
-//          projected (lon, lat), cells stretched east-west so the
-//          natural Voronoi tessellation forms strips along the rotation
-//          axis. Per-cell color is picked from the cell's latitude
-//          component only — cells in the same lat track share a color,
-//          so the bands read parallel to the equator. Painted at
-//          alpha = cloudCoverage. Jupiter / Saturn / Uranus / Neptune /
-//          Venus.
-//   3. **Haze** (when aAtmoScalars.z > 0) — uniform per-fragment lerp
-//      toward aHazeColor by hazeOpacity. Unified blend across bulk atm
+//      cloud layer is their canvas; their base color comes from the
+//      atm column color substituted into the surface palette.
+//   2. **Cloud** — up to MAX_CLOUD_LAYERS stratified condensate decks,
+//      composited back-to-front by altitude. Per-deck data (coverage,
+//      windSpeed, altitude, seed, condensate color) lives in the
+//      uCloudLayerData DataTexture, sampled per body by aBodyIndex;
+//      a deck with coverage ≤ 0 is skipped. Each deck is a single
+//      sphere-projected (lon, lat) worley sampler whose appearance is
+//      driven by per-deck windspeed:
+//        - low wind (Earth jet stream) — a `bandness` smoothstep near
+//          0, so cells stay cellular and hash on both axes: broken
+//          patchy decks.
+//        - high wind (Jupiter-class) — `bandness` near 1 stretches the
+//          east-west cell pitch and switches the per-cell color hash to
+//          latitude-only, so cells in the same lat track share a color
+//          and the strips read parallel to the equator. Banded giants
+//          (Jupiter / Saturn / Uranus / Neptune) and Venus.
+//   3. **Haze** (when aAtmoScalars.x > 0, hazeOpacity) — uniform
+//      per-fragment lerp toward aHazeColor by hazeOpacity. Unified blend across bulk atm
 //      gases × pressure, Rayleigh scattering, formation-gated aerosol
 //      products (Titan tholin, Venus sulfate, Jovian NH4SH), and lifted
 //      mineral dust. Surface bodies only (no-surface uniform overlay
@@ -59,10 +60,6 @@ import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from 
 //      in the outermost loft layer — scaled by the body's Rayleigh
 //      fraction (vWeights.w) so a clear-air limb (Earth) shifts blue
 //      while an absorption/aerosol-dominated one (Venus) barely moves.
-//
-// Cloud-structure snaps binary at 0.5 in v1; the procgen distributions
-// produce mostly 0 (terrestrial patchy) or 1 (banded / venusian / gas
-// giant) so intermediate values are rare.
 //
 // Pixel-crisp constraints (see README §Pixel-perfect rendering):
 //   - The disc still does parity-aware center snap so `gl_FragCoord -
@@ -142,7 +139,9 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
     defines,
     uniforms: {
       uDiscScale: { value: initialDiscScale },
-      uViewport:  { value: new Vector2(window.innerWidth, window.innerHeight) },
+      // 0,0 until first resize overwrites via setSnappedLineViewport — the
+      // snap math needs the drawing-buffer size, not CSS px.
+      uViewport:  { value: new Vector2() },
       uCloudLayerData: { value: null },
       uCloudLayerRows: { value: 1 },
       // Per-fragment lighting inputs (see MAX_LIGHTS comment).
@@ -264,10 +263,10 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         // gl_FragCoord − vCenter offset path.
         float oddOff = mod(sz, 2.0) * 0.5;
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        vec2 px = snapToPixelGrid(clip.xy / clip.w, uViewport, oddOff);
+        ${snapClipToGlPosition('clip.xy / clip.w', 'oddOff')}
+        // vCenter carries the snapped center to the fragment shader for the
+        // gl_FragCoord − vCenter offset path.
         vCenter = px;
-        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
-        gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
       }
     `,
     fragmentShader: `
@@ -330,23 +329,16 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // strips on a near-monochrome one.
       const float BAND_LIGHTNESS_JITTER = 0.06;
 
-      // Banded-mode worley pitches in env-px. Two layers, both
-      // anisotropic east-west (LON > LAT) so Voronoi cells form
-      // horizontal strips. Primary layer is the dominant visible band
-      // paint; detail layer overlays smaller stripes at partial
-      // coverage for sub-band texture.
+      // Banded-mode worley pitch in env-px. Anisotropic east-west
+      // (LON > LAT) so Voronoi cells form horizontal strips.
       //
       // LON1=24 puts ~7-8 cells along the equator on a Jupiter-class
       // 60-px disc; LAT1=5 gives ~12 lat tracks pole-to-pole. ~5:1
       // aniso. Wider aniso ratios produced sliverlike fragments that
       // didn't read as bands; 5:1 hits the "cells look like band
-      // segments" sweet spot. Detail layer at half the LON pitch and
-      // ~2 px LAT pitch adds sub-band stripes at 50% cell coverage.
+      // segments" sweet spot.
       const float BAND1_LON_PX = 24.0;
       const float BAND1_LAT_PX = 5.0;
-      const float BAND2_LON_PX = 12.0;
-      const float BAND2_LAT_PX = 2.0;
-      const float DETAIL_COVERAGE = 0.5;
 
       // Cloud-deck wind→banding curve (consumed by the cloud-layer loop;
       // see its comment for the full derivation). bandness smoothsteps
@@ -921,13 +913,10 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
 
       ${HASH_GLSL}
 
-      // 4x4 Bayer matrix lookup keyed on env-pixel coords, returns
-      // value in {0/16, 1/16, ..., 15/16}. Built recursively from the
-      // 2x2 pattern [[0,2],[3,1]] — closed-form (x*2 + y*3 - x*y*4)
-      // for (x,y) ∈ {0,1}², no branches, no texture lookup. Used as
-      // an ordered-dither threshold against per-cell coverage gates
-      // so cells whose hash lands near the threshold render stippled
-      // rather than binary-fire.
+      // Ordered-dither threshold against per-cell coverage gates so
+      // cells whose hash lands near the threshold render stippled
+      // rather than binary-fire. See BAYER4_GLSL in ./chunks for the
+      // matrix derivation.
       ${BAYER4_GLSL}
       ${STAR_CRESCENT_LIGHTING_GLSL}
 
@@ -1212,7 +1201,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // Phase 1.5c — discrete crater features + ejecta rays.
       // Crater seed cells aggregate CRATER_PATCH_FACTOR² fine
       // cells in the same sphere-projected frame as 1.5a/b. Scan
-      // the 5×5 neighborhood: existence hash against
+      // the 7×7 neighborhood: existence hash against
       // (1 - surfaceAge)², jittered center, cubic radius. Closest
       // containing crater wins for the interior paint; ray
       // contributions from any crater in scan whose rays reach
@@ -1256,7 +1245,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         bool  inCrater  = false;
 
         // Ejecta tracking — set when any ray-bearing crater in the
-        // 5×5 scan touches this fragment with one of its 3..6 rays.
+        // 7×7 scan touches this fragment with one of its 3..6 rays.
         // bestRayCraterId carries the CLOSEST ray-source so the
         // post-loop paint can resolve the ray to the same fill
         // color that crater's interior would paint. Rays are

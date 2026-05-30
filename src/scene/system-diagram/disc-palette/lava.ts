@@ -156,16 +156,23 @@ export function lavaDrivesFor(body: Body, surfaceAge: number): LavaDrives {
   // bodies, so a high-activity cryovolcanic world doesn't fake silicate
   // lava.
   const internalEmit = smoothstep01(0, LAVA_INTERNAL_EMIT_SAT, internalDrive) * refractoryGate;
+  // The raw surface-T heat term is deliberately NOT refractory-gated here, so
+  // a hot non-refractory body (icy/watery) still carries a high emissionTempNorm.
+  // That's a required contract with the shader: the molten sub-pass multiplies
+  // emission by moltenCoverage, which IS refractory-gated, so the un-gated heat
+  // never renders on those bodies. Gating T here instead would shift their
+  // emissionTempNorm; keeping the gate solely on coverage leaves it untouched.
   const emissionT = Math.max(T, internalEmit * LAVA_INTERNAL_LAVA_T);
   const emissionTempNorm = clamp01((emissionT - LAVA_EMIT_T_MIN) / (LAVA_EMIT_T_MAX - LAVA_EMIT_T_MIN));
-  // Composition hue nudge — abiotic surface sulfur (Io's SO2 outgassing,
-  // sulfate / elemental-sulfur aerosols) skews the glow yellower than
-  // pure silicate lava in the shader. A composition FRACTION, not a
-  // column-mass measure: Io's atmosphere is tenuous (P≈0) yet its surface
-  // is sulfur-dominated, so we read the species fraction directly. Io
-  // (SO2 = 1) → 1; a silicate-vapor lava world (55 Cnc e, N2/Ar) → 0.
-  const lavaSulfurFrac = clamp01(
-    atmFracOf(body, 'SO2') + atmFracOf(body, 'SULFUR') + atmFracOf(body, 'H2SO4'),
-  );
+  // Composition hue nudge — abiotic surface sulfur (Io's SO2 outgassing)
+  // skews the glow yellower than pure silicate lava in the shader. A
+  // composition FRACTION, not a column-mass measure: Io's atmosphere is
+  // tenuous (P≈0) yet its surface is sulfur-dominated, so we read the
+  // species fraction directly. Io (SO2 = 1) → 1; a silicate-vapor lava
+  // world (55 Cnc e, N2/Ar) → 0. Only SO2 feeds this: the atm slots draw
+  // from ATMOSPHERE_GASES_BY_REGIME, which never holds SULFUR or H2SO4
+  // (those exist only as cloud/haze aerosol products), so reading them
+  // here would always return 0 — the live sulfur signal is SO2 alone.
+  const lavaSulfurFrac = clamp01(atmFracOf(body, 'SO2'));
   return { moltenCoverage, emissionTempNorm, lavaSulfurFrac };
 }

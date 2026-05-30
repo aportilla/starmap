@@ -16,6 +16,7 @@ import {
   SYSTEM_VIEW_SATURATION_LIFT_MAX, SYSTEM_VIEW_SATURATION_LIFT_RATE,
 } from '../layout/constants';
 import { bigMiddleOrder, sumOf } from '../layout/row';
+import { snapPxParity } from '../geom/snap';
 import { pickDiscPool } from '../geom/hit';
 import { disposePool } from './dispose';
 import type { DiagramPick, StarLightSource } from '../types';
@@ -192,9 +193,8 @@ export class StarsRowLayer {
       // integer+0.5 (pixel center). Same parity-aware floor the disc vertex
       // shaders apply via snapToPixelGrid (materials PIXEL_SNAP_GLSL),
       // computed CPU-side here because the star row resolves centers on the CPU.
-      const oddOff = (d & 1) * 0.5;
-      const cx = Math.floor(cxTarget - oddOff + 0.5) + oddOff;
-      const cy = Math.floor(cyTarget - oddOff + 0.5) + oddOff;
+      const cx = snapPxParity(cxTarget, d);
+      const cy = snapPxParity(cyTarget, d);
 
       const disc = this.starDiscs[slot];
       // Rebuild the plane geometries only when diameter actually

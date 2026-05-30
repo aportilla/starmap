@@ -14,7 +14,10 @@ import {
   PIVOT_FADE_FAR,
   CAMERA_FADE_NEAR,
   CAMERA_FADE_FAR,
+  clampRamp,
+  invRamp,
 } from './cluster-fade';
+import { projectWorldToBuffer } from './project-buffer';
 
 // Labels render in their own ortho overlay pass at 1 unit = 1 buffer pixel,
 // the same scheme as Hud. World-locked anchors (cluster primary, galactic-
@@ -102,12 +105,13 @@ export class Labels {
   private candidateCluster = -1;
 
   // Reusable per-frame scratch.
-  private readonly _proj = new Vector3();
   private readonly _world = new Vector3();
-  private readonly _screen = { x: 0, y: 0 };
+  // Doubles as projectWorldToBuffer's projection scratch + screen-coord out
+  // vector (.x/.y are the buffer-pixel result; .z is throwaway NDC depth).
+  private readonly _screen = new Vector3();
 
-  // Set per-frame from scene.ts so projectToBuffer can short-circuit the
-  // focused star to exact buffer-center coords (see projectToBuffer).
+  // Set per-frame from scene.ts so projectWorldToBuffer can short-circuit the
+  // focused star to exact buffer-center coords (see project-buffer.ts).
   private viewTarget: Vector3 | null = null;
 
   constructor(initialShowLabels: boolean) {
@@ -174,47 +178,6 @@ export class Labels {
     this.candidateCluster = clusterIdx;
   }
 
-  // Project a world position into buffer-pixel coords (Y-up, origin at
-  // bottom-left). Returns false if the point sits behind the near plane or
-  // beyond the far plane — caller should hide the mesh in that case.
-  //
-  // Two stability gates layered on top of the raw projection:
-  //
-  // 1. **viewTarget short-circuit.** When the world point is bit-exactly
-  //    the camera's orbit target, the projection should land at NDC (0,0)
-  //    by construction; the matrix math gets it almost-right with a tiny
-  //    residue that varies with yaw. Skipping the math nails the focused
-  //    star to exact buffer center every frame. Only fires when
-  //    Vector3.equals returns true — which means the focused star itself
-  //    for any cluster where view.target was set from the primary, but
-  //    NOT a single-member cluster whose COM differs from the primary's
-  //    position by 1 ULP because (mass * x) / mass ≠ x in FP for most
-  //    non-power-of-2 masses.
-  //
-  // 2. **Pre-snap to nearest 0.5 buffer px.** Catches the cases the
-  //    short-circuit doesn't. placeAt() rounds the label corner with
-  //    Math.round, whose discontinuity sits at X.5. For unlucky
-  //    bufferW/label-width parity combinations (e.g. bufferW odd and
-  //    L.w even) the projected position lands EXACTLY on that
-  //    discontinuity for a focused star, and any sign-flipping FP noise
-  //    in the projection — however microscopic — flips the rounded
-  //    corner by 1 px. Snapping screen.x/y to a multiple of 0.5 here
-  //    moves the discontinuity to X.25 / X.75, which the projection
-  //    essentially never lands on, so the downstream round is
-  //    deterministic regardless of noise magnitude or sign.
-  private projectToBuffer(world: Vector3, camera: Camera): boolean {
-    if (this.viewTarget && world.equals(this.viewTarget)) {
-      this._screen.x = this.bufferW * 0.5;
-      this._screen.y = this.bufferH * 0.5;
-      return true;
-    }
-    this._proj.copy(world).project(camera);
-    if (this._proj.z < -1 || this._proj.z > 1) return false;
-    this._screen.x = Math.round((this._proj.x * 0.5 + 0.5) * this.bufferW * 2) / 2;
-    this._screen.y = Math.round((this._proj.y * 0.5 + 0.5) * this.bufferH * 2) / 2;
-    return true;
-  }
-
   // Place a label so its top-left texel lands on an integer buffer pixel —
   // necessary so all four texture corners align with the buffer pixel grid
   // and every texel renders. Snapping just the center silently drops a row
@@ -260,7 +223,7 @@ export class Labels {
       }
       const s = STARS[L.primaryStarIdx];
       this._world.set(s.x, s.y, s.z);
-      if (!this.projectToBuffer(this._world, camera)) {
+      if (!projectWorldToBuffer(this._world, camera, this.viewTarget, this.bufferW, this.bufferH, this._screen)) {
         L.plainMesh.visible = false; L.yellowMesh.visible = false; continue;
       }
       const dCam = this._world.distanceTo(camera.position);
@@ -272,24 +235,16 @@ export class Labels {
         if (dFocus >= PIVOT_FADE_FAR || dCam >= CAMERA_FADE_FAR) {
           normalOpacity = 0;
         } else {
-          if (dFocus > PIVOT_FADE_NEAR) {
-            normalOpacity *= 1 - (dFocus - PIVOT_FADE_NEAR) / (PIVOT_FADE_FAR - PIVOT_FADE_NEAR);
-          }
-          if (dCam > CAMERA_FADE_NEAR) {
-            normalOpacity *= 1 - (dCam - CAMERA_FADE_NEAR) / (CAMERA_FADE_FAR - CAMERA_FADE_NEAR);
-          }
+          normalOpacity *= clampRamp(dFocus, PIVOT_FADE_NEAR, PIVOT_FADE_FAR);
+          normalOpacity *= clampRamp(dCam, CAMERA_FADE_NEAR, CAMERA_FADE_FAR);
         }
         // Waymarker fade-in keyed to camera-from-Sol, max'd with the
         // regular ramp so a waypoint already inside the pivot bubble
         // doesn't blink out between the regular PIVOT_FADE_FAR cutoff
         // and WAYPOINT_HIDE_BELOW.
-        let waypointOpacity = 0;
-        if (L.isWaypoint && camFromSol > LABEL_WAYPOINT_HIDE_BELOW) {
-          waypointOpacity = camFromSol >= LABEL_WAYPOINT_SHOW_ABOVE
-            ? 1
-            : (camFromSol - LABEL_WAYPOINT_HIDE_BELOW) /
-              (LABEL_WAYPOINT_SHOW_ABOVE - LABEL_WAYPOINT_HIDE_BELOW);
-        }
+        const waypointOpacity = L.isWaypoint
+          ? invRamp(camFromSol, LABEL_WAYPOINT_HIDE_BELOW, LABEL_WAYPOINT_SHOW_ABOVE)
+          : 0;
         opacity = Math.max(normalOpacity, waypointOpacity);
         if (opacity <= 0) {
           L.plainMesh.visible = false; L.yellowMesh.visible = false; continue;

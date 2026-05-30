@@ -19,7 +19,7 @@ import { hash32, mulberry32, sampleNormal } from './lib/prng.mjs';
 import { fillBodies, radiusFromMass } from './lib/procgen.mjs';
 import { generateSystem, generateMoons, generateRing, generateOverlay, starDiskContext, synthesizePartialAnchor, generateFloorBelt } from './lib/procgen-architect.mjs';
 import { MAX_PLANETS_PER_CLUSTER, CURATED_SYSTEM_HOSTS } from './lib/procgen-priors.mjs';
-import { frostLineTrio, keplerSemiMajorAu } from './lib/astrophysics.mjs';
+import { frostLineTrio, deriveSemiMajorAu } from './lib/astrophysics.mjs';
 import { parseCsv } from './lib/catalog-index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -85,10 +85,12 @@ const CLASS_MASS_RANGE = {
   BD: [ 0.013, 0.075],
 };
 
-function syntheticMass(cls, x, y, z) {
+// Seeded off the unique star id rather than position: two coincident binary
+// components (within COINCIDENT_EPS_LY) round to the same position string and
+// would otherwise draw an identical synthetic mass.
+function syntheticMass(cls, id) {
   const [lo, hi] = CLASS_MASS_RANGE[cls];
-  const seed = hash32(`${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`);
-  const t = mulberry32(seed)();
+  const t = mulberry32(hash32(`mass:${id}`))();
   return Math.exp(Math.log(lo) + t * (Math.log(hi) - Math.log(lo)));
 }
 
@@ -131,6 +133,9 @@ function ageFromClass(cls, id) {
   const rng = mulberry32(hash32(`age:${id}`));
   // Two-sample average dampens long tails — a Gaussian sample × sd plus
   // mean would land outside the cap too often for short-lived classes.
+  // Note the averaging halves the variance: the realized age SD is
+  // ~0.707× (1/√2) the prior's declared `sd`, so a tuner reading `sd`
+  // should expect a distribution ~30% tighter than that nominal value.
   const z = (sampleNormal(rng, 0, 1) + sampleNormal(rng, 0, 1)) / 2;
   const ageRaw = prior.mean + z * prior.sd;
   const cap = Math.min(13.8, prior.maxMS);
@@ -222,6 +227,7 @@ function parseCsvCatalog(text, label) {
       continue;
     }
     const pos = equatorialToGalactic(raDeg, decDeg, distLy);
+    const id = (row[ID] ?? '').trim();
     const massCell = MASS >= 0 ? (row[MASS] ?? '').trim() : '';
     const massRaw = massCell ? Number(massCell) : NaN;
     let mass;
@@ -230,10 +236,9 @@ function parseCsvCatalog(text, label) {
     } else {
       const appMagCell = APP_MAG >= 0 ? (row[APP_MAG] ?? '') : '';
       const ml = massFromMagnitude(cls, appMagCell, distLy);
-      mass = ml ?? syntheticMass(cls, pos.x, pos.y, pos.z);
+      mass = ml ?? syntheticMass(cls, id);
     }
     const radiusSolar = radiusFromClassMass(cls, mass);
-    const id = (row[ID] ?? '').trim();
     const iauName = IAU_NAME >= 0 ? (row[IAU_NAME] ?? '').trim() : '';
     const ageGyr = ageFromClass(cls, id);
     out.push({
@@ -770,10 +775,13 @@ function parseCsvBodyLayers(text, label) {
 function attachBodies(stars, rawBodies) {
   const starIdToIdx = new Map();
   stars.forEach((s, i) => starIdToIdx.set(s.id, i));
-  const planetById = new Map();
+  // Indexed over ALL bodies (not just planets) so a moon/ring whose host_id
+  // points at a belt or another moon hits the loud "must host on a planet"
+  // throw below instead of silently warn-dropping as host-not-in-catalog.
+  const bodyById = new Map();
   for (const b of rawBodies) {
-    if (planetById.has(b.id)) throw new Error(`bodies.csv: duplicate id ${b.id}`);
-    if (b.kind === 'planet') planetById.set(b.id, b);
+    if (bodyById.has(b.id)) throw new Error(`bodies.csv: duplicate id ${b.id}`);
+    bodyById.set(b.id, b);
   }
 
   // Pass 1: resolve star-hosted bodies (planets + belts). Star ownership
@@ -786,7 +794,7 @@ function attachBodies(stars, rawBodies) {
       const idx = starIdToIdx.get(b.hostId);
       if (idx === undefined) {
         console.warn(`${BODIES_FILE}: dropping ${b.id} (host star ${b.hostId} not in catalog)`);
-        if (b.kind === 'planet') planetById.delete(b.id);
+        if (b.kind === 'planet') bodyById.delete(b.id);
         continue;
       }
       const resolved = { ...b, hostStarIdx: idx, hostBodyIdx: null };
@@ -828,7 +836,7 @@ function attachBodies(stars, rawBodies) {
     if (b.kind !== 'moon' && b.kind !== 'ring') continue;
     const localPlanetIdx = planetIdxById.get(b.hostId);
     if (localPlanetIdx === undefined) {
-      const host = planetById.get(b.hostId);
+      const host = bodyById.get(b.hostId);
       if (host && host.kind !== 'planet') {
         throw new Error(`body ${b.id}: ${b.kind} must host on a planet, got kind=${host.kind}`);
       }
@@ -921,7 +929,7 @@ function synthesizePartialAnchors(rawBodies, starById) {
     // later — we just need it available now). Write through so the
     // moon + ring backfill below sees the same value.
     if (body.semiMajorAu == null && body.periodDays != null && host.mass > 0) {
-      body.semiMajorAu = Number(keplerSemiMajorAu(body.periodDays, host.mass).toFixed(5));
+      body.semiMajorAu = deriveSemiMajorAu(body.periodDays, host.mass);
       markKnown(body, 'semiMajorAu');
     }
     const diskCtx = getDiskCtx(host.id);
@@ -969,13 +977,18 @@ function backfillMoonsAndRings(rawBodies, starById) {
       const r = radiusFromMass(planet.massEarth);
       if (r == null) continue;
       planet.radiusEarth = r;
+      // Mark known for symmetry with synthesizePartialAnchors. A no-op on
+      // output today (the Filler's radiusEarth path recomputes the identical
+      // radiusFromMass(massEarth)), but it keeps the "synthesis writes →
+      // marks known" invariant uniform across both backfill passes.
+      markKnown(planet, 'radiusEarth');
     }
     // RV-discovery catalog rows often carry periodDays but no semiMajorAu —
     // the Filler will Kepler-derive it later, but the backfill runs first,
     // so derive on the fly here to get a usable formation-zone proxy.
     let aBackfill = planet.semiMajorAu;
     if (aBackfill == null && planet.periodDays != null && host.mass > 0) {
-      aBackfill = Number(keplerSemiMajorAu(planet.periodDays, host.mass).toFixed(5));
+      aBackfill = deriveSemiMajorAu(planet.periodDays, host.mass);
     }
     // Moons + rings both inherit the host planet's formation zone — moons
     // for bulk composition, rings for water-ice vs rocky-debris feed.
@@ -1105,6 +1118,16 @@ async function main() {
     list.push(b);
     catalogPlanetsByStarId.set(b.hostId, list);
   }
+  const starById = new Map(placedStars.map(s => [s.id, s]));
+
+  // Synthesize partial anchors before the cluster dispatch: the overlay +
+  // belt rolls below (and findGiants' shepherd detection, which filters
+  // massEarth != null) must see the ~partial catalog anchors with their
+  // synthesized mass/radius/orbit, or a partial-anchor planet could never
+  // be picked as a belt shepherd. Mutates rawBodies in place; reads no
+  // procgen output.
+  synthesizePartialAnchors(rawBodies, starById);
+
   // Cluster-driven dispatch. Iterating clusters (rather than stars) lets a
   // single MAX_PLANETS_PER_CLUSTER budget travel through the cluster's members
   // in heaviest-first order — see allocateClusterBudget for the per-member cap.
@@ -1145,12 +1168,9 @@ async function main() {
     if (belt) floorBelts.push(belt);
   }
 
-  const starById = new Map(placedStars.map(s => [s.id, s]));
-
-  // Synthesize partial anchors first (mutates rawBodies so the backfill
-  // sees populated mass/radius/orbit), then backfill moons + rings. See
-  // each function's header for the detection-bias rationale.
-  synthesizePartialAnchors(rawBodies, starById);
+  // Backfill moons + rings. Partial anchors were already synthesized before
+  // the cluster dispatch, so rawBodies carries populated mass/radius/orbit
+  // here. See backfillMoonsAndRings' header for the detection-bias rationale.
   const { backfillMoons, backfillRings } = backfillMoonsAndRings(rawBodies, starById);
 
   const allBodies = [...rawBodies, ...procgenBodies, ...overlayBodies, ...floorBelts, ...backfillMoons, ...backfillRings];

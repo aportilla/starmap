@@ -7,7 +7,7 @@
 
 import { STAR_CLUSTERS } from '../data/stars';
 import { FOCUS_MARKER_NEAR } from './focus-marker';
-import { STAR_DIM_FULL_BELOW, STAR_DIM_OFF_ABOVE } from './cluster-fade';
+import { STAR_DIM_FULL_BELOW, STAR_DIM_OFF_ABOVE, clampRamp } from './cluster-fade';
 
 interface Vec3Like {
   readonly x: number;
@@ -76,7 +76,5 @@ export function isTargetFocusedOnCom(target: Vec3Like, com: Vec3Like): boolean {
 // far from the camera, so a per-star ramp would pin everything dim no matter
 // how far the user zooms out.
 export function dimAmountForOrbit(orbit: number): number {
-  return orbit <= STAR_DIM_FULL_BELOW ? 1
-    : orbit >= STAR_DIM_OFF_ABOVE ? 0
-    : 1 - (orbit - STAR_DIM_FULL_BELOW) / (STAR_DIM_OFF_ABOVE - STAR_DIM_FULL_BELOW);
+  return clampRamp(orbit, STAR_DIM_FULL_BELOW, STAR_DIM_OFF_ABOVE);
 }

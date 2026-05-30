@@ -513,6 +513,9 @@ export class InputController {
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
+    // User taking manual control cancels any in-flight focus glide,
+    // otherwise the per-frame lerp would overwrite the wheel notch.
+    this.handlers.cancelFocusAnimation();
     this.handlers.zoomBy(Math.pow(WHEEL_ZOOM_BASE, e.deltaY));
   }
 

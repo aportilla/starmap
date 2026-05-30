@@ -50,13 +50,16 @@ export function ringEllipseParams(ring: Body, hostPlanet: Body, hostDiscPx: numb
 }
 
 // Picker input: ring geometry params + the host planet's current
-// screen-space center.
+// screen-space center. innerRho2 = (innerR/outerR)² is the squared
+// normalized inner-edge radius; precomputed by the caller at build time
+// so hitsRing doesn't redo the divide+square on every pointer move.
 export interface RingProbe {
   hostCx: number;
   hostCy: number;
   outerR: number;
   innerR: number;
   tiltRad: number;
+  innerRho2: number;
 }
 
 // Tilted-ellipse annulus hit-test. Inverse-rotates the cursor delta
@@ -88,6 +91,5 @@ export function hitsRing(x: number, y: number, probe: RingProbe, half: 'back' | 
   const ay = ly / (probe.outerR * RING_MINOR_OVER_MAJOR);
   const rho2 = ax * ax + ay * ay;
   if (rho2 > 1) return false;
-  const innerRho2 = (probe.innerR / probe.outerR) * (probe.innerR / probe.outerR);
-  return rho2 >= innerRho2;
+  return rho2 >= probe.innerRho2;
 }

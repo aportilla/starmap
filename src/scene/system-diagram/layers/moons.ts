@@ -16,11 +16,12 @@ import { disposePool } from './dispose';
 import {
   MOON_DISC_BASE, MOON_DISC_MAX, MOON_DISC_MIN, MOON_EDGE_BIAS,
   RENDER_ORDER_BACK_MOON, RENDER_ORDER_FRONT_MOON,
-  Z_BACK_MOON, Z_FRONT_MOON, Z_STRIDE,
+  Z_BACK_MOON, Z_FRONT_MOON,
 } from '../layout/constants';
 import { discPxFromRadius, type RowSlot } from '../layout/row';
 import { writeLightUniforms } from '../lighting';
 import { hash32, mulberry32 } from '../geom/prng';
+import { bandZ, snapPx } from '../geom/snap';
 import { pickDiscPool } from '../geom/hit';
 import { disableCulling } from '../geom/cull';
 import type { DiagramPick, PlanetCenterIndex, StarLightSource } from '../types';
@@ -152,9 +153,9 @@ function writePoolPositions(pool: MoonPool | null, centers: PlanetCenterIndex, l
     const parent = centers.get(slot.parentBodyIdx);
     if (!parent) return;
     const D = slot.parentR + MOON_EDGE_BIAS;
-    out[i * 3 + 0] = Math.round(parent.cx + Math.cos(slot.angle) * D);
-    out[i * 3 + 1] = Math.round(parent.cy + Math.sin(slot.angle) * D);
-    out[i * 3 + 2] = parent.rowIdx * Z_STRIDE + layerZ;
+    out[i * 3 + 0] = snapPx(parent.cx + Math.cos(slot.angle) * D);
+    out[i * 3 + 1] = snapPx(parent.cy + Math.sin(slot.angle) * D);
+    out[i * 3 + 2] = bandZ(parent.rowIdx, layerZ);
   });
   pool.geometry.attributes.position.needsUpdate = true;
 }

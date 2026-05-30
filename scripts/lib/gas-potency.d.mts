@@ -1,6 +1,6 @@
 // Type surface for gas-potency.mjs. The values live in plain JS so the Node
 // build can import them; this declaration lets the browser bundle re-export the
-// table (via src/scene/system-diagram/body-palette.ts) under strict typing.
+// table (via src/scene/system-diagram/color-science.ts) under strict typing.
 //
 // Asserted, not compiler-verified: TS trusts this Record<AtmGas, number> rather
 // than checking the .mjs literal, so a newly added AtmGas without a potency

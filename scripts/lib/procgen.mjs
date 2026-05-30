@@ -135,7 +135,7 @@ import {
 
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
-import { insolation, jeansEscapeRatio, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, keplerSemiMajorAu, EARTH_PER_SOLAR_MASS, SIGMA_SB, SOLAR_CONSTANT } from './astrophysics.mjs';
+import { insolation, jeansEscapeRatio, tidalLockProxy, meanMetallicityForClass, meanAgeForClass, frostLineTrio, keplerPeriodDays, deriveSemiMajorAu, EARTH_PER_SOLAR_MASS, SIGMA_SB, SOLAR_CONSTANT } from './astrophysics.mjs';
 
 function fieldPrng(body, field) {
   return mulberry32(hash32(`${body.id}:${field}:${PROCGEN_VERSION}`));
@@ -491,8 +491,8 @@ function outgassingPotentialBar(massEarth, bulkWaterFraction) {
 // See PRESSURE_HISTORY_MULTIPLIER in procgen-priors.mjs.
 function surfacePressureFor(body, S) {
   if (body.massEarth == null || body.radiusEarth == null || S == null) return null;
-  // Gaseous bodies have no surface — radius gate replaces the old
-  // worldClass check, decoupling pressure derivation from class.
+  // Gaseous bodies have no surface, so no surface pressure — gate on the
+  // radius-derived gaseous test, keeping pressure independent of worldClass.
   if (isGaseousBody(body)) return null;
   const tEq = equilibriumTempK(S);
   const retention = atmosphericRetention(body.massEarth, body.radiusEarth, body.magneticFieldGauss, tEq);
@@ -525,27 +525,26 @@ function boilingPointK(P_bar) {
   return a[a.length - 1].t;
 }
 
-// Fill bulkWaterFraction from the formation-zone prior for catalog rows
-// that landed without an Architect-set value. Symmetric with the
-// Architect's sampleBulkWaterFraction. Returns null when formationAu /
-// frost lines are unknown.
-function bulkWaterFractionFor(body, formationAu, frostLinesAu) {
-  return sampleBulkFraction(fieldPrng(body, 'bulk_water'), formationAu, frostLinesAu, BULK_WATER_FRACTION_BY_ZONE);
+// Formation-zone bulk-composition samplers, shared by both procgen layers
+// (the Architect's per-slot draws and the Filler's catalog-row backfill).
+// Each keys the same four-zone gate (formationAu vs the host's frost-line
+// trio) off its own BULK_*_FRACTION_BY_ZONE table. The caller supplies the
+// seeded `prng` so each layer keeps its own seeding scheme — the Architect
+// passes a slot/moon prng, the Filler passes fieldPrng(body, 'bulk_*').
+//
+//   water    — H₂O mass fraction; outer-zone bodies carry their water budget
+//   metal    — refractory metals condense first inside H2O, dilute outward
+//   volatile — non-water condensables (NH3, CH4, CO/CO2, N2); dominant past CH4
+export function sampleBulkWaterFraction(prng, formationAu, frostLinesAu) {
+  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_WATER_FRACTION_BY_ZONE);
 }
 
-// Architect's companion bulk-metal sampler for catalog rows. Same
-// four-zone gate as bulkWater — refractory metals condense first inside
-// the H2O line, each successive snow line dilutes metal fraction as
-// volatiles join the solid budget.
-function bulkMetalFractionFor(body, formationAu, frostLinesAu) {
-  return sampleBulkFraction(fieldPrng(body, 'bulk_metal'), formationAu, frostLinesAu, BULK_METAL_FRACTION_BY_ZONE);
+export function sampleBulkMetalFraction(prng, formationAu, frostLinesAu) {
+  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_METAL_FRACTION_BY_ZONE);
 }
 
-// Non-water condensable volatile inventory — same four-zone formation
-// gate. Past CH4 line this becomes the dominant ice; inside H2O it's
-// only the refractory-trapped CO2/N2 floor.
-function bulkVolatileFractionFor(body, formationAu, frostLinesAu) {
-  return sampleBulkFraction(fieldPrng(body, 'bulk_volatile'), formationAu, frostLinesAu, BULK_VOLATILE_FRACTION_BY_ZONE);
+export function sampleBulkVolatileFraction(prng, formationAu, frostLinesAu) {
+  return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_VOLATILE_FRACTION_BY_ZONE);
 }
 
 // Fraction of surface covered by liquid water. Three gates compose:
@@ -615,9 +614,9 @@ function surfaceAgeFor(body, hostBody) {
   if (body.tectonicActivity == null) return null;
   const noise = sampleTruncated(fieldPrng(body, 'surfaceAge'), SURFACE_AGE_FROM_TECTONIC.noise);
   let age = Math.pow(body.tectonicActivity, SURFACE_AGE_FROM_TECTONIC.exponent) * noise;
-  // Tidal-heating lift for eccentric moons of gaseous hosts. Host gate
-  // is now radius-based (was class-based) — same physical bodies, no
-  // worldClass dependency.
+  // Tidal-heating lift for eccentric moons of gaseous hosts. Host
+  // gaseousness is read from the radius-derived test, independent of
+  // worldClass.
   const hostIsGaseous = hostBody != null && isGaseousBody(hostBody);
   if (body.kind === 'moon' && hostIsGaseous && body.eccentricity != null) {
     const e = body.eccentricity;
@@ -1100,7 +1099,7 @@ const HAZE_AEROSOL_SPECIES = ['THOLIN', 'NH4SH', 'CHROMOPHORE', 'SALT', 'H2SO4',
 
 // Lifted mineral dust gate. Terrestrial only, dry surface, thin
 // atmosphere, moderate T (not frozen, not boiled). Returns raw 0..1
-// strength; the universal HAZE_DUST_SCALE applies in `hazeFor`.
+// strength; the renderer applies the universal dust scale.
 function dustStrengthFor(body) {
   const T = body.avgSurfaceTempK;
   const P = body.surfacePressureBar;
@@ -1175,7 +1174,7 @@ function resourcesFor(body, hostStar, hostBody) {
   const T = body.avgSurfaceTempK;
   const cls = hostStar?.cls;
   const metallicity = cls ? meanMetallicityForClass(cls) : 0;
-  const stellarAge = cls ? meanAgeForClass(cls) : 5;
+  const stellarAge = hostStar?.ageGyr ?? (cls ? meanAgeForClass(cls) : 5);
   const isGaseous = isGaseousBody(body);
   const hostIsGaseous = hostBody != null && isGaseousBody(hostBody);
   const ctx = {
@@ -1698,8 +1697,8 @@ function fillBody(b, allBodies, stars) {
     if (p != null) periodDays = Number(p.toFixed(3));
   }
   if (unknowns.has('semiMajorAu') && periodDays != null) {
-    const a = keplerSemiMajorAu(periodDays, hostMassSolar);
-    if (a != null) semiMajorAu = Number(a.toFixed(5));
+    const a = deriveSemiMajorAu(periodDays, hostMassSolar);
+    if (a != null) semiMajorAu = a;
   }
 
   // Insolation always traces up to the host star, so a moon inherits its
@@ -1741,17 +1740,17 @@ function fillBody(b, allBodies, stars) {
   // trio). Fall through to null when host star or formationAu unknown.
   if (unknowns.has('bulkWaterFraction')) {
     if (aFormation != null && frostLinesAu != null) {
-      bulkWaterFraction = bulkWaterFractionFor(working, aFormation, frostLinesAu);
+      bulkWaterFraction = sampleBulkWaterFraction(fieldPrng(working, 'bulk_water'), aFormation, frostLinesAu);
     }
   }
   if (unknowns.has('bulkMetalFraction')) {
     if (aFormation != null && frostLinesAu != null) {
-      bulkMetalFraction = bulkMetalFractionFor(working, aFormation, frostLinesAu);
+      bulkMetalFraction = sampleBulkMetalFraction(fieldPrng(working, 'bulk_metal'), aFormation, frostLinesAu);
     }
   }
   if (unknowns.has('bulkVolatileFraction')) {
     if (aFormation != null && frostLinesAu != null) {
-      bulkVolatileFraction = bulkVolatileFractionFor(working, aFormation, frostLinesAu);
+      bulkVolatileFraction = sampleBulkVolatileFraction(fieldPrng(working, 'bulk_volatile'), aFormation, frostLinesAu);
     }
   }
   working = { ...working, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction };

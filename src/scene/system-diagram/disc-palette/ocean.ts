@@ -2,7 +2,7 @@
 // Ocean color — physically-parameterized per-body derivation
 // =============================================================================
 //
-// Real surface-liquid color emerges from five mostly-orthogonal pathways.
+// Real surface-liquid color emerges from six mostly-orthogonal pathways.
 // Each pathway is a continuous function of an existing body dial, so two
 // close analogs (slightly different bioticCarbonAqueous, slightly
 // different metals/silicates ratio) yield visibly distinct but family-
@@ -41,10 +41,9 @@
 import { Color } from 'three';
 import { Body, CLASS_COLOR, STARS } from '../../../data/stars';
 import { hostStarIdxOf, lerpColor } from '../color-science';
-import { hazeBlendFor } from './atmosphere';
 import { atmFracOf, clamp01, dustColorFor, WHITE_COLOR } from './shared';
 
-// ─── Pathway 3: solvent intrinsic absorption ───────────────────────────────
+// ─── Pathway 1: solvent intrinsic absorption ───────────────────────────────
 //
 // "Deep clear column" colors — what a kilometer of the pure substance
 // looks like under neutral illumination with no sky or suspended matter.
@@ -106,7 +105,7 @@ function solventBaseColorFor(species: SolventSpecies): Color {
   }
 }
 
-// ─── Pathway 1: stellar SED tint ───────────────────────────────────────────
+// ─── Pathway 6: stellar SED tint ───────────────────────────────────────────
 //
 // What wavelengths reach the surface to be reflected. Read off the host
 // star's CLASS_COLOR (already blackbody-approximated). Pulled toward
@@ -131,7 +130,7 @@ function stellarLightTintFor(body: Body): Color {
   return lerpColor(raw.clone(), WHITE_COLOR, STELLAR_TINT_PULL_TO_WHITE);
 }
 
-// ─── Pathway 2: sky reflection (Fresnel + diffuse) ─────────────────────────
+// ─── Pathway 5: sky reflection (Fresnel + diffuse) ─────────────────────────
 //
 // Ocean surface reflects what sits above it. We don't have a separate
 // sky model — the body's already-derived `hazeColor` is the right
@@ -150,7 +149,7 @@ function stellarLightTintFor(body: Body): Color {
 // the solvent base.
 const OCEAN_FRESNEL = 0.18;
 
-// ─── Pathway 4: CDOM (colored dissolved organic matter) ────────────────────
+// ─── Pathway 2: CDOM (colored dissolved organic matter) ────────────────────
 //
 // Tea-staining from biotic decay products — humic + fulvic acids
 // absorb in blue + UV and leave brown-yellow. Earth's coastal /
@@ -175,7 +174,7 @@ function cdomTintFor(body: Body): { color: Color; amount: number } {
   return { color: CDOM_TINT_COLOR.clone(), amount };
 }
 
-// ─── Pathway 5: photosynthetic pigment scatter ─────────────────────────────
+// ─── Pathway 3: photosynthetic pigment scatter ─────────────────────────────
 //
 // What pigment chemistry the surface biosphere settled on, weighted by
 // relative productivity. Each pigment family scatters a characteristic
@@ -203,6 +202,9 @@ function pigmentTintFor(body: Body): { color: Color; amount: number } {
   const bsu = body.bioticSulfur        ?? 0;  // carotenoid path
   const total = bca + bsu;
   if (total <= 0) return { color: WHITE_COLOR, amount: 0 };
+  // Pre-divide blend (weights normalized before the sum), kept inline rather
+  // than routed through weightedColorBlend, which normalizes post-divide — the
+  // two differ in IEEE-754 rounding order and this is the actively-tuned form.
   const wCa = bca / total;
   const wCb = bsu / total;
   const blended = new Color(
@@ -217,7 +219,7 @@ function pigmentTintFor(body: Body): { color: Color; amount: number } {
   return { color: blended, amount };
 }
 
-// ─── Pathway 6: mineral suspended sediment ─────────────────────────────────
+// ─── Pathway 4: mineral suspended sediment ─────────────────────────────────
 //
 // Eroded surface mineralogy plumes into shallow water. Color comes
 // from the body's resource grid (same source as `dustColorFor`'s
@@ -260,7 +262,13 @@ function sedimentTintFor(body: Body): { color: Color; amount: number } {
 export const OCEAN_FALLBACK_COLOR: readonly [number, number, number] =
   [SOLVENT_COLOR_H2O.r, SOLVENT_COLOR_H2O.g, SOLVENT_COLOR_H2O.b];
 
-export function oceanColorFor(body: Body): readonly [number, number, number] {
+// `haze` is the body's already-computed hazeBlendFor result, threaded in so
+// the build path doesn't walk the haze contributor list twice (buildDiscPalette
+// needs the same blend for its own hazeOpacity/hazeColor outputs).
+export function oceanColorFor(
+  body: Body,
+  haze: { color: Color; opacity: number },
+): readonly [number, number, number] {
   if ((body.waterFraction ?? 0) <= 0) return OCEAN_FALLBACK_COLOR;
 
   // 1. Solvent base.
@@ -283,7 +291,6 @@ export function oceanColorFor(body: Body): readonly [number, number, number] {
   // unified haze blend as a stand-in for sky color; falls back to a
   // neutral grey for bodies with no atmosphere data so the Fresnel
   // term doesn't multiply against zero.
-  const haze = hazeBlendFor(body);
   const sky = haze.opacity > 0 ? haze.color : new Color(0.5, 0.5, 0.5);
   col = lerpColor(col, sky, OCEAN_FRESNEL);
 

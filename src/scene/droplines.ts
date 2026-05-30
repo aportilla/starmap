@@ -21,10 +21,11 @@ import {
   DROPLINE_COLOR_DOTS,
   DROPLINE_DOT_PERIOD_LY,
   DROPLINE_DEGENERATE_DIST,
+  clampRamp,
 } from './cluster-fade';
 
-// Pre-allocated dot capacity per pin (= 125 ly of length at
-// DROPLINE_DOT_PERIOD_LY). Comfortably covers the 50 ly catalog's full Z
+// Pre-allocated dot capacity per pin (MAX_DOTS_PER_PIN × DROPLINE_DOT_PERIOD_LY
+// of pin length). Comfortably covers the 50 ly catalog's full Z
 // extent before the camera-fade hides the pin at CAMERA_FADE_FAR. We rewrite
 // z-values in place each time the selection plane shifts and use setDrawRange
 // to reveal the active slice — avoids reallocating attributes on every
@@ -68,12 +69,15 @@ interface Drop {
 // selected cluster's own pin collapses onto the plane (dz=0) and is
 // hidden by the degeneracy check.
 //
-// On selection change, drop-lines cross-fade in lockstep with the rings:
-// scene.ts drives globalFade via setFade() and defers setSelectedCluster()
-// until the fade-out completes, so pins stay anchored to the OLD plane
-// while fading down, then snap to the NEW plane and ramp back up. The
-// rings + drop-lines read as one "selection frame" that comes and goes
-// together, not two subsystems flipping independently.
+// On selection change, drop-lines snap straight to the new plane: scene.ts
+// calls setSelectedCluster() then setFade(1) in the same frame, so every pin
+// re-anchors to the NEW selection's COM.z immediately and the subsystem
+// becomes visible at once. globalFade is the on/off gate for the whole
+// subsystem — 0 on deselect, 1 on select — and is plumbed as a 0..1 scalar
+// so it can later drive a tweened cross-fade that brings rings + drop-lines
+// in and out as one "selection frame"; today it only ever holds 0 or 1.
+// Staggering the pins to match the ring expand/collapse choreography is the
+// planned follow-up (see selectAndFocusCluster in scene.ts).
 //
 // Each pin renders as EITHER a solid Line (same-side as camera relative
 // to the focus plane) or a dotted Points (far-side), driven per frame by
@@ -91,11 +95,13 @@ export class Droplines {
   private masterVisible: boolean;
   private selectedCluster = -1;
   private hoveredCluster = -1;
-  // Global multiplier driven by the scene's selection cross-fade. Scales
-  // every per-drop opacity (including hover/selection bypasses) so the
-  // drop-line subsystem fades in/out in lockstep with the range rings —
-  // they read as one "selection frame" rather than rings fading while
-  // pins pop. 0 = entire subsystem hidden, 1 = per-drop ramps run normally.
+  // Global multiplier set by the scene on select/deselect (setFade). Scales
+  // every per-drop opacity, including the hover/selection bypasses, so the
+  // whole drop-line subsystem can be gated as one unit. 0 = entire subsystem
+  // hidden, 1 = per-drop ramps run normally; only those two values occur
+  // today. It is a 0..1 scalar (not a bool) so it can later carry a tweened
+  // cross-fade keeping pins and the range rings in lockstep as one "selection
+  // frame" rather than the rings fading while pins pop.
   private globalFade = 0;
 
   // Last selection-plane Z we baked geometry against. NaN sentinel so the
@@ -168,10 +174,10 @@ export class Droplines {
     this.masterVisible = visible;
   }
 
-  // Pass a cluster index, or -1 to clear. The scene defers calling this
-  // until the cross-fade fade-out completes (so pins stay anchored to the
-  // *old* selection's plane while fading out, then snap to the new plane
-  // for fade-in) — see updateGridFade in scene.ts.
+  // Pass a cluster index, or -1 to clear. The scene calls this together with
+  // setFade() on selection change (see selectAndFocusCluster in scene.ts): the
+  // pins re-anchor to the new plane on the next update() and become visible in
+  // the same frame, rather than waiting on a staggered cross-fade.
   setSelectedCluster(clusterIdx: number): void {
     this.selectedCluster = clusterIdx;
   }
@@ -268,12 +274,8 @@ export class Droplines {
           d.dots.visible = false;
           continue;
         }
-        if (dFocus > PIVOT_FADE_NEAR) {
-          opacity *= 1 - (dFocus - PIVOT_FADE_NEAR) / (PIVOT_FADE_FAR - PIVOT_FADE_NEAR);
-        }
-        if (dCam > CAMERA_FADE_NEAR) {
-          opacity *= 1 - (dCam - CAMERA_FADE_NEAR) / (CAMERA_FADE_FAR - CAMERA_FADE_NEAR);
-        }
+        opacity *= clampRamp(dFocus, PIVOT_FADE_NEAR, PIVOT_FADE_FAR);
+        opacity *= clampRamp(dCam, CAMERA_FADE_NEAR, CAMERA_FADE_FAR);
       }
 
       const sameSide = (dz >= 0) === camAbove;

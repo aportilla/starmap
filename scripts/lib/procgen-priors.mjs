@@ -1,7 +1,7 @@
 // Procgen priors — the data side of the body-catalog procgen pipeline.
 //
-// Mostly constants plus one merge helper. The Architect (in procgen.mjs,
-// planned) reads these to sample per-system architecture: how many planets
+// Mostly constants plus one merge helper. The Architect (in
+// procgen-architect.mjs) reads these to sample per-system architecture: how many planets
 // a star is likely to host, where they sit in orbit, what mass/radius mix
 // is plausible at each insolation, how many moons each planet type carries.
 // The Filler reads its own (smaller) prior set; this file is the
@@ -695,8 +695,11 @@ export const BULK_VOLATILE_FRACTION_BY_ZONE = {
 // `worldClass` is a pure label derived from settled physical state — it
 // flows downstream of mass, radius, temperature, water/ice cover, NOT
 // upstream of them. These thresholds bucket the (radius × temperature ×
-// cover) state space into seven labels (rocky, ocean, desert, lava,
-// gas_dwarf, ice_giant, gas_giant). Designer-dispatched tables
+// cover) state space into the priority-ordered taxonomy emitted by
+// `worldClassFor` (gaseous: hycean, helium, gas_giant, ice_giant,
+// gas_dwarf; terrestrial: lava, chthonian, magma_ocean, iron, carbon,
+// ice, ocean, solid_giant, desert, rocky) — see that function for the
+// authoritative label set and gate order. Designer-dispatched tables
 // (atmosphere species, biosphere, cloud / haze, resources) consume the
 // label; no physical scalar does.
 export const WORLD_CLASS_THRESHOLDS = {
@@ -788,31 +791,11 @@ export const ECCENTRICITY = mergeTunes(ECCENTRICITY_REALISTIC, ECCENTRICITY_TUNE
 // Jupiters and dynamical perturbations.
 export const INCLINATION_DEG = { mean: 0, sd: 2, min: 0, max: 30 };
 
-// Axial tilt in degrees. Sol terrestrials span 0–25°; gas giants 3–28°;
-// Uranus is 97° (single dramatic outlier). Sample from a mixture: most
-// pick from N(20, 15), 5% from U(60, 180) for the dramatic cases.
-// Architect can choose to implement the mixture or use this simpler form.
+// Axial tilt in degrees. Sol terrestrials span 0–25°; gas giants 3–28°.
+// A single truncated normal via `sampleTruncated`: most bodies cluster
+// near the mean while the sd tail reaches toward Uranus-class (97°)
+// extremes without a dedicated outlier mode.
 export const AXIAL_TILT_DEG = { mean: 20, sd: 20, min: 0, max: 180 };
-
-// ---------------------------------------------------------------------------
-// Haze blend — universal category multipliers
-// ---------------------------------------------------------------------------
-
-// The unified haze pass blends every atmospheric contributor — bulk
-// atm gases, formation-gated aerosol products, lifted dust, and
-// Rayleigh scattering — into one color + one opacity per body. Each
-// category's contribution is `Σ (perSpeciesWeight × GAS_POTENCY ×
-// log10(P+1)) × scale` — column thickness gates every species so a
-// thin-atm body can't paint full haze regardless of formation strength.
-// These four scales are the system-wide tuning handles. Aerosol scale
-// is set so thick-column anchors (Titan-class) land near their
-// pre-pressure-fix opacity; dust scale keeps dusty bodies in the
-// 0.1–1 bar regime visibly hazy. Tune these globals — not per-species
-// coefficients — if the anchors drift.
-export const HAZE_BULK_GAS_SCALE = 0.2;
-export const HAZE_AEROSOL_SCALE  = 1.25;
-export const HAZE_DUST_SCALE     = 3.0;
-export const HAZE_RAYLEIGH_SCALE = 0.15;
 
 // ---------------------------------------------------------------------------
 // Versioning
@@ -852,9 +835,9 @@ export const BELT_CONTEXTS = ['warm', 'cold'];
 // but only a minority host one that reads as a navigable / mine-able
 // landmark in the game.
 //
-// Rates are the union of the old discrete + collisional rates (a
-// system used to roll each independently — same total occurrence,
-// minus the small double-belt overlap). Survey anchors: Spitzer/
+// Each context's rate combines the discrete + collisional belt
+// occurrences into one roll — their union, minus the small double-belt
+// overlap (rolling each independently yields the same total). Survey anchors: Spitzer/
 // Herschel debris statistics (Su 2006, Thureau 2014, Chen 2014).
 // WD/BD rates are theory-anchored rather than detection-anchored:
 // metal-pollution evidence puts 25–50% of WDs accreting tidally-

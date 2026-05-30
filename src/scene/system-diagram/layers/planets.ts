@@ -13,8 +13,9 @@ import { buildBodyDiscGeometry, setBodyDiscHovered } from './body-disc';
 import { pickDiscPool } from '../geom/hit';
 import { disableCulling } from '../geom/cull';
 import { disposePool } from './dispose';
-import { RENDER_ORDER_PLANET, RENDER_ORDER_PLANET_HALO, Z_PLANET, Z_STRIDE } from '../layout/constants';
+import { RENDER_ORDER_PLANET, RENDER_ORDER_PLANET_HALO, Z_PLANET } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
+import { bandZ } from '../geom/snap';
 import { writeLightUniforms } from '../lighting';
 import type { DiagramPick, PlanetCenterIndex, StarLightSource } from '../types';
 
@@ -94,9 +95,14 @@ export class PlanetsLayer {
     let pi = 0;
     for (const item of rowSlots) {
       if (item.kind !== 'planet') continue;
+      // cx/cy land on integer pixels already — layoutRow rounds them at
+      // the row level (it owns the dome-arc placement), so the planet
+      // pool writes them raw rather than re-snapping. Pools that resolve
+      // their own off-row centers (moons, belts, stars) snap themselves
+      // via the geom/snap helpers.
       positions[pi * 3 + 0] = item.cx;
       positions[pi * 3 + 1] = item.cy;
-      positions[pi * 3 + 2] = item.rowIdx * Z_STRIDE + Z_PLANET;
+      positions[pi * 3 + 2] = bandZ(item.rowIdx, Z_PLANET);
       this.centerIndex.set(item.bodyIdx, { cx: item.cx, cy: item.cy, rowIdx: item.rowIdx });
       pi++;
     }

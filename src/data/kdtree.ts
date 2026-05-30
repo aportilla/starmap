@@ -11,7 +11,7 @@
 // longest-axis splits keep depth balanced where the data has actual spread.
 //
 // Recursion vs iteration — deferred enhancement.
-// The recursive build / nearestRec / radiusRec walks below are clear but
+// The recursive build / nearestRec walks below are clear but
 // bounded by JS engine stack depth. At any realistic catalog size we're nowhere
 // near that limit — a 100k-point tree is ~17 deep, a million is ~20. If the
 // catalog ever grows past that, or if a profile shows recursion overhead
@@ -44,9 +44,7 @@ export class KDTree3<P> {
 
   // Scratch state for the nearest() walk. Re-initialized at the top of each
   // top-level call so the recursion doesn't have to thread it as arguments —
-  // smaller frames, less GC, and JS is single-threaded so reentrancy can only
-  // happen if a query callback calls back into nearest() (radius/pairsWithin
-  // callbacks don't touch this state, so they're safe to chain).
+  // smaller frames, less GC.
   private _bestSq = Infinity;
   private _bestNode = -1;
 
@@ -79,39 +77,6 @@ export class KDTree3<P> {
     this._bestNode = -1;
     this.nearestRec(0, this.n, qx, qy, qz);
     return this._bestNode < 0 ? -1 : this.srcIdx[this._bestNode];
-  }
-
-  // Visit every point within `radius` of (qx, qy, qz). Callback receives the
-  // original-array index and squared distance — callers that need actual
-  // distance sqrt at the boundary. Order is tree-traversal, NOT distance-
-  // sorted; collect + sort if order matters.
-  radius(
-    qx: number,
-    qy: number,
-    qz: number,
-    radius: number,
-    cb: (srcIdx: number, d2: number) => void,
-  ): void {
-    if (this.n === 0) return;
-    this.radiusRec(0, this.n, qx, qy, qz, radius * radius, cb);
-  }
-
-  // Visit every i<j pair within `radius` of each other. Replaces O(n²) pair
-  // scans (buildClusters, expandCoincidentSets in stars.ts) with O(n log n)
-  // average. Filter `jSrc > iSrc` so each pair fires exactly once regardless
-  // of which order the tree visits them in.
-  pairsWithin(radius: number, cb: (iSrc: number, jSrc: number, d2: number) => void): void {
-    if (this.n === 0) return;
-    const r2 = radius * radius;
-    for (let i = 0; i < this.n; i++) {
-      const iSrc = this.srcIdx[i];
-      const qx = this.cx[i];
-      const qy = this.cy[i];
-      const qz = this.cz[i];
-      this.radiusRec(0, this.n, qx, qy, qz, r2, (jSrc, d2) => {
-        if (jSrc > iSrc) cb(iSrc, jSrc, d2);
-      });
-    }
   }
 
   // ===== Build ==============================================================
@@ -210,37 +175,6 @@ export class KDTree3<P> {
     } else {
       this.nearestRec(mid + 1, hi, qx, qy, qz);
       if (diff * diff < this._bestSq) this.nearestRec(lo, mid, qx, qy, qz);
-    }
-  }
-
-  // See top-of-file note on recursion vs iteration.
-  private radiusRec(
-    lo: number,
-    hi: number,
-    qx: number,
-    qy: number,
-    qz: number,
-    r2: number,
-    cb: (srcIdx: number, d2: number) => void,
-  ): void {
-    if (hi - lo <= 0) return;
-    const mid = (lo + hi) >> 1;
-    const dx = qx - this.cx[mid];
-    const dy = qy - this.cy[mid];
-    const dz = qz - this.cz[mid];
-    const d2 = dx * dx + dy * dy + dz * dz;
-    if (d2 <= r2) cb(this.srcIdx[mid], d2);
-    const ax = this.axis[mid];
-    const diff = ax === 0 ? dx : ax === 1 ? dy : dz;
-    // Visit near side unconditionally, far side only if the splitting plane
-    // is within radius (same pruning shape as nearest, fixed radius instead
-    // of a shrinking best).
-    if (diff < 0) {
-      this.radiusRec(lo, mid, qx, qy, qz, r2, cb);
-      if (diff * diff <= r2) this.radiusRec(mid + 1, hi, qx, qy, qz, r2, cb);
-    } else {
-      this.radiusRec(mid + 1, hi, qx, qy, qz, r2, cb);
-      if (diff * diff <= r2) this.radiusRec(lo, mid, qx, qy, qz, r2, cb);
     }
   }
 }

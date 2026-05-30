@@ -1,8 +1,8 @@
 // GAS_POTENCY — approximate per-gas visual absorption strength in the visible
 // band. The single source for both the renderer (column + cloud-deck color in
-// body-palette.ts) and procgen's sparse-cirrus mode gate (procgen.mjs). Plain
+// color-science.ts) and procgen's sparse-cirrus mode gate (procgen.mjs). Plain
 // JS so the Node build can import it; the browser re-exports it through
-// body-palette.ts, typed by the sibling gas-potency.d.mts.
+// color-science.ts, typed by the sibling gas-potency.d.mts.
 //
 // This object MUST carry an entry for every AtmGas (the .d.mts asserts
 // Record<AtmGas, number>); a missing key reads as 0 via the `?? 0` guards at

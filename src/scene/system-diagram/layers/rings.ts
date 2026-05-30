@@ -20,10 +20,11 @@ import { makeRingMaterial } from '../../materials';
 import {
   RENDER_ORDER_BACK_RING, RENDER_ORDER_FRONT_RING,
   RING_MINOR_OVER_MAJOR, RING_SEGMENTS,
-  Z_BACK_RING, Z_FRONT_RING, Z_STRIDE,
+  Z_BACK_RING, Z_FRONT_RING,
 } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
 import { hitsRing, ringEllipseParams } from '../geom/ring';
+import { bandZ } from '../geom/snap';
 import { disableCulling } from '../geom/cull';
 import { disposePool } from './dispose';
 import type { DiagramPick, PlanetCenterIndex } from '../types';
@@ -41,6 +42,9 @@ interface Ring {
   outerR: number;
   innerR: number;
   tiltRad: number;
+  // (innerR/outerR)² — the picker's squared normalized inner-edge
+  // radius. Constant per ring, so hoisted off hitsRing's hot path.
+  innerRho2: number;
 }
 
 export class RingsLayer {
@@ -67,9 +71,8 @@ export class RingsLayer {
     for (const ring of this.rings) {
       const c = centers.get(ring.hostBodyIdx);
       if (!c) continue;
-      const baseZ = c.rowIdx * Z_STRIDE;
-      ring.backMesh.position.set(c.cx, c.cy, baseZ + Z_BACK_RING);
-      ring.frontMesh.position.set(c.cx, c.cy, baseZ + Z_FRONT_RING);
+      ring.backMesh.position.set(c.cx, c.cy, bandZ(c.rowIdx, Z_BACK_RING));
+      ring.frontMesh.position.set(c.cx, c.cy, bandZ(c.rowIdx, Z_FRONT_RING));
     }
   }
 
@@ -88,6 +91,7 @@ export class RingsLayer {
       const hit = hitsRing(x, y, {
         hostCx: c.cx, hostCy: c.cy,
         outerR: ring.outerR, innerR: ring.innerR, tiltRad: ring.tiltRad,
+        innerRho2: ring.innerRho2,
       }, half);
       if (hit) return { kind: 'ring', bodyIdx: ring.bodyIdx };
     }
@@ -132,7 +136,8 @@ function buildRing(ring: Body, hostPlanet: Body, ringBodyIdx: number, hostBodyId
   // mesh.position moves each layout — see disableCulling.
   disableCulling(backMesh);
   disableCulling(frontMesh);
-  return { bodyIdx: ringBodyIdx, hostBodyIdx, backMesh, frontMesh, backGeometry, frontGeometry, material, outerR, innerR, tiltRad };
+  const innerRho2 = (innerR / outerR) * (innerR / outerR);
+  return { bodyIdx: ringBodyIdx, hostBodyIdx, backMesh, frontMesh, backGeometry, frontGeometry, material, outerR, innerR, tiltRad, innerRho2 };
 }
 
 // Build one half of the ring's annulus as a triangle strip. The arc

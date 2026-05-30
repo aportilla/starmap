@@ -167,6 +167,36 @@ export class Panel extends BasePanel {
     this.rebuild();
   }
 
+  // Shared zone hit-test. Zones are recorded in panel-local Y-down texture
+  // space; the cursor arrives in HUD Y-up buffer coords. The conversion
+  // anchors on panelTop (the panel's top edge in Y-up = v.y + v.h), so a
+  // zone's Y-up band is [panelTop - zone.y - zone.h, panelTop - zone.y).
+  //
+  // checkX controls whether the zone's X sub-rect is range-checked: tab and
+  // radio zones carry per-pill x/w and must be checked (so gaps between
+  // pills fall through); row zones span the panel width and are X-checked by
+  // the caller instead. Returns the first matching zone, or null.
+  private hitZone<Z extends { y: number; h: number; x?: number; w?: number }>(
+    bufX: number,
+    bufY: number,
+    zones: readonly Z[],
+    checkX: boolean,
+  ): Z | null {
+    const v = this.visibleBounds;
+    const panelTop = v.y + v.h;
+    for (const z of zones) {
+      if (checkX) {
+        const left = v.x + (z.x ?? 0);
+        const right = left + (z.w ?? 0);
+        if (bufX < left || bufX >= right) continue;
+      }
+      const topHud = panelTop - z.y;
+      const botHud = topHud - z.h;
+      if (bufY >= botHud && bufY < topHud) return z;
+    }
+    return null;
+  }
+
   // Hit-test toggle / action rows in HUD buffer coords. Caller ensures
   // bufY is Y-up; this method converts to panel-local Y-down using the
   // panel's current visible bounds.
@@ -177,16 +207,11 @@ export class Panel extends BasePanel {
   hitRow(bufX: number, bufY: number): PanelHit | null {
     if (!this.visible) return null;
     const v = this.visibleBounds;
+    // Rows span the full panel width, so X is checked panel-wide here rather
+    // than per-zone (RowZone carries no x/w).
     if (bufX < v.x || bufX >= v.x + v.w) return null;
-    const panelTop = v.y + v.h;
-    for (const r of this.rowZones) {
-      const rowTopHud    = panelTop - r.y;
-      const rowBottomHud = rowTopHud - r.h;
-      if (bufY >= rowBottomHud && bufY < rowTopHud) {
-        return { id: r.id, kind: r.kind };
-      }
-    }
-    return null;
+    const r = this.hitZone(bufX, bufY, this.rowZones, false);
+    return r ? { id: r.id, kind: r.kind } : null;
   }
 
   // Probe the radio pill at this point, including disabled pills. Returns
@@ -195,35 +220,15 @@ export class Panel extends BasePanel {
   // typically absorb (block scene pick) but don't dispatch / cursor-swap.
   probeRadio(bufX: number, bufY: number): RadioProbe | null {
     if (!this.visible) return null;
-    const v = this.visibleBounds;
-    const panelTop = v.y + v.h;
-    for (const rz of this.radioZones) {
-      const left = v.x + rz.x;
-      const right = left + rz.w;
-      const topHud = panelTop - rz.y;
-      const botHud = topHud - rz.h;
-      if (bufX >= left && bufX < right && bufY >= botHud && bufY < topHud) {
-        return { rowId: rz.rowId, value: rz.value, disabled: rz.disabled };
-      }
-    }
-    return null;
+    const rz = this.hitZone(bufX, bufY, this.radioZones, true);
+    return rz ? { rowId: rz.rowId, value: rz.value, disabled: rz.disabled } : null;
   }
 
   // Tab strip hit-test. Same Y-up → Y-down conversion as hitRow.
   hitTab(bufX: number, bufY: number): TabHit | null {
     if (!this.visible) return null;
-    const v = this.visibleBounds;
-    const panelTop = v.y + v.h;
-    for (const t of this.tabZones) {
-      const tabLeft   = v.x + t.x;
-      const tabRight  = tabLeft + t.w;
-      const tabTopHud = panelTop - t.y;
-      const tabBotHud = tabTopHud - t.h;
-      if (bufX >= tabLeft && bufX < tabRight && bufY >= tabBotHud && bufY < tabTopHud) {
-        return { id: t.id };
-      }
-    }
-    return null;
+    const t = this.hitZone(bufX, bufY, this.tabZones, true);
+    return t ? { id: t.id } : null;
   }
 
   // True if the point lies anywhere inside the panel's visible rect.
