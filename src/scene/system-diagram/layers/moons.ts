@@ -21,7 +21,7 @@ import {
 import { discPxFromRadius, type RowSlot } from '../layout/row';
 import { writeLightUniforms } from '../lighting';
 import { hash32, mulberry32 } from '../geom/prng';
-import { hitCircle } from '../geom/hit';
+import { pickDiscPool } from '../geom/hit';
 import { disableCulling } from '../geom/cull';
 import type { DiagramPick, PlanetCenterIndex, StarLightSource } from '../types';
 
@@ -136,16 +136,13 @@ export class MoonsLayer {
 function pickFromPool(pool: MoonPool | null, x: number, y: number): DiagramPick | null {
   if (!pool) return null;
   const pos = pool.geometry.attributes.position.array as Float32Array;
-  for (let i = 0; i < pool.slots.length; i++) {
-    const slot = pool.slots[i];
-    const cx = pos[i * 3 + 0];
-    const cy = pos[i * 3 + 1];
-    const r = slot.discPx / 2;
-    if (hitCircle(x, y, cx, cy, r)) {
-      return { kind: 'moon', bodyIdx: slot.bodyIdx };
-    }
-  }
-  return null;
+  return pickDiscPool(
+    x, y, pool.slots.length,
+    i => pos[i * 3 + 0],
+    i => pos[i * 3 + 1],
+    i => pool.slots[i].discPx / 2,
+    i => ({ kind: 'moon', bodyIdx: pool.slots[i].bodyIdx }),
+  );
 }
 
 function writePoolPositions(pool: MoonPool | null, centers: PlanetCenterIndex, layerZ: number): void {

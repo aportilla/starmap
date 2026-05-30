@@ -39,3 +39,19 @@ export const glsl = (n: number): string => Number.isInteger(n) ? n.toFixed(1) : 
 // bounding-box edges that would drop a row/column on one side. Cost: a
 // few extra discarded fragments per disc.
 export const RASTER_PAD = 2;
+
+// Parity-aware pixel-grid snap — the single GLSL source for every snapped
+// vertex shader (perspective stars, planet/moon disc, snapped lines +
+// dots). Maps a projected NDC position to the buffer-pixel grid:
+//   oddOff 0   → integer pixel BOUNDARY (even-diameter discs, lines)
+//   oddOff 0.5 → pixel CENTER (odd-diameter discs, 1-px dots)
+// so each disc rasterizes symmetrically under the gl_FragCoord − center
+// offset path and thin geometry stops shimmering. This crisp-pixel snap
+// is load-bearing for the committed aesthetic, so it lives once here — a
+// fix can't land in one shader and silently rot the others. Interpolate
+// at pre-main scope, then call snapToPixelGrid(ndc, uViewport, oddOff).
+export const PIXEL_SNAP_GLSL = /* glsl */ `
+      vec2 snapToPixelGrid(vec2 ndc, vec2 viewport, float oddOff) {
+        vec2 fp = (ndc * 0.5 + 0.5) * viewport;
+        return floor(fp - oddOff + 0.5) + oddOff;
+      }`;

@@ -4,7 +4,7 @@
 
 import { Color, ShaderMaterial, Vector2, Vector3 } from 'three';
 import { PIVOT_FADE_FAR, PIVOT_FADE_NEAR } from '../cluster-fade';
-import { glsl, RASTER_PAD, snappedMaterials } from './shared';
+import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snappedMaterials } from './shared';
 
 // ─── Stars shader style constants ──────────────────────────────────────────
 // Tuning knobs hoisted out of the raw shader source so they sit at the top
@@ -91,11 +91,11 @@ export function snappedLineMat(opts: SnappedLineOptions): ShaderMaterial {
     },
     vertexShader: `
       uniform vec2 uViewport;
+      ${PIXEL_SNAP_GLSL}
       void main() {
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        vec2 ndc = clip.xy / clip.w;
-        vec2 px  = floor((ndc * 0.5 + 0.5) * uViewport + 0.5);
-        ndc = (px / uViewport) * 2.0 - 1.0;
+        vec2 px  = snapToPixelGrid(clip.xy / clip.w, uViewport, 0.0);
+        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
         gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
       }
     `,
@@ -131,14 +131,13 @@ export function snappedDotsMat(opts: { color: number; opacity?: number }): Shade
     },
     vertexShader: `
       uniform vec2 uViewport;
+      ${PIXEL_SNAP_GLSL}
       void main() {
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        vec2 ndc = clip.xy / clip.w;
-        vec2 fp  = (ndc * 0.5 + 0.5) * uViewport;
-        // Snap to pixel center (integer + 0.5) so a size-1 point covers
-        // exactly one buffer pixel rather than straddling two.
-        vec2 px  = floor(fp) + 0.5;
-        ndc = (px / uViewport) * 2.0 - 1.0;
+        // oddOff 0.5 snaps to pixel CENTER (integer + 0.5) so a size-1
+        // point covers exactly one buffer pixel rather than straddling two.
+        vec2 px  = snapToPixelGrid(clip.xy / clip.w, uViewport, 0.5);
+        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
         gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
         gl_PointSize = 1.0;
       }
@@ -220,6 +219,7 @@ export function makeStarsMaterial(initialPxScale: number): ShaderMaterial {
       const float FADE_MIN        = ${glsl(FADE_MIN)};
       const float PIVOT_FADE_NEAR = ${glsl(PIVOT_FADE_NEAR)};
       const float PIVOT_FADE_FAR  = ${glsl(PIVOT_FADE_FAR)};
+      ${PIXEL_SNAP_GLSL}
       void main() {
         vColor = color;
         // Depth-attenuate by view-space distance so closer stars render
@@ -264,16 +264,11 @@ export function makeStarsMaterial(initialPxScale: number): ShaderMaterial {
         gl_PointSize = sz + ${glsl(RASTER_PAD)};
         vRadius = sz * 0.5;
 
-        // Parity-aware snap of the projected center to the pixel grid.
-        // - even sz: pixel BOUNDARY (integer window coord) so the sz/2 rows
-        //   on each side cover symmetric pixels.
-        // - odd sz:  pixel CENTER (half-integer) so (sz-1)/2 rows on each
-        //   side plus the central row are symmetric.
-        // The snapped center is also passed to the fragment shader as
-        // vCenter so it can compute exact pixel-grid offsets without
-        // touching gl_PointCoord (whose sub-pixel precision is
-        // implementation-defined and produces visible asymmetry on some
-        // drivers when the point center sits at sub-pixel positions).
+        // Parity-aware pixel-grid snap (see snapToPixelGrid in shared.ts).
+        // vCenter is also passed to the fragment shader so it computes exact
+        // pixel-grid offsets without touching gl_PointCoord (whose sub-pixel
+        // precision is implementation-defined and produces visible asymmetry
+        // on some drivers when the point center sits at sub-pixel positions).
         float oddOff = mod(sz, 2.0) * 0.5;
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         // Focus-target short-circuit: the camera always lookAt's uFocusWorld,
@@ -281,11 +276,10 @@ export function makeStarsMaterial(initialPxScale: number): ShaderMaterial {
         // matrix product produces (~1e-7, ~1e-7) instead, which is enough
         // noise to flip the parity-aware snap below by 1 pixel each frame
         // as yaw/pitch rotate. Substitute exact (0,0) for that vertex only.
-        vec2 ndc = all(equal(position, uFocusWorld)) ? vec2(0.0) : (clip.xy / clip.w);
-        vec2 fp = (ndc * 0.5 + 0.5) * uViewport;
-        vec2 px = floor(fp - oddOff + 0.5) + oddOff;
+        vec2 ndcSeed = all(equal(position, uFocusWorld)) ? vec2(0.0) : (clip.xy / clip.w);
+        vec2 px = snapToPixelGrid(ndcSeed, uViewport, oddOff);
         vCenter = px;
-        ndc = (px / uViewport) * 2.0 - 1.0;
+        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
         gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
       }
     `,

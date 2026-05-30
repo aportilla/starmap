@@ -8,7 +8,7 @@
 
 import { Color, ShaderMaterial, Vector2 } from 'three';
 import { RING_MINOR_OVER_MAJOR } from '../system-diagram/layout/constants';
-import { glsl, RASTER_PAD, snappedMaterials } from './shared';
+import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snappedMaterials } from './shared';
 import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
 
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
@@ -224,6 +224,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       varying float vEmissionTempNorm;
       uniform float uDiscScale;
       uniform vec2  uViewport;
+      ${PIXEL_SNAP_GLSL}
       void main() {
         vHovered  = aHazeColor.w;
         vRimColor = vec3(aPalette0.w, aPalette1.w, aPalette2.w);
@@ -258,17 +259,14 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         gl_PointSize = sz + ${glsl(RASTER_PAD)} + 2.0 * aAtmoScalars.y;
         vRadius = sz * 0.5;
 
-        // Parity-aware snap of the projected center to the pixel grid:
-        // even sz → integer (pixel boundary), odd sz → integer + 0.5
-        // (pixel center). Load-bearing for symmetric disc rasterization
-        // under the gl_FragCoord − vCenter offset path.
+        // Parity-aware pixel-grid snap (see snapToPixelGrid in shared.ts).
+        // vCenter carries the snapped center to the fragment shader for the
+        // gl_FragCoord − vCenter offset path.
         float oddOff = mod(sz, 2.0) * 0.5;
         vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        vec2 ndc = clip.xy / clip.w;
-        vec2 fp = (ndc * 0.5 + 0.5) * uViewport;
-        vec2 px = floor(fp - oddOff + 0.5) + oddOff;
+        vec2 px = snapToPixelGrid(clip.xy / clip.w, uViewport, oddOff);
         vCenter = px;
-        ndc = (px / uViewport) * 2.0 - 1.0;
+        vec2 ndc = (px / uViewport) * 2.0 - 1.0;
         gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
       }
     `,

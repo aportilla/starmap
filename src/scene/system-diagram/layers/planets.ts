@@ -10,7 +10,7 @@ import {
 } from 'three';
 import { makePlanetMaterial } from '../../materials';
 import { buildBodyDiscGeometry, setBodyDiscHovered } from './body-disc';
-import { hitCircle } from '../geom/hit';
+import { pickDiscPool } from '../geom/hit';
 import { disableCulling } from '../geom/cull';
 import { disposePool } from './dispose';
 import { RENDER_ORDER_PLANET, RENDER_ORDER_PLANET_HALO, Z_PLANET, Z_STRIDE } from '../layout/constants';
@@ -122,15 +122,13 @@ export class PlanetsLayer {
   pickAt(x: number, y: number): DiagramPick | null {
     if (!this.geometry) return null;
     const pos = this.geometry.attributes.position.array as Float32Array;
-    for (let i = 0; i < this.planetIndices.length; i++) {
-      const cx = pos[i * 3 + 0];
-      const cy = pos[i * 3 + 1];
-      const r = this.planetDiscPx[i] / 2;
-      if (hitCircle(x, y, cx, cy, r)) {
-        return { kind: 'planet', bodyIdx: this.planetIndices[i] };
-      }
-    }
-    return null;
+    return pickDiscPool(
+      x, y, this.planetIndices.length,
+      i => pos[i * 3 + 0],
+      i => pos[i * 3 + 1],
+      i => this.planetDiscPx[i] / 2,
+      i => ({ kind: 'planet', bodyIdx: this.planetIndices[i] }),
+    );
   }
 
   setHovered(pick: DiagramPick, value: 0 | 1): void {

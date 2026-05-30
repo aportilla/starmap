@@ -86,7 +86,7 @@ src/
         ring.ts             ringEllipseParams + hitsRing + bodyVisualTiltRad (shared band/ring tilt)
         prng.ts             re-exports hash32 + mulberry32 from scripts/lib/prng.mjs (single source)
         cull.ts             disableCulling: frustum-cull opt-out for pools that rewrite vertex positions
-        hit.ts              hitCircle: point-in-disc pick test (sibling of ring.ts's hitsRing)
+        hit.ts              hitCircle point-in-disc test + pickDiscPool slot-walk shared by the disc layers (sibling of ring.ts's hitsRing)
     input-controller.ts     InputController: classifies pointer/keyboard gestures into intents
     selection-policy.ts     Per-tick view-state derivations: candidate rule, focus-proximity, orbit-keyed star-dim ramp
     grid.ts                 Range rings + axes + galactic-centre arrow; ring expand/collapse choreography
@@ -103,7 +103,7 @@ src/
       planet.ts             makePlanetMaterial — the layered procedural planet/moon disc + halo
       system-decor.ts       makeBlobMaterial + makeRingMaterial + makeStarMeshMaterial + makeStarHaloMaterial
       chunks.ts             Shared system-view GLSL: bayer4 + hueDir + star-crescent lighting + MAX_LIGHTS
-      shared.ts             snappedMaterials registry + setSnappedLineViewport + glsl helper + RASTER_PAD
+      shared.ts             snappedMaterials registry + setSnappedLineViewport + glsl helper + RASTER_PAD + PIXEL_SNAP_GLSL snap chunk
     render-scale.ts         RenderScaleObserver: picks integer N for setPixelRatio(DPR/N)
     viewport-sizer.ts       Pixel-snap sizing for integer-multiple render buffers (shared by every scene's resize)
   ui/                       Pixel-art widget toolkit + per-screen HUD orchestrators.

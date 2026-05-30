@@ -16,7 +16,7 @@ import {
   SYSTEM_VIEW_SATURATION_LIFT_MAX, SYSTEM_VIEW_SATURATION_LIFT_RATE,
 } from '../layout/constants';
 import { bigMiddleOrder, sumOf } from '../layout/row';
-import { hitCircle } from '../geom/hit';
+import { pickDiscPool } from '../geom/hit';
 import { disposePool } from './dispose';
 import type { DiagramPick, StarLightSource } from '../types';
 
@@ -226,16 +226,13 @@ export class StarsRowLayer {
   }
 
   pickAt(x: number, y: number): DiagramPick | null {
-    for (let slot = 0; slot < this.starDiscs.length; slot++) {
-      const disc = this.starDiscs[slot];
-      const cx = disc.mesh.position.x;
-      const cy = disc.mesh.position.y;
-      const r = disc.currentDiam / 2;
-      if (hitCircle(x, y, cx, cy, r)) {
-        return { kind: 'star', starIdx: this.starMembers[slot] };
-      }
-    }
-    return null;
+    return pickDiscPool(
+      x, y, this.starDiscs.length,
+      i => this.starDiscs[i].mesh.position.x,
+      i => this.starDiscs[i].mesh.position.y,
+      i => this.starDiscs[i].currentDiam / 2,
+      i => ({ kind: 'star', starIdx: this.starMembers[i] }),
+    );
   }
 
   // Snapshot of every cluster member's current screen position + tuned
