@@ -78,25 +78,52 @@ export const DOME_AREA_MAX = 2_000_000;
 
 // --- Planet + moon disc sizing ---
 
-// Planet discs sized from radiusEarth with cube-root compression. The
-// real radius range across rocky-to-gas-giant is ~30× (Mercury 0.38 R⊕ →
-// Jupiter 11.2 R⊕); cbrt(30) ≈ 3.1, so the rendered diameter range
-// collapses to ~3× — Mercury / Mars at the floor read clearly while
-// Jupiter / Saturn still feel substantial without dwarfing the row.
-export const PLANET_DISC_MIN = 40;
-export const PLANET_DISC_MAX = 120;
-// Multiplier on cbrt(radiusEarth). 54 was picked so Earth (1.0 R⊕) lands
-// near the middle of the range and Jupiter (11.2 R⊕) at ~120 px while
-// Mercury (0.38 R⊕) lands near the 40 px floor — preserving the 3×
-// Jupiter / Mercury ratio at the clamps.
-export const PLANET_DISC_BASE = 54;
+// Planet disc diameter (px) is two radius→size mappings blended into one
+// curve (see planetDiscPx in row.ts). The catalog's radii are bimodal:
+// rocky worlds spread smoothly from Mercury (0.38 R⊕) to ~2 R⊕, then gas
+// giants pile up at 10–12 R⊕ because electron-degeneracy pressure flattens
+// the mass→radius curve (a 0.5 and a 10 Jupiter-mass planet are both ~1 R_J).
+// A single cube-root curve renders that pile-up as a near-flat plateau, so
+// the two regimes get their own mapping:
+//   • low-end: cube-root compression, Earth (1 R⊕) pinned to PLANET_DISC_BASE.
+//   • high-end: a locally-linear slope across the dense giant band, so giants
+//     that differ by a few R⊕ get a few px of separation instead of clamping.
+// The blend hands off across [PLANET_DISC_BLEND_LO, PLANET_DISC_BLEND_HI],
+// then a soft-min asymptotes the top to PLANET_DISC_ASYMPTOTE (a practical
+// max approached, never reached — no hard clip / cliff) and a soft-max eases
+// the smallest bodies onto PLANET_DISC_MIN. The whole curve is monotonic, so
+// a bigger radius always renders at least as large.
 
-// Moon discs use the same cbrt curve as planets. The 50 px cap exceeds
-// the 40 px planet floor on purpose — moons read against their parent,
-// not against the smallest planet in the system, and big moons cluster
-// around big planets (Ganymede / Titan orbit gas giants), so a 50 px
-// moon always sits next to a 100+ px parent in practice. Floor at 10
-// keeps tiny inner moons visible against a 120-px Jupiter.
+// Smallest disc diameter (soft floor) and the practical max diameter the
+// curve asymptotes toward. PLANET_DISC_MIN also seeds the belt height
+// fallback when a star has no planets (see belts.ts).
+export const PLANET_DISC_MIN = 36;
+export const PLANET_DISC_ASYMPTOTE = 132;
+// Low-end multiplier on cbrt(radiusEarth); equals Earth's pinned diameter
+// since cbrt(1) = 1. Sets where rocky worlds land.
+export const PLANET_DISC_BASE = 54;
+// High-end mapping (giant band): px ≈ SLOPE·radiusEarth + OFFSET before the
+// asymptote bends it over. The slope is what gives Jupiter-vs-super-Jupiter
+// visible size separation.
+export const PLANET_DISC_GIANT_SLOPE = 6.2;
+export const PLANET_DISC_GIANT_OFFSET = 44;
+// Radius band (R⊕) over which the low-end curve hands off to the high-end
+// mapping via smoothstep.
+export const PLANET_DISC_BLEND_LO = 4;
+export const PLANET_DISC_BLEND_HI = 9;
+// Knee widths (px) of the soft-min ceiling and soft-max floor — larger =
+// gentler, earlier-starting bend; smaller = sharper corner.
+export const PLANET_DISC_TOP_KNEE = 7;
+export const PLANET_DISC_FLOOR_KNEE = 4;
+
+// Moon discs use a plain cbrt curve with hard clamps (discPxFromRadius in
+// row.ts) — moon radii are all sub-Earth, so they never reach the giant
+// band that the planet curve exists to spread, and a simple compression
+// reads fine. The 50 px cap exceeds the planet floor on purpose: moons
+// read against their parent, not against the smallest planet in the
+// system, and big moons cluster around big planets (Ganymede / Titan orbit
+// gas giants), so a 50 px moon always sits next to a 100+ px parent in
+// practice. Floor at 10 keeps tiny inner moons visible against a Jupiter.
 export const MOON_DISC_MIN = 10;
 export const MOON_DISC_MAX = 50;
 // Multiplier on cbrt(radiusEarth). 67 lands Ganymede / Titan (~0.4 R⊕)

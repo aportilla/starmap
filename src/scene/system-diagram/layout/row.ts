@@ -8,7 +8,10 @@ import { sizes } from '../../../ui/theme';
 import {
   BELT_SLOT_WIDTH,
   DOME_AREA_MAX, DOME_AREA_MIN, DOME_PEAK_MAX_PX, DOME_PEAK_MIN_PX,
-  PLANET_DISC_BASE, PLANET_DISC_MAX, PLANET_DISC_MIN,
+  PLANET_DISC_ASYMPTOTE, PLANET_DISC_BASE,
+  PLANET_DISC_BLEND_HI, PLANET_DISC_BLEND_LO,
+  PLANET_DISC_FLOOR_KNEE, PLANET_DISC_GIANT_OFFSET,
+  PLANET_DISC_GIANT_SLOPE, PLANET_DISC_MIN, PLANET_DISC_TOP_KNEE,
   PLANET_PEAK_FROM_TOP,
 } from './constants';
 
@@ -28,12 +31,11 @@ export interface RowSlot {
   rowIdx: number;
 }
 
-// Disc diameter (px) from a body's radiusEarth, cube-root-compressed so
-// the ~30× real radius span from Mercury to Jupiter collapses into a
-// legible ~3× rendered range. Shared by the planet row slots and the
-// moon pools (the same curve, per the PLANET_DISC_* / MOON_DISC_*
-// comments in constants.ts); each caller supplies its own base / clamp /
-// null-fallback, since the moon cap deliberately exceeds the planet floor.
+// Disc diameter (px) from a body's radiusEarth, cube-root-compressed and
+// hard-clamped. Moon-only: moon radii are all sub-Earth, so the simple
+// compression never needs the giant-band handling the planet curve has.
+// The caller supplies base / clamp / null-fallback (the moon cap exceeds
+// the planet floor on purpose — see MOON_DISC_* in constants.ts).
 export function discPxFromRadius(
   radiusEarth: number | null,
   opts: { base: number; min: number; max: number; fallback: number },
@@ -43,12 +45,37 @@ export function discPxFromRadius(
   return Math.max(opts.min, Math.min(opts.max, Math.round(px)));
 }
 
-// Per-planet disc diameter. Kept here because both row construction
-// (widthPx) and PlanetsLayer (shader aSize) read it via RowSlot.widthPx.
+// Smooth ceiling/floor: log-sum-exp soft-min / soft-max so px approaches the
+// bound asymptotically instead of clipping to it (knee = how wide the bend).
+// softplus is the stable building block (≈ z for large z, so no overflow).
+const softplus = (z: number): number => (z > 30 ? z : Math.log(1 + Math.exp(z)));
+const softMin = (x: number, max: number, knee: number): number =>
+  max - knee * softplus((max - x) / knee);
+const softMax = (x: number, min: number, knee: number): number =>
+  min + knee * softplus((x - min) / knee);
+const smoothstep = (edge0: number, edge1: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+};
+
+// Per-planet disc diameter — two radius→size mappings blended into one
+// monotonic curve. The low-end cube-root mapping pins Earth to
+// PLANET_DISC_BASE and spreads the rocky worlds; the high-end linear
+// mapping gives the degeneracy-clustered giant band real px-separation
+// instead of a flat plateau. smoothstep hands low→high across the blend
+// band, a soft-min asymptotes the top toward PLANET_DISC_ASYMPTOTE (no
+// hard clip), and a soft-max eases the smallest bodies onto
+// PLANET_DISC_MIN. Read here by row construction (widthPx) and, via
+// RowSlot.widthPx, by PlanetsLayer (shader aSize).
 export function planetDiscPx(radiusEarth: number | null): number {
-  return discPxFromRadius(radiusEarth, {
-    base: PLANET_DISC_BASE, min: PLANET_DISC_MIN, max: PLANET_DISC_MAX, fallback: 1.0,
-  });
+  const r = Math.max(radiusEarth ?? 1.0, 0.0001);
+  const lo = Math.cbrt(r) * PLANET_DISC_BASE;
+  const hi = PLANET_DISC_GIANT_SLOPE * r + PLANET_DISC_GIANT_OFFSET;
+  const w = smoothstep(PLANET_DISC_BLEND_LO, PLANET_DISC_BLEND_HI, r);
+  let px = lo * (1 - w) + hi * w;
+  px = softMin(px, PLANET_DISC_ASYMPTOTE, PLANET_DISC_TOP_KNEE);
+  px = softMax(px, PLANET_DISC_MIN, PLANET_DISC_FLOOR_KNEE);
+  return Math.round(px);
 }
 
 // Gather every planet + belt across a cluster's member stars, tag each
