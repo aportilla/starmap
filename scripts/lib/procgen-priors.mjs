@@ -925,6 +925,31 @@ export const BELT_RESOURCE_OCCURRENCE = mergeTunes(
   BELT_RESOURCE_OCCURRENCE_TUNE,
 );
 
+// Belt differentiation (the M-type axis). Strategic concentration in small
+// bodies is a product of differentiation — a parent body large enough to melt
+// (radiogenic Al-26 heating) separates an iron core and partitions incompatible
+// elements (rare-earths, U/Th) into late-stage crustal melts. Shatter that body
+// and you expose M-type cores (concentrated metals + siderophiles) and
+// enriched crust. Dust-cascade parents (tens of km) never differentiated and
+// stay C-type primitive. So differentiation probability ramps with the belt's
+// largest parent body (Vesta ≈525 km is fully differentiated; Ceres ≈940 km
+// partial), and a differentiated belt's occurrence weights tilt toward the
+// heavies — the real asteroid taxonomy (16 Psyche is the archetype core
+// remnant), and the strategic-prize belt a player hunts for. Probabilistic and
+// gated on a stored field; orthogonal to warm/cold, so a differentiated cold
+// belt reads as a Pluto-class rocky-core KBO rather than pure ice.
+export const BELT_DIFFERENTIATION = {
+  kmFloor: 300,   // largestBodyKm below which a belt stays primitive (prob 0)
+  kmFull: 750,    // largestBodyKm at/above which differentiation prob = maxProb
+  maxProb: 0.45,  // ceiling so M-type belts stay a notable minority, not default
+  // Occurrence-weight multipliers applied to the warm/cold context weights when
+  // a belt differentiates: cores + crust unlock the heavies, volatiles bake off.
+  multipliers: {
+    resMetals: 2.5, resRareEarths: 3.0, resRadioactives: 3.0,
+    resSilicates: 0.8, resVolatiles: 0.4, resExotics: 1.0,
+  },
+};
+
 // largestBodyKm draw range, conditioned on shepherding rather than a
 // discrete population enum. Shepherded belts (anchored to a giant via
 // BELT_GIANT_ADJACENCY) tend to be primordial parent-body inventories
@@ -1068,30 +1093,29 @@ export const RING_EXTENT = {
 };
 
 // ---------------------------------------------------------------------------
-// Ring resources — six 0..10 scalars per ring; gated by formation zone
+// Ring resources — a SINGLE dominant resource per ring, from occurrence weights
 // ---------------------------------------------------------------------------
 
-// Rings inherit composition from the circumplanetary-disk material at
-// formation — primarily water ice past the H2O frost line, primarily
-// silicate dust and refractory debris inside it. Two priors gated by
-// whether the host's formationAu sat past the H2O snow line; no per-
-// planet-type dispatch.
+// A ring is one smeared, disrupted body — overwhelmingly made of ONE material
+// (Saturn's rings are ~99% water ice), so unlike a belt (many distinct parent
+// bodies → two notable deposits) a ring draws a SINGLE resource via
+// drawWeightedDeposits(count=1). The weights below are relative occurrence odds
+// per resource (not 0..10 abundances); the drawn resource's richness comes from
+// RING_ABUNDANCE. Composition is inherited from the circumplanetary disk at
+// formation — water ice past the H2O frost line, silicate/refractory dust
+// inside it — gated on whether the host's formationAu sat past the H2O snow
+// line; no per-planet-type dispatch.
 //
-// Saturn's main ring is the iconic 99% water-ice case (Sol H2O frost
-// ≈ 2.7 AU; Saturn formed at 9.5 AU). Uranus's narrow rings are
-// carbonaceous-darkened ice — still icy at the molecular level, just
-// surface-radiation-darkened (which the renderer handles via the
-// volatile-vs-silicate color/alpha lerp, no separate "dark ring"
-// composition needed). Jupiter's faint main ring is a rocky/silicate
-// outlier — captured here through the per-resource sd, not a separate
-// table.
+// Saturn's main ring is the iconic 99% water-ice case (Sol H2O frost ≈ 2.7 AU;
+// Saturn formed at 9.5 AU). Uranus's narrow rings are carbonaceous-darkened ice
+// — still icy at the molecular level, just surface-radiation-darkened (the
+// renderer handles that via the volatile-vs-silicate color/alpha lerp). A zero
+// weight means that resource never wins the ring (rare-earths / radioactives in
+// pristine ice/rock — they require differentiation, see
+// RING_RESOURCE_DIFFERENTIATED).
 export const RING_RESOURCE_ICY = {
-  resMetals:        { mean: 1, sd: 1, min: 0, max: 10 },
-  resSilicates:     { mean: 2, sd: 2, min: 0, max: 10 },
-  resVolatiles:     { mean: 7, sd: 2, min: 0, max: 10 },
-  resRareEarths:    { mean: 0, sd: 0, min: 0, max: 10 },
-  resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-  resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
+  resMetals: 1, resSilicates: 2, resVolatiles: 12,
+  resRareEarths: 0, resRadioactives: 0, resExotics: 1,
 };
 
 // Inside-H2O-frost rings are rare events — tidally-disrupted
@@ -1101,12 +1125,43 @@ export const RING_RESOURCE_ICY = {
 // regolith-class debris regardless of stellar insolation; the
 // silicate-vs-metal split emerges from the per-resource sd.
 export const RING_RESOURCE_ROCKY = {
-  resMetals:        { mean: 4, sd: 2, min: 0, max: 10 },
-  resSilicates:     { mean: 5, sd: 2, min: 0, max: 10 },
-  resVolatiles:     { mean: 1, sd: 1, min: 0, max: 10 },
-  resRareEarths:    { mean: 1, sd: 1, min: 0, max: 10 },
-  resRadioactives:  { mean: 0, sd: 0, min: 0, max: 10 },
-  resExotics:       { mean: 1, sd: 1, min: 0, max: 10 },
+  resMetals: 4, resSilicates: 5, resVolatiles: 1,
+  resRareEarths: 1, resRadioactives: 0, resExotics: 1,
+};
+
+// Ring differentiation (the shredded-moon case). The icy / rocky priors above
+// are pristine, undifferentiated shards — a disrupted comet or small moon — so
+// they carry no concentrated heavies (rare-earths / radioactives pinned to 0,
+// the physically-correct default for ring debris). The rare exception: a ring
+// born from a tidally-disrupted *large, differentiated* moon (a Triton-class
+// body that spiralled inside the Roche limit and tore apart) inherits that
+// moon's core + crust — metal-rich, volatile-poor, and carrying the only path
+// to strategic resources in a ring. Probability ramps with HOST PLANET MASS
+// (big planets had big moons to lose) and stays low, so rings are
+// overwhelmingly pristine ice/rock with a scarce strategic outlier — the gap
+// closes for a physical reason, not by fiat.
+export const RING_DIFFERENTIATION = {
+  massFloorEarth: 15,    // host mass below which a ring stays pristine (prob 0)
+  massFullEarth: 300,    // host mass at/above which prob = maxProb
+  maxProb: 0.10,         // scarce — most rings are shredded ice/rock, not cores
+};
+
+// Composition odds of a shredded-differentiated-moon ring: core + mantle
+// fragments, metal-dominant, strategic resources unlocked, volatiles mostly
+// gone. Renders as a dark dusty band (low volatiles → rocky end of the icyness
+// lerp). The only ring path that can win rare-earths / radioactives.
+export const RING_RESOURCE_DIFFERENTIATED = {
+  resMetals: 5, resSilicates: 4, resVolatiles: 1.5,
+  resRareEarths: 2, resRadioactives: 1.5, resExotics: 1,
+};
+
+// Abundance (0..10) of a ring's single drawn resource. A ring is concentrated
+// in its one material, so the grade runs rich — `strongMean` when the resource
+// is the dominant-fit for the ring's context, scaling toward `weakMean` for an
+// off-context win. No motherlode tail (single bulk material, not a deposit
+// field) and no primary bonus (only one draw).
+export const RING_ABUNDANCE = {
+  weakMean: 5, strongMean: 9, sd: 1.5, min: 1, max: 10, primaryBonus: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -1882,7 +1937,19 @@ const RESOURCE_OCCURRENCE_REALISTIC = {
     youngHostGyr: 3,
     icyFrac: 0.30, wateryFrac: 0.50,
   },
-  abundance: { weakMean: 3, strongMean: 8, sd: 1.5, min: 1, max: 10, primaryBonus: 1.5 },
+  // Bimodal grade: a low common component (most deposits trace-to-modest)
+  // plus a rare high-grade `motherlode` tail (≈9-10, a strategic landmark).
+  // `motherlodeProb` is the per-deposit jackpot odds; the primary (best-fit)
+  // deposit is `motherlodePrimaryMult`× likelier to be the jackpot, so a
+  // world's defining deposit is the one that can read as a prize. Probabilistic,
+  // not a threshold — any deposit can roll a motherlode (see drawWeightedDeposits).
+  // This decouples PRESENCE (every world still draws its deposits) from VALUE
+  // (only a minority are rich), so motherlode worlds become sites worth fighting
+  // for rather than every world reading as uniformly rich.
+  abundance: {
+    weakMean: 2.5, strongMean: 5, sd: 1.5, min: 1, max: 10, primaryBonus: 1,
+    motherlodeProb: 0.03, motherlodePrimaryMult: 2.0, motherlodeMean: 9.5, motherlodeSd: 0.8,
+  },
   resMetals:       { base: 4,   hot: 1.5, metalRichBulk: 2.0, gaseous: 0.2 },
   resSilicates:    { base: 5,   gaseous: 0.2 },
   resVolatiles:    { base: 3,   cold: 2.0, icy: 2.2, gaseous: 3.0, hot: 0.3 },
@@ -1891,33 +1958,161 @@ const RESOURCE_OCCURRENCE_REALISTIC = {
   resExotics:      { base: 0.8, gaseous: 2.0, tidalMoon: 3.0 },
 };
 
-// Gameplay tune — flatten the base weights toward uniform so the scarce
-// resources compete with the bulk ones for a world's two deposits. Bases are
-// equalized AND the context multipliers are compressed toward 1 (vs the
-// realistic block's stronger pulls) — the realistic volatiles stack
-// (cold × icy × gaseous) otherwise makes ice worlds a near-monoculture. The
-// axes still tilt the odds (cold worlds lean volatile, metal-rich hosts lean
-// rare-earth) but no longer dominate, so no single resource defines more
-// than ~1/5 of worlds. Calibrated to that ceiling against the live catalog.
+// Gameplay tune — the scarcity tri-tier (see RESOURCE_TIER). Base weights are
+// spread into three tiers so the resource economy generates decisions:
+//   bulk (Met/Sil/Vol)        — ubiquitous bread-and-butter, settle anywhere
+//   strategic (Rar/Rad)       — scarce bottlenecks, concentrated + fought over
+//   exotic (Exo)              — rare jackpot that defines a world
+// Because the draw is weighted-WITHOUT-replacement, even scarce|scarce pairs
+// stay reachable (all 15 pairs present) — tiering shapes the ODDS, never gates
+// a pair to zero. The context multipliers stay compressed vs the realistic
+// block's stronger pulls so a single context stack (e.g. cold × icy × gaseous
+// volatiles) can't override the tier and make a monoculture; the axes still
+// tilt within a tier (cold → volatile, metal-rich host → rare-earth). Per-class
+// identity rides on top via RESOURCE_BIAS_BY_CLASS. Bases calibrated against the
+// live catalog to land roughly bulk ~45-52% / strategic ~13-18% / exotic
+// ~10-14% presence; the presence sum sits near 200% (≈two deposits per body,
+// nudged up by the keystone-world minority that draws three or four).
 const RESOURCE_OCCURRENCE_TUNE = {
-  resMetals:       { base: 3,   hot: 1.2, metalRichBulk: 1.3, gaseous: 0.55 },
-  resSilicates:    { base: 3.2, gaseous: 0.55 },
-  resVolatiles:    { base: 2.4, cold: 1.2, icy: 1.25, gaseous: 1.4, hot: 0.7 },
-  resRareEarths:   { base: 3.6, metalRichHost: 1.4, metalPoorHost: 0.75 },
-  resRadioactives: { base: 3.2, metalRichHost: 1.4, youngHost: 1.3 },
-  resExotics:      { base: 3,   gaseous: 1.4, tidalMoon: 1.8 },
+  resMetals:       { base: 6,   hot: 1.2, metalRichBulk: 1.3, gaseous: 0.55 },
+  resSilicates:    { base: 6,   gaseous: 0.55 },
+  resVolatiles:    { base: 3.5, cold: 1.2, icy: 1.25, gaseous: 1.4, hot: 0.7 },
+  resRareEarths:   { base: 2,   metalRichHost: 1.4, metalPoorHost: 0.75 },
+  resRadioactives: { base: 2,   metalRichHost: 1.4, youngHost: 1.3 },
+  resExotics:      { base: 0.9, gaseous: 1.4, tidalMoon: 1.8 },
 };
 
 export const RESOURCE_OCCURRENCE = mergeTunes(RESOURCE_OCCURRENCE_REALISTIC, RESOURCE_OCCURRENCE_TUNE);
 
-// Canonical resource-grid field order — the key list for every two-deposit
-// draw (planets/moons via RESOURCE_OCCURRENCE, belts via
-// BELT_RESOURCE_OCCURRENCE). Single-sourced here so the two procgen consumers
+// Per-host-spectral-class resource bias — the system-identity lever. Each
+// system's resource character keys off its HOST STAR'S TYPE (class here; host
+// metallicity / age handled by the metalRich/Poor/youngHost context axes
+// above), NOT its galaxy position — stars drift, so a spatial resource field
+// would be a lie, and the spectral color the player already sees in galaxy
+// view becomes a legible economic signal. Multipliers fold into resourcesFor
+// alongside the physical context axes: base × Π(context axes) × classBias.
+//
+// Centered on 1.0 (a lean, never a gate — a metal-poor M-dwarf can still roll
+// metals, just rarer), so the all-pairs-possible property is preserved. Keyed
+// to each class's real physics: ISM metal-enrichment + youth of O/B/A,
+// metal-poor long-lived M/BD leaning to the volatile/icy frontier, processed
+// post-stellar matter around white dwarfs. Silicate rock is ubiquitous (no
+// class lean) so resSilicates is omitted everywhere (absent key ⇒ ×1). G is
+// the neutral solar reference. The lean lives in _REALISTIC because it IS
+// physics; _TUNE is the home for cranking legibility up for gameplay.
+const RESOURCE_BIAS_BY_CLASS_REALISTIC = {
+  O:  { resMetals: 1.3,  resVolatiles: 0.7,  resRareEarths: 1.2, resRadioactives: 1.5, resExotics: 1.2 },
+  B:  { resMetals: 1.3,  resVolatiles: 0.7,  resRareEarths: 1.2, resRadioactives: 1.5, resExotics: 1.2 },
+  A:  { resMetals: 1.15, resVolatiles: 0.85, resRareEarths: 1.1, resRadioactives: 1.3 },
+  F:  { resMetals: 1.05, resRadioactives: 1.1 },
+  G:  {},
+  K:  { resMetals: 0.95, resVolatiles: 1.1 },
+  M:  { resMetals: 0.8,  resVolatiles: 1.4,  resRareEarths: 0.7, resRadioactives: 0.7 },
+  WD: { resMetals: 1.2,  resVolatiles: 0.7,  resRareEarths: 1.3, resRadioactives: 0.6, resExotics: 1.5 },
+  BD: { resMetals: 0.8,  resVolatiles: 1.3,  resRareEarths: 0.7, resRadioactives: 0.7, resExotics: 1.1 },
+};
+
+// No gameplay tune today — the realistic per-class lean is the legibility
+// feature, not a distortion. Structural home for future game-feel cranks.
+const RESOURCE_BIAS_BY_CLASS_TUNE = {};
+
+export const RESOURCE_BIAS_BY_CLASS = mergeTunes(
+  RESOURCE_BIAS_BY_CLASS_REALISTIC,
+  RESOURCE_BIAS_BY_CLASS_TUNE,
+);
+
+// Canonical resource-grid field order — the key list for every deposit draw
+// (planets/moons via RESOURCE_OCCURRENCE, belts via BELT_RESOURCE_OCCURRENCE,
+// rings via RING_RESOURCE_*). Single-sourced here so the procgen consumers
 // can't drift; the runtime `ResourceKey` union in src/data/stars.ts mirrors it
 // across the .ts/.mjs boundary (structurally forced — keep it in sync by hand).
 export const RESOURCE_KEYS = [
   'resMetals', 'resSilicates', 'resVolatiles',
   'resRareEarths', 'resRadioactives', 'resExotics',
+];
+
+// Scarcity tri-tier — the gameplay grouping the RESOURCE_OCCURRENCE_TUNE base
+// weights express. Named here so the intent is legible in one place and future
+// consumers (UI grouping, economy balancing) can read tier membership instead
+// of hard-coding it. Belts and rings have their own occurrence models and are
+// not tiered by this constant.
+export const RESOURCE_TIER = {
+  bulk:      ['resMetals', 'resSilicates', 'resVolatiles'],
+  strategic: ['resRareEarths', 'resRadioactives'],
+  exotic:    ['resExotics'],
+};
+
+// Pair affinity — probabilistic synergy / exclusion shaping WHICH two
+// resources co-occur. Applied to the SECOND deposit draw conditioned on the
+// first (see drawWeightedDeposits → weightedPickN). Multipliers, never gates:
+// synergy > 1, exclusion < 1, never 0, so all 15 pairs stay reachable (the
+// all-pairs-possible invariant holds — exclusion makes a pair rarer, not
+// impossible). Authored once per pair and mirrored symmetrically below, so the
+// effect is independent of draw order. Setting the list to [] reverts to pure
+// independent draws. This is the gameplay shaping layer — there is no physics
+// "realistic" baseline for it (physical co-occurrence already rides the context
+// axes), so it is a single table rather than a _REALISTIC / _TUNE split.
+//   synergy   — the scarce resources cluster into "high-tech specialist"
+//               worlds: industrial/nuclear (metals + radioactives), enriched
+//               heavy elements (metals + rare-earths, rare-earths +
+//               radioactives), and the exotic-specialist prize (exotics with
+//               either strategic resource). These are the keystone worlds a
+//               player races for. The Exo↔strategic boosts are strong because
+//               they must out-pull bulk's ~50% presence to land — without them,
+//               bulk ubiquity alone makes exotics pair with a staple by default.
+//   exclusion — the rare Exotics jackpot stays LONELY from bulk: an exotics
+//               world rarely also carries a common staple, so it reads as a
+//               specialist outpost (pairing toward strategic) rather than a
+//               do-everything hub — preserving the trade + expansion pressure
+//               scarcity buys.
+const RESOURCE_PAIR_AFFINITY_PAIRS = [
+  ['resMetals',     'resRadioactives', 1.6],
+  ['resMetals',     'resRareEarths',   1.4],
+  ['resRareEarths', 'resRadioactives', 1.6],
+  ['resExotics',    'resRareEarths',   2.2],
+  ['resExotics',    'resRadioactives', 2.2],
+  ['resExotics',    'resMetals',       0.4],
+  ['resExotics',    'resSilicates',    0.4],
+  ['resExotics',    'resVolatiles',    0.4],
+];
+
+// Expand the authored pairs into a symmetric lookup map[a][b] = map[b][a] = v.
+function buildSymmetricAffinity(pairs) {
+  const m = {};
+  for (const [a, b, v] of pairs) {
+    (m[a] = m[a] || {})[b] = v;
+    (m[b] = m[b] || {})[a] = v;
+  }
+  return m;
+}
+
+export const RESOURCE_PAIR_AFFINITY = buildSymmetricAffinity(RESOURCE_PAIR_AFFINITY_PAIRS);
+
+// Motherlode-by-hostility — the bimodal abundance tail (see
+// RESOURCE_OCCURRENCE.abundance.motherlodeProb) is scaled UP on hard-to-exploit
+// worlds, so the richest deposits concentrate where they cost the most tech to
+// reach. Anti-correlating prize with accessibility is what makes tech
+// progression open the map ("you can see it but can't take it yet"). Keyed off
+// the physical context axes already computed in resourcesFor — worldClass isn't
+// settled until after the resource pass, so the hostile *classes* (lava, gas
+// giant) are reached through their physics (hot, gaseous) instead. `axes`
+// multipliers compound for a body; `probMax` clamps the per-deposit result so
+// stacked axes can't pin a world to guaranteed motherlodes.
+export const MOTHERLODE_HOSTILITY = {
+  axes: { hot: 2.2, gaseous: 2.2, tidalMoon: 1.8, youngHost: 1.4, cold: 1.2 },
+  probMax: 0.3,
+};
+
+// Deposit-count distribution (S6 keystone worlds). Most worlds carry the
+// standard two notable deposits; a small minority are multi-resource keystone
+// worlds — natural capital-site candidates that stand out structurally rather
+// than every world reading as a flat two-deposit draw. Weighted single choice;
+// drawWeightedDeposits draws this many distinct deposits (affinity + motherlode
+// still apply per deposit, so a 4-deposit world can be a genuine rich keystone).
+export const DEPOSIT_COUNT_DIST = [
+  { count: 2, weight: 0.90 },
+  { count: 3, weight: 0.08 },
+  { count: 4, weight: 0.02 },
 ];
 
 // ---------------------------------------------------------------------------

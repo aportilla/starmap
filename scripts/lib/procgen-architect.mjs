@@ -74,9 +74,12 @@
 // 0-or-1 per planet with probability R² × RING_DISRUPTION_RATE — the
 // Roche-disruption cross-section. Concentrates rings on gas giants
 // (Jupiter ~30%, Saturn ~21%), with the occasional ringed super-Earth
-// in the tail (~1%). Composition from RING_RESOURCE_ICY /
-// RING_RESOURCE_ROCKY keyed on whether the host formed past the H2O
-// frost line; extent from RING_EXTENT in planet-radius units.
+// in the tail (~1%). A ring is one smeared disrupted body, so it draws a
+// SINGLE dominant resource (drawWeightedDeposits count=1) from RING_RESOURCE_ICY
+// / RING_RESOURCE_ROCKY occurrence weights keyed on whether the host formed
+// past the H2O frost line, or — rarely, host-mass-gated via RING_DIFFERENTIATION
+// — RING_RESOURCE_DIFFERENTIATED (a shredded large differentiated moon, the only
+// strategic-bearing ring). Extent from RING_EXTENT in planet-radius units.
 //
 // ─── Belts (generateBelts, generateFloorBelt) ──────────────────────
 //
@@ -96,10 +99,12 @@
 // range (BELT_LARGEST_BODY_KM.{warm,cold}.shepherded — Ceres / Pluto
 // class), free-float belts pull from the dust-cascade range (tens of
 // km max). Belt composition is a two-deposit occurrence draw
-// (BELT_RESOURCE_OCCURRENCE, the same mechanism planets use); ring
-// composition samples a full six-resource grid. Either way composition
-// lives in the resource grid rather than a discrete class enum, so
-// renderers and gameplay both read mining yields from the same data.
+// (BELT_RESOURCE_OCCURRENCE, the same mechanism planets use); a belt whose
+// largest body is big enough to have differentiated can roll an M-type
+// metal/strategic character (BELT_DIFFERENTIATION) — the real C/S/M asteroid
+// taxonomy. Rings draw a single resource (above). Either way composition lives
+// in the resource grid rather than a discrete class enum, so renderers and
+// gameplay both read mining yields from the same data.
 //
 // generateFloorBelt runs as a post-pass from build-catalog.mjs: any
 // non-curated star that finished the architect + overlay phases with
@@ -135,6 +140,7 @@ import {
   BELT_OCCURRENCE_BY_CLASS,
   BELT_PLACEMENT,
   BELT_RESOURCE_OCCURRENCE,
+  BELT_DIFFERENTIATION,
   BELT_LARGEST_BODY_KM,
   BELT_GIANT_ADJACENCY,
   GIANTLESS_BELT_PENALTY,
@@ -143,6 +149,9 @@ import {
   RING_EXTENT,
   RING_RESOURCE_ICY,
   RING_RESOURCE_ROCKY,
+  RING_DIFFERENTIATION,
+  RING_RESOURCE_DIFFERENTIATED,
+  RING_ABUNDANCE,
   RESOURCE_KEYS,
   OTEGI_MR,
 } from './procgen-priors.mjs';
@@ -199,6 +208,15 @@ function beltPrng(starId, context, salt) {
 // share the same seeding scheme.
 function ringPrng(planetId, salt) {
   return mulberry32(hash32(`${planetId}:ring:${salt}:${PROCGEN_VERSION}`));
+}
+
+// Linear-ramp probability: 0 at/below `lo`, `maxProb` at/above `hi`, lerped
+// between. Shared by the belt + ring differentiation gates (size / host-mass
+// thresholds → odds the body's parent material differentiated).
+function rampProb(x, lo, hi, maxProb) {
+  if (x == null || hi <= lo) return 0;
+  const t = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+  return t * maxProb;
 }
 
 // =============================================================================
@@ -490,26 +508,44 @@ function buildBeltBody({ star, context, hasShepherd, innerAu, outerAu, shepherdI
   const logMax = Math.log10(placement.mass.max);
   const massEarth = Math.pow(10, logMin + massPrng() * (logMax - logMin) * massScale);
 
-  // Resources: two-deposit occurrence draw (shared with planets/moons).
-  // Carries composition signal — the renderer reads it back to lerp
-  // chunk color between rocky-tan and icy-cyan via bodyIcyness.
-  const resources = drawWeightedDeposits(
-    RESOURCE_KEYS,
-    BELT_RESOURCE_OCCURRENCE[context],
-    BELT_RESOURCE_OCCURRENCE.abundance,
-    (name) => beltPrng(star.id, context, `${saltPrefix}res_occ_${name}`),
-  );
-
   // largestBodyKm: log-uniform within the shepherding-conditional
   // range. Shepherded belts pull from the parent-body scale (Ceres/
   // Pluto class); free-float belts pull from the dust-cascade scale
   // (tens of km max). Captures the real bimodality of belt
-  // populations without exposing a discrete enum.
+  // populations without exposing a discrete enum. Computed before the
+  // resource draw because it gates differentiation.
   const kmRange = BELT_LARGEST_BODY_KM[context][hasShepherd ? 'shepherded' : 'freeFloat'];
   const sizePrng = beltPrng(star.id, context, saltPrefix + 'largest');
   const logKmMin = Math.log10(kmRange.min);
   const logKmMax = Math.log10(kmRange.max);
   const largestBodyKm = Math.pow(10, logKmMin + sizePrng() * (logKmMax - logKmMin));
+
+  // Differentiation (the M-type axis): a big parent body (Vesta/Ceres-class)
+  // melted, separated an iron core + crustal heavies, and — once shattered —
+  // exposes them. Roll gated on largestBodyKm; if it differentiated, tilt the
+  // context occurrence weights toward metals + strategics (volatiles bake off).
+  // Dust-cascade belts (tiny largestBodyKm) never differentiate → stay
+  // primitive, weights untouched, byte-identical to the pre-differentiation draw.
+  const diffPrng = beltPrng(star.id, context, saltPrefix + 'diff');
+  const differentiated = diffPrng() < rampProb(
+    largestBodyKm, BELT_DIFFERENTIATION.kmFloor, BELT_DIFFERENTIATION.kmFull, BELT_DIFFERENTIATION.maxProb);
+  let beltWeights = BELT_RESOURCE_OCCURRENCE[context];
+  if (differentiated) {
+    beltWeights = { ...beltWeights };
+    for (const [k, m] of Object.entries(BELT_DIFFERENTIATION.multipliers)) {
+      if (beltWeights[k] != null) beltWeights[k] *= m;
+    }
+  }
+
+  // Resources: two-deposit occurrence draw (shared with planets/moons).
+  // Carries composition signal — the renderer reads it back to lerp
+  // chunk color between rocky-tan and icy-cyan via bodyIcyness.
+  const resources = drawWeightedDeposits(
+    RESOURCE_KEYS,
+    beltWeights,
+    BELT_RESOURCE_OCCURRENCE.abundance,
+    (name) => beltPrng(star.id, context, `${saltPrefix}res_occ_${name}`),
+  );
 
   const composition = describeBeltComposition(resources);
   const formal = `${star.name} ${describeBeltLocation(centerAu)} ${composition} Belt`;
@@ -645,17 +681,24 @@ export function generateRing(planet, hostFormationAu = null, frostLinesAu = null
   const formAu = hostFormationAu ?? planet.formationAu ?? planet.semiMajorAu;
   const h2oAu = frostLinesAu?.H2O ?? Infinity;
   const isIcy = formAu != null && formAu > h2oAu;
-  const resPriors = isIcy ? RING_RESOURCE_ICY : RING_RESOURCE_ROCKY;
-  const resources = {};
-  for (const field of Object.keys(resPriors)) {
-    const fSpec = resPriors[field];
-    if (fSpec.max === 0 || (fSpec.mean === 0 && fSpec.sd === 0)) {
-      resources[field] = 0;
-      continue;
-    }
-    const rp = ringPrng(planet.id, `res:${field}`);
-    resources[field] = Math.round(sampleTruncated(rp, fSpec));
-  }
+
+  // Differentiation (the shredded-moon case): with low, host-mass-gated odds a
+  // ring is the debris of a tidally-disrupted large differentiated moon —
+  // metal-rich, strategic-bearing — rather than a pristine icy/rocky shard.
+  const differentiated = ringPrng(planet.id, 'diff')() < rampProb(
+    planet.massEarth, RING_DIFFERENTIATION.massFloorEarth, RING_DIFFERENTIATION.massFullEarth, RING_DIFFERENTIATION.maxProb);
+
+  // A ring is one smeared body → a SINGLE dominant resource (count=1), drawn
+  // from the context occurrence weights. The other five fields stay 0.
+  const ringWeights = differentiated ? RING_RESOURCE_DIFFERENTIATED
+    : isIcy ? RING_RESOURCE_ICY : RING_RESOURCE_ROCKY;
+  const resources = drawWeightedDeposits(
+    RESOURCE_KEYS,
+    ringWeights,
+    RING_ABUNDANCE,
+    (name) => ringPrng(planet.id, `res_occ_${name}`),
+    1,
+  );
 
   const formal = `${planet.formalName} Ring`;
   return makeBody({

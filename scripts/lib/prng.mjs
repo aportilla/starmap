@@ -105,7 +105,16 @@ export function sampleBinomial(prng, n, p) {
 // Pick `n` distinct items from `items` weighted by `weightMap[item]`,
 // drawing sequentially from one PRNG (without replacement). Items with
 // weight ≤ 0 are excluded.
-export function weightedPickN(prng, items, weightMap, n) {
+//
+// Optional `affinityFor(picked, candidate) => multiplier` conditions each
+// subsequent draw on what's already been picked: after a pick, every remaining
+// candidate's weight is scaled by its affinity to that pick (cumulative across
+// all prior picks). Multipliers only — synergy > 1, exclusion < 1, never 0 —
+// so no candidate is ever gated out, only made more/less likely. The PRNG is
+// consumed once per pick regardless, so passing affinityFor changes *which*
+// items are drawn but not the draw count; a null affinityFor is a pure no-op
+// (callers on the independent-draw model stay byte-identical).
+export function weightedPickN(prng, items, weightMap, n, affinityFor = null) {
   const pool = items
     .map((it) => ({ it, w: weightMap[it] ?? 0 }))
     .filter((e) => e.w > 0);
@@ -115,8 +124,12 @@ export function weightedPickN(prng, items, weightMap, n) {
     let r = prng() * total;
     let idx = 0;
     while (idx < pool.length - 1 && r >= pool[idx].w) { r -= pool[idx].w; idx++; }
-    out.push(pool[idx].it);
+    const picked = pool[idx].it;
+    out.push(picked);
     pool.splice(idx, 1);
+    if (affinityFor) {
+      for (const e of pool) e.w *= affinityFor(picked, e.it);
+    }
   }
   return out;
 }
@@ -129,22 +142,44 @@ export function weightedPickN(prng, items, weightMap, n) {
 // contextual fit ⇒ richer), with `primaryBonus` added to the first (primary)
 // draw. Unpicked keys are 0. `prngFor(name)` returns a seeded PRNG per draw
 // stage so callers control determinism. Returns an object over all `keys`.
-export function drawWeightedDeposits(keys, weights, abundance, prngFor, count = 2) {
+//
+// Bimodal grade (optional). When the spec carries `motherlodeProb`, each
+// deposit additionally rolls for a rare high-grade "motherlode" tail
+// (`motherlodeMean` / `motherlodeSd`); the primary draw's odds are scaled by
+// `motherlodePrimaryMult`. This is a probabilistic mixture, not a threshold —
+// any deposit can land a motherlode, just rarely — so the common component
+// can sit low (most deposits trace-to-modest) while a minority read as
+// strategic landmarks. A spec without `motherlodeProb` skips the roll
+// entirely, so callers on the single-mode model (belts) stay byte-identical.
+//
+// Optional `affinity(picked, candidate) => multiplier` shapes WHICH pairs
+// co-occur by conditioning the second+ draws on the first (forwarded to
+// weightedPickN). Null = independent draws (belts).
+export function drawWeightedDeposits(keys, weights, abundance, prngFor, count = 2, affinity = null) {
   let maxW = 0;
   for (const k of keys) if ((weights[k] ?? 0) > maxW) maxW = weights[k] ?? 0;
-  const picks = weightedPickN(prngFor('pick'), keys, weights, count);
+  const picks = weightedPickN(prngFor('pick'), keys, weights, count, affinity);
   const grid = {};
   for (const k of keys) grid[k] = 0;
+  const mlodeProb = abundance.motherlodeProb ?? 0;
   picks.forEach((res, i) => {
-    const norm = maxW > 0 ? (weights[res] ?? 0) / maxW : 0;
-    const mean = abundance.weakMean
-      + (abundance.strongMean - abundance.weakMean) * norm
-      + (i === 0 ? abundance.primaryBonus : 0);
-    grid[res] = sampleTruncated(
-      prngFor(`abund_${res}`),
-      { mean, sd: abundance.sd, min: abundance.min, max: abundance.max },
-      true,
-    );
+    const isPrimary = i === 0;
+    let motherlode = false;
+    if (mlodeProb > 0) {
+      const p = mlodeProb * (isPrimary ? (abundance.motherlodePrimaryMult ?? 1) : 1);
+      motherlode = prngFor(`mlode_${res}`)() < p;
+    }
+    let spec;
+    if (motherlode) {
+      spec = { mean: abundance.motherlodeMean, sd: abundance.motherlodeSd, min: abundance.min, max: abundance.max };
+    } else {
+      const norm = maxW > 0 ? (weights[res] ?? 0) / maxW : 0;
+      const mean = abundance.weakMean
+        + (abundance.strongMean - abundance.weakMean) * norm
+        + (isPrimary ? abundance.primaryBonus : 0);
+      spec = { mean, sd: abundance.sd, min: abundance.min, max: abundance.max };
+    }
+    grid[res] = sampleTruncated(prngFor(`abund_${res}`), spec, true);
   });
   return grid;
 }

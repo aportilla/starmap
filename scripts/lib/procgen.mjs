@@ -53,11 +53,14 @@
 //                               frozen bodies into `ice` (water-ice
 //                               dominant) vs `carbon` (methane-frost
 //                               dominant) per bulkVolatile vs bulkWater.
-//   13. Resources               Two notable mineral deposits drawn per
-//                               body from a context-weighted occurrence
-//                               table (RESOURCE_OCCURRENCE); the other
-//                               four resource fields stay 0. See
-//                               resourcesFor for the draw + abundance.
+//   13. Resources               Notable mineral deposits drawn per body
+//                               from a context-weighted occurrence table
+//                               (RESOURCE_OCCURRENCE) — usually two, rarely
+//                               three or four (DEPOSIT_COUNT_DIST keystone
+//                               worlds); the rest stay 0. Star-type bias,
+//                               scarcity tiers, pair affinity, and
+//                               hostility-scaled motherlodes shape the draw.
+//                               See resourcesFor for the full chain.
 //   14. Post-atm biotic         bioticAerial (Sagan floaters on gas
 //                               giants), bioticCryogenic (Titan-class),
 //                               bioticSilicate (hot rocky), bioticSulfur
@@ -129,6 +132,10 @@ import {
   BIOSPHERE_ARCHETYPES,
   BIOSPHERE_COMPLEXITY,
   RESOURCE_OCCURRENCE,
+  RESOURCE_BIAS_BY_CLASS,
+  RESOURCE_PAIR_AFFINITY,
+  MOTHERLODE_HOSTILITY,
+  DEPOSIT_COUNT_DIST,
   RESOURCE_KEYS,
   OTEGI_MR,
 } from './procgen-priors.mjs';
@@ -1156,15 +1163,27 @@ function bulkSilicate10(body) {
   return 10 * Math.max(0, 1 - m - w);
 }
 
-// Pick a body's two notable mineral deposits + their abundances. Rather than
-// derive six bulk-composition scalars, draw TWO resource types from a
-// context-weighted table (see RESOURCE_OCCURRENCE in procgen-priors): each
-// resource's `base` weight is multiplied by whichever context-axis
-// multipliers this body trips, then two distinct resources are drawn
-// weighted-without-replacement (any pair can co-occur). Abundance rides the
-// same weight — a strong contextual fit yields a richer deposit, and the
-// primary (first) draw gets a bonus — so one table drives presence and
-// richness together. The other four resources are 0.
+// Pick a body's notable mineral deposits + their abundances. Rather than derive
+// six bulk-composition scalars, draw distinct resource types from a context-
+// weighted table (see RESOURCE_OCCURRENCE in procgen-priors): each resource's
+// `base` weight is multiplied by whichever context-axis multipliers this body
+// trips AND its host-class bias (RESOURCE_BIAS_BY_CLASS), then deposits are
+// drawn weighted-without-replacement (any pair can co-occur), with pair affinity
+// (RESOURCE_PAIR_AFFINITY) conditioning each draw on the prior picks. Count is
+// usually two but a minority of worlds roll three / four keystone deposits
+// (DEPOSIT_COUNT_DIST). Abundance rides the same weight — a strong contextual fit
+// yields a richer deposit — plus a rare high-grade motherlode tail scaled up on
+// hostile worlds (MOTHERLODE_HOSTILITY). Undrawn resources stay 0.
+// Weighted single choice from a [{ count, weight }, …] list. Used for the
+// per-body deposit count (most worlds two, a minority three / four).
+function sampleDepositCount(prng, dist) {
+  let total = 0;
+  for (const o of dist) total += o.weight;
+  let r = prng() * total;
+  for (const o of dist) { r -= o.weight; if (r < 0) return o.count; }
+  return dist[dist.length - 1].count;
+}
+
 function resourcesFor(body, hostStar, hostBody) {
   if (body.massEarth == null) return null;
 
@@ -1193,7 +1212,12 @@ function resourcesFor(body, hostStar, hostBody) {
     icy:           (body.iceFraction ?? 0) >= C.icyFrac || (body.waterFraction ?? 0) >= C.wateryFrac,
   };
 
-  // ── Effective occurrence weight per resource = base × Π(active axes).
+  // ── Effective occurrence weight per resource = base × Π(active axes) ×
+  // host-class bias. The class bias is the system-identity lever (see
+  // RESOURCE_BIAS_BY_CLASS): a per-spectral-class lean keyed off the host
+  // star's type, so each system reads as its own thing without any spatial
+  // field. Absent class / absent key ⇒ ×1.
+  const classBias = cls ? (RESOURCE_BIAS_BY_CLASS[cls] ?? {}) : {};
   const weights = {};
   for (const res of RESOURCE_KEYS) {
     const spec = O[res];
@@ -1201,13 +1225,36 @@ function resourcesFor(body, hostStar, hostBody) {
     for (const axis of Object.keys(ctx)) {
       if (ctx[axis] && spec[axis] != null) w *= spec[axis];
     }
+    w *= classBias[res] ?? 1;
     weights[res] = w;
   }
 
-  // ── Draw two deposits + dynamic abundance (shared with the belt model).
+  // ── Hostility-scaled motherlode odds: the richest deposits concentrate on
+  // hard-to-exploit worlds (see MOTHERLODE_HOSTILITY). Physical axes only —
+  // worldClass isn't settled yet — so the hostile classes are reached through
+  // their physics (hot/gaseous/…). Clamped so stacked axes can't guarantee one.
+  let hostility = 1;
+  for (const axis of Object.keys(MOTHERLODE_HOSTILITY.axes)) {
+    if (ctx[axis]) hostility *= MOTHERLODE_HOSTILITY.axes[axis];
+  }
+  const abundance = {
+    ...O.abundance,
+    motherlodeProb: Math.min(MOTHERLODE_HOSTILITY.probMax, (O.abundance.motherlodeProb ?? 0) * hostility),
+  };
+
+  // ── Most worlds carry two notable deposits; a small minority are
+  // multi-deposit keystone worlds (natural capital sites).
+  const count = sampleDepositCount(fieldPrng(body, 'res_count'), DEPOSIT_COUNT_DIST);
+
+  // ── Draw the deposits + dynamic abundance (shared with the belt model).
+  // The pair-affinity callback conditions each draw on the prior picks so
+  // synergistic resources cluster and the Exotics jackpot stays lonely (see
+  // RESOURCE_PAIR_AFFINITY) — a multiplier, never a gate, so any pair can occur.
   return drawWeightedDeposits(
-    RESOURCE_KEYS, weights, O.abundance,
+    RESOURCE_KEYS, weights, abundance,
     (name) => fieldPrng(body, `res_occ_${name}`),
+    count,
+    (picked, candidate) => RESOURCE_PAIR_AFFINITY[picked]?.[candidate] ?? 1,
   );
 }
 

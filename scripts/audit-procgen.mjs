@@ -41,6 +41,12 @@ import {
   MOON_COUNT_MAX,
   BELT_OCCURRENCE_BY_CLASS,
   BELT_RESOURCE_OCCURRENCE,
+  RESOURCE_KEYS,
+  RESOURCE_TIER,
+  RESOURCE_OCCURRENCE,
+  RESOURCE_PAIR_AFFINITY,
+  MOTHERLODE_HOSTILITY,
+  DEPOSIT_COUNT_DIST,
   COMPANION_PLANET_SUPPRESSION,
   zoneForFormationAu,
   SNOW_LINE_TEMPERATURES,
@@ -813,6 +819,140 @@ for (const ctx of BELT_CONTEXTS) {
 }
 console.log();
 
+// --- 9c. Resource distribution schemes (S1–S6) ------------------------------
+//
+// The planet/moon resource grid is shaped by six composable schemes (see
+// plans/ + procgen-priors.mjs): S1 star-type bias, S2 bimodal abundance, S3
+// scarcity tiers, S4 pair affinity, S5 hostility-scaled motherlodes, S6
+// keystone multi-deposit worlds. This block reports the realized shape; the
+// R-series structural invariants at the bottom turn the load-bearing
+// properties into hard gates. Population = non-curated planets + moons (Sol's
+// bodies are CSV-authored with full grids, so they're excluded — their
+// hostId chains up to a curated star).
+
+// Walk a body to its host star index (planet → hostStarIdx directly; moon →
+// up through its parent planet). Null if unresolved.
+function hostStarIdxOf(body) {
+  let cur = body;
+  for (let guard = 0; cur && guard < 6; guard++) {
+    if (cur.hostStarIdx != null) return cur.hostStarIdx;
+    cur = cur.hostBodyIdx != null ? bodies[cur.hostBodyIdx] : null;
+  }
+  return null;
+}
+function resHostClassOf(body) {
+  const si = hostStarIdxOf(body);
+  return si != null ? (stars[si].cls || '?') : '?';
+}
+function isCuratedResBody(body) {
+  const si = hostStarIdxOf(body);
+  return si != null && CURATED_HOSTS.has(stars[si].id);
+}
+function nonzeroRes(body) {
+  return RESOURCE_KEYS.filter(k => (body[k] ?? 0) > 0);
+}
+
+// The resource-bearing population the six schemes govern.
+const resBodies = bodies.filter(
+  b => (b.kind === 'planet' || b.kind === 'moon')
+    && RESOURCE_KEYS.some(k => b[k] != null)
+    && !isCuratedResBody(b),
+);
+
+// Tier lookup (resource → 'bulk' | 'strategic' | 'exotic').
+const TIER_OF = {};
+for (const [tier, keys] of Object.entries(RESOURCE_TIER)) for (const k of keys) TIER_OF[k] = tier;
+
+// All 15 unordered resource pairs, as canonical "i|j" keys (i < j).
+const RES_PAIRS = [];
+for (let i = 0; i < RESOURCE_KEYS.length; i++)
+  for (let j = i + 1; j < RESOURCE_KEYS.length; j++)
+    RES_PAIRS.push(RESOURCE_KEYS[i] + '|' + RESOURCE_KEYS[j]);
+function pairKey(a, b) {
+  return RESOURCE_KEYS.indexOf(a) < RESOURCE_KEYS.indexOf(b) ? a + '|' + b : b + '|' + a;
+}
+const RES_SHORT = {
+  resMetals: 'met', resSilicates: 'sil', resVolatiles: 'vol',
+  resRareEarths: 'rare', resRadioactives: 'radio', resExotics: 'exo',
+};
+
+// S1/S3 — presence per resource, with tier tag.
+console.log('=== Resource presence + tier (non-curated planets + moons, n=' + resBodies.length + ') ===');
+const resPresence = Object.fromEntries(RESOURCE_KEYS.map(k => [k, 0]));
+for (const b of resBodies) for (const k of nonzeroRes(b)) resPresence[k] += 1;
+for (const k of RESOURCE_KEYS) {
+  console.log('  ' + pad(RES_SHORT[k], 6) + pad('[' + TIER_OF[k] + ']', 12) + pct(resPresence[k], resBodies.length));
+}
+console.log();
+
+// S4 — pair co-occurrence (2-deposit subset). Tag synergy/exclusion cells.
+console.log('=== Resource pair co-occurrence (2-deposit non-curated planets + moons) ===');
+const twoDep = resBodies.filter(b => nonzeroRes(b).length === 2);
+const pairCount = Object.fromEntries(RES_PAIRS.map(p => [p, 0]));
+for (const b of twoDep) { const z = nonzeroRes(b); pairCount[pairKey(z[0], z[1])] += 1; }
+const presentPairs = RES_PAIRS.filter(p => pairCount[p] > 0).length;
+const minPair = Math.min(...RES_PAIRS.map(p => pairCount[p]));
+console.log('  pairs present: ' + presentPairs + '/15   min pair count: ' + minPair + '   (n=' + twoDep.length + ')');
+const pairRows = RES_PAIRS.map(p => ({ p, n: pairCount[p] })).sort((a, b) => b.n - a.n);
+for (const { p, n } of pairRows) {
+  const [a, b2] = p.split('|');
+  const aff = RESOURCE_PAIR_AFFINITY[a]?.[b2];
+  const tag = aff == null ? '     ' : aff > 1 ? ' syn+' : ' exc-';
+  console.log('  ' + pad(RES_SHORT[a] + '+' + RES_SHORT[b2], 12) + pad(n, 6, true) + '  ' + pct(n, twoDep.length) + tag);
+}
+console.log();
+
+// S2/S5 — abundance shape + hostility gradient.
+console.log('=== Resource abundance (bimodal grade + hostility gradient) ===');
+const allGrades = [];
+for (const b of resBodies) for (const k of nonzeroRes(b)) allGrades.push(b[k]);
+allGrades.sort((a, b) => a - b);
+const medianGrade = allGrades.length ? allGrades[allGrades.length >> 1] : 0;
+const star5 = allGrades.filter(v => v >= 9).length;
+console.log('  deposits: ' + allGrades.length + '   median grade: ' + medianGrade
+  + '   5★ (grade ≥ 9) rate: ' + (star5 / allGrades.length * 100).toFixed(1) + '%');
+function gradeStats(set) {
+  let tot = 0, hi = 0;
+  for (const b of set) for (const k of nonzeroRes(b)) { tot += 1; if (b[k] >= 9) hi += 1; }
+  return { n: set.length, rate: tot ? hi / tot : 0 };
+}
+const hostile = resBodies.filter(b => (b.avgSurfaceTempK ?? 0) >= 400 || (b.radiusEarth ?? 0) >= 3);
+const benign = resBodies.filter(b => (b.radiusEarth ?? 0) < 3 && (b.avgSurfaceTempK ?? 0) >= 200 && (b.avgSurfaceTempK ?? 0) < 400);
+const hs = gradeStats(hostile), bs = gradeStats(benign);
+console.log('  motherlode rate — hostile (hot or gaseous) ' + (hs.rate * 100).toFixed(1) + '% (n=' + hs.n + ')'
+  + '   vs benign (temperate terrestrial) ' + (bs.rate * 100).toFixed(1) + '% (n=' + bs.n + ')');
+console.log();
+
+// S1 — per-host-class lean (volatiles vs metals presence).
+console.log('=== Resource lean by host class (presence%, classes with n≥50) ===');
+console.log('  cls |   n   ' + RESOURCE_KEYS.map(k => pad(RES_SHORT[k], 6, true)).join(''));
+const resByHostClass = {};
+for (const b of resBodies) {
+  const c = resHostClassOf(b);
+  if (!resByHostClass[c]) resByHostClass[c] = [];
+  resByHostClass[c].push(b);
+}
+for (const cls of STELLAR_CLASSES) {
+  const arr = resByHostClass[cls];
+  if (!arr || arr.length < 50) continue;
+  const cells = RESOURCE_KEYS.map(k =>
+    pad((arr.filter(b => (b[k] ?? 0) > 0).length / arr.length * 100).toFixed(0), 6, true)).join('');
+  console.log('  ' + pad(cls, 4) + '|' + pad(arr.length, 5, true) + '   ' + cells);
+}
+console.log();
+
+// S6 — deposit-count distribution.
+console.log('=== Deposit-count distribution (non-curated planets + moons) ===');
+const depCount = {};
+for (const b of resBodies) { const n = nonzeroRes(b).length; depCount[n] = (depCount[n] || 0) + 1; }
+const multiDep = resBodies.filter(b => nonzeroRes(b).length >= 3).length;
+for (const n of Object.keys(depCount).sort()) {
+  console.log('  ' + n + ' deposits: ' + pad(depCount[n], 6, true) + '  ' + pct(depCount[n], resBodies.length));
+}
+console.log('  multi-deposit (≥3): ' + (multiDep / resBodies.length * 100).toFixed(1)
+  + '%   prior: ' + (DEPOSIT_COUNT_DIST.filter(o => o.count >= 3).reduce((s, o) => s + o.weight, 0) * 100).toFixed(0) + '%');
+console.log();
+
 // --- 10. Biosphere distribution ---------------------------------------------
 
 // Population: planets + moons across all sources. Subsurface-aqueous
@@ -1046,6 +1186,96 @@ function invariant(id, label, ok, detail) {
   invariant('B1', `no body emits > CLOUD_DECK_BUDGET (${CLOUD_DECK_BUDGET}) real cloud decks`, over.length === 0,
     over.length ? `${over.length} over budget, e.g. ${over.slice(0, 3).map(b => `${b.id}:${b.cloudLayers.length}`).join(', ')}`
                 : `max observed ${maxObserved}`);
+}
+
+// R-series — resource-distribution gameplay schemes (S1–S6, see plans/
+// resource-distribution-gameplay-plan.md). Each guards one scheme's
+// load-bearing property so a knob retune in procgen-priors.mjs that
+// accidentally collapses it (a flatten, a dropped tail, a reverted bias) fails
+// the build instead of silently shipping. All ride the §9c `resBodies`
+// population + helpers.
+
+// R1 — the probabilistic-not-threshold guarantee: affinity (S4) shapes which
+// pairs co-occur via multipliers, never gates, so every one of the 15 pairs
+// must still be reachable. A zero would mean someone introduced a hard gate.
+invariant('R1', 'all 15 resource pairs co-occur (planets + moons)', presentPairs === 15,
+  presentPairs === 15 ? `15/15 present, min pair count ${minPair}` : `only ${presentPairs}/15 present`);
+
+// R2 — scarcity tiers (S3) hold: every bulk resource is more common than every
+// strategic / exotic one. Catches a re-flatten (all ~33%) or a strategic/exotic
+// base set too high. Loose by design — protects the tier ordering, not exact %.
+{
+  const bulk = RESOURCE_TIER.bulk.map(k => resPresence[k] / resBodies.length);
+  const rest = [...RESOURCE_TIER.strategic, ...RESOURCE_TIER.exotic].map(k => resPresence[k] / resBodies.length);
+  const minBulk = Math.min(...bulk), maxRest = Math.max(...rest);
+  invariant('R2', 'scarcity tiers hold (every bulk resource > every strategic/exotic)', minBulk > maxRest,
+    `min bulk ${(minBulk * 100).toFixed(0)}% vs max non-bulk ${(maxRest * 100).toFixed(0)}%`);
+}
+
+// R3 — bimodal abundance (S2): a motherlode tail exists AND most deposits stay
+// modest. Catches both reversions — tail removed (5★ vanishes) and the old
+// everything-rich state (median grade climbs back toward 8).
+{
+  const star5Rate = allGrades.length ? star5 / allGrades.length : 0;
+  invariant('R3', 'abundance bimodal (motherlode tail present, most deposits modest)',
+    star5Rate >= 0.02 && star5Rate <= 0.18 && medianGrade <= 6,
+    `5★ rate ${(star5Rate * 100).toFixed(1)}% (want 2–18%), median grade ${medianGrade} (want ≤6)`);
+}
+
+// R4 — star-type bias (S1) is live. Bulk bases make metals (6) intrinsically
+// more common than volatiles (3.5); only the M-dwarf class lean (volatile ×1.4,
+// metal ×0.8) flips that. So "M-dwarf worlds lean volatile over metal" is a
+// sharp tripwire for the bias table reverting to neutral.
+{
+  const m = resByHostClass['M'] || [];
+  const mVol = m.filter(b => (b.resVolatiles ?? 0) > 0).length;
+  const mMet = m.filter(b => (b.resMetals ?? 0) > 0).length;
+  invariant('R4', 'star-type bias present (M-dwarf worlds lean volatile over metal)',
+    m.length > 100 && mVol > mMet, `M-dwarf vol ${mVol} vs met ${mMet} (n=${m.length})`);
+}
+
+// R5 — value-tied-to-hostility (S5): the richest deposits concentrate on
+// hard-to-exploit worlds. Hostile worlds' motherlode rate must clear benign by
+// a clear margin; equalization means MOTHERLODE_HOSTILITY reverted to neutral.
+invariant('R5', 'motherlodes concentrate on hostile worlds (hostile rate > benign × 1.3)',
+  hs.n > 100 && bs.n > 100 && hs.rate > bs.rate * 1.3,
+  `hostile ${(hs.rate * 100).toFixed(1)}% (n=${hs.n}) vs benign ${(bs.rate * 100).toFixed(1)}% (n=${bs.n})`);
+
+// R6 — keystone worlds (S6) exist as a minority. Zero means DEPOSIT_COUNT_DIST
+// collapsed to always-two; too high means it's no longer a rare standout.
+{
+  const multiRate = resBodies.length ? multiDep / resBodies.length : 0;
+  invariant('R6', 'keystone (≥3-deposit) worlds present as a minority (2–25%)',
+    multiRate >= 0.02 && multiRate <= 0.25, `multi-deposit ${(multiRate * 100).toFixed(1)}%`);
+}
+
+// R7 — rings carry a SINGLE resource (S7). A ring is one smeared disrupted
+// body, so every procgen ring must have exactly one nonzero deposit. Curated
+// rings (Sol's Saturn) are CSV-authored full grids and excluded.
+{
+  const procRings = bodies.filter(b => b.kind === 'ring' && b.source === 'procgen');
+  const bad = procRings.filter(r => RESOURCE_KEYS.filter(k => (r[k] ?? 0) > 0).length !== 1);
+  invariant('R7', 'procgen rings carry exactly one resource', bad.length === 0,
+    bad.length ? `${bad.length} rings with ≠1 deposit, e.g. ${bad[0].id}` : `${procRings.length} procgen rings checked`);
+}
+
+// R8 — differentiation (S7) produces both prize archetypes. Belts: an M-type
+// minority (metals + a strategic) must exist. Rings: the shredded-moon path is
+// the ONLY route to ring rare-earths/radioactives, so at least one such ring
+// must appear — and the pristine default must still dominate (most rings carry
+// no strategic). Catches both a reverted differentiation gate and an
+// over-cranked one.
+{
+  const procBelts = bodies.filter(b => b.kind === 'belt' && b.source === 'procgen');
+  const mType = procBelts.filter(b =>
+    (b.resMetals ?? 0) > 0 && ((b.resRareEarths ?? 0) > 0 || (b.resRadioactives ?? 0) > 0));
+  const mRate = procBelts.length ? mType.length / procBelts.length : 0;
+  const procRings = bodies.filter(b => b.kind === 'ring' && b.source === 'procgen');
+  const stratRings = procRings.filter(r => (r.resRareEarths ?? 0) > 0 || (r.resRadioactives ?? 0) > 0);
+  const stratRingRate = procRings.length ? stratRings.length / procRings.length : 0;
+  invariant('R8', 'differentiation yields M-type belts + scarce strategic rings',
+    mRate >= 0.05 && mRate <= 0.40 && stratRings.length > 0 && stratRingRate <= 0.25,
+    `M-type belts ${(mRate * 100).toFixed(1)}%, strategic rings ${stratRings.length} (${(stratRingRate * 100).toFixed(1)}%)`);
 }
 
 console.log();
