@@ -557,6 +557,17 @@ export function rockArchetypeFor(
   );
 }
 
+// Muted single-resource mineralogy color — the desaturated, lightness-
+// lifted hue a region paints when one resource dominates it (the same
+// ROCK_ARCHETYPE_SINGLE palette the disc-surface path uses for single-
+// resource patches). Returns the shared instance; treat as read-only.
+// Exposed for the belt layer, which tints each chunk by one of the
+// belt's deposits so a belt reads as a mix of its mineralogy rather
+// than one flat icyness lerp.
+export function resourceMineralColor(key: ResourceKey): Color {
+  return ROCK_ARCHETYPE_SINGLE[key];
+}
+
 // Per-deck cloud palette derivation. Each cloud deck is one condensate
 // species (NH3 ice, H2O ice, H2SO4 droplets, CH4 frost, ...) suspended
 // at one altitude. Its visible color is THAT condensate, plus whatever

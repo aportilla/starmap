@@ -4,10 +4,12 @@
 
 import { BufferAttribute, Scene } from 'three';
 import { BODIES } from '../../../data/stars';
-import { beltRingColor, bodyIcyness } from '../color-science';
+import { beltRingColor, bodyIcyness, dominantResources, resourceMineralColor } from '../color-science';
 import {
-  BELT_CHUNKS_MAX, BELT_CHUNKS_MIN, BELT_CHUNK_SIZES, BELT_HEIGHT_FACTOR,
-  BELT_SLOT_WIDTH, PLANET_DISC_MIN, RENDER_ORDER_BELT, Z_BELT,
+  BELT_CHUNKS_HARD_MAX, BELT_CHUNKS_MAX, BELT_CHUNKS_MIN, BELT_CHUNK_KM_MAX, BELT_CHUNK_KM_MIN,
+  BELT_CHUNK_SCALE_MAX, BELT_CHUNK_SCALE_MIN, BELT_CHUNK_SIZES,
+  BELT_HEIGHT_FACTOR, BELT_HEIGHT_MAX_PX, BELT_SLOT_WIDTH, PLANET_DISC_MIN,
+  RENDER_ORDER_BELT, Z_BELT,
 } from '../layout/constants';
 import type { RowSlot } from '../layout/row';
 import {
@@ -65,7 +67,7 @@ export class BeltsLayer {
     }
     const planetItems = rowSlots.filter(r => r.kind === 'planet');
     const largestPlanet = planetItems.reduce((m, r) => Math.max(m, r.widthPx), PLANET_DISC_MIN);
-    const heightPx = largestPlanet * BELT_HEIGHT_FACTOR;
+    const heightPx = Math.min(largestPlanet * BELT_HEIGHT_FACTOR, BELT_HEIGHT_MAX_PX);
     this.pool = buildBeltPool(beltItems.map(r => ({ bodyIdx: r.bodyIdx, rowIdx: r.rowIdx })), heightPx);
     this.slotByBodyIdx = new Map(this.pool.slots.map(s => [s.bodyIdx, s]));
     scene.add(this.pool.mesh);
@@ -144,6 +146,18 @@ export class BeltsLayer {
   }
 }
 
+// Map a belt's largestBodyKm onto a multiplier on BELT_CHUNK_SIZES, so
+// belts with bigger parent bodies render with bigger chunks. Log-scaled
+// across the km range and clamped to [SCALE_MIN, SCALE_MAX]. A null km
+// (shouldn't occur on an emitted belt) falls back to the small end.
+const BELT_LOG_KM_MIN = Math.log10(BELT_CHUNK_KM_MIN);
+const BELT_LOG_KM_SPAN = Math.log10(BELT_CHUNK_KM_MAX) - BELT_LOG_KM_MIN;
+function beltChunkSizeScale(largestBodyKm: number | null): number {
+  const km = Math.max(largestBodyKm ?? BELT_CHUNK_KM_MIN, BELT_CHUNK_KM_MIN);
+  const t = Math.max(0, Math.min(1, (Math.log10(km) - BELT_LOG_KM_MIN) / BELT_LOG_KM_SPAN));
+  return BELT_CHUNK_SCALE_MIN + t * (BELT_CHUNK_SCALE_MAX - BELT_CHUNK_SCALE_MIN);
+}
+
 // Extra pixels added around the baked chunk-cluster extent when sizing
 // the picker hit-box, so a click landing just outside the outermost
 // chunk still selects the belt without re-extending into the empty
@@ -172,17 +186,52 @@ function buildBeltPool(
   for (const { bodyIdx, rowIdx } of belts) {
     const belt = BODIES[bodyIdx];
     const rng = mulberry32(hash32(`belt:${belt.id}`));
+
+    // Scale the base palette by the belt's parent-body inventory so chunk
+    // size tracks largestBodyKm; center-proximity bias still modulates
+    // which scaled entry each chunk draws.
+    const sizeScale = beltChunkSizeScale(belt.largestBodyKm);
+    const sizes = BELT_CHUNK_SIZES.map(s => s * sizeScale);
+
+    // Chunk count: mass sets the painted-area budget (log-based), then
+    // dividing by chunk area (sizeScale²) trades size for count so a
+    // belt of smaller bodies renders as more of them at the same belt
+    // mass — total coverage stays ≈ mass-driven regardless of body size.
+    // Capped at BELT_CHUNKS_HARD_MAX to bound the vertex budget.
     const mass = belt.massEarth ?? 0.001;
     const logMass = Math.log10(Math.max(mass, 1e-5));
     const t = Math.max(0, Math.min(1, (logMass + 4) / 3.5));
-    const N = Math.round(BELT_CHUNKS_MIN + t * (BELT_CHUNKS_MAX - BELT_CHUNKS_MIN));
+    const massN = BELT_CHUNKS_MIN + t * (BELT_CHUNKS_MAX - BELT_CHUNKS_MIN);
+    const N = Math.min(BELT_CHUNKS_HARD_MAX, Math.round(massN / (sizeScale * sizeScale)));
 
     const icyness = bodyIcyness(belt);
-    const col = beltRingColor(icyness);
     const halfW = BELT_SLOT_WIDTH / 2;
     const halfH = heightPx / 2;
     const shapes = shapesFor(icyness);
-    const chunks = sampleBeltChunks(rng, N, halfW, halfH, BELT_CHUNK_SIZES, shapes);
+    const chunks = sampleBeltChunks(rng, N, halfW, halfH, sizes, shapes);
+
+    // Per-chunk color: each chunk represents one of the belt's two
+    // deposits, drawn weighted by abundance, painted in the muted
+    // single-resource mineralogy palette — so a metals+volatiles belt
+    // reads as a mix of grey rock and pale ice rather than one flat
+    // icyness lerp. Abundance-weighted, so a 70/30 belt is mostly its
+    // dominant resource. Color picks consume the rng *after* placement,
+    // leaving the sampled scatter byte-identical. Resource-less belts
+    // (defensive — every emit should set the grid) fall back to the
+    // rocky↔icy lerp.
+    const deposits = dominantResources(belt, 2);
+    const totalAb = deposits.reduce((s, d) => s + d.abundance, 0);
+    const fallback = beltRingColor(icyness);
+    const chunkColors = chunks.map(() => {
+      if (totalAb <= 0) return fallback;
+      const u = rng();
+      let acc = 0;
+      for (const d of deposits) {
+        acc += d.abundance / totalAb;
+        if (u <= acc) return resourceMineralColor(d.key);
+      }
+      return resourceMineralColor(deposits[deposits.length - 1].key);
+    });
 
     // Picker box tracks the real chunk scatter on BOTH axes, not the full
     // slot box. Each shape is inscribed in the unit circle, so a chunk
@@ -205,7 +254,9 @@ function buildBeltPool(
     const slotStart = cursor;
     const offsets:        { dx: number; dy: number }[] = [];
     const centerOffsets:  { dx: number; dy: number }[] = [];
-    for (const chunk of chunks) {
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunk = chunks[ci];
+      const col = chunkColors[ci];
       const scratchPos:    number[] = [];
       const scratchCenter: number[] = [];
       const scratchSize:   number[] = [];

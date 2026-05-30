@@ -128,19 +128,51 @@ export const BELT_SLOT_WIDTH = 36;
 // structural feature spanning a real swath of the system rather than
 // a compact cluster — wide enough to read distinctly from a tightly
 // packed moon system but not so tall it crashes into the stars or
-// the ships area.
+// the ships area. Clamped by BELT_HEIGHT_MAX_PX so a row carrying a
+// large gas giant doesn't stretch the column to the full viewport.
 export const BELT_HEIGHT_FACTOR = 3.0;
+// Absolute ceiling (env-px) on a belt column's height. Caps the
+// proportional BELT_HEIGHT_FACTOR scaling so only the biggest-planet
+// rows (gas giants near PLANET_DISC_MAX) get trimmed; typical rows
+// stay fully proportional.
+export const BELT_HEIGHT_MAX_PX = 260;
 // Chunk count range per belt. Smallest masses bottom out at MIN; the
 // largest belts approach MAX. Log-based so a 100× mass range only
-// doubles chunk count.
+// doubles chunk count. This is the mass-derived count *before* the
+// small-body inflation below — belts with smaller parent bodies divide
+// the rendered chunk size down (see BELT_CHUNK_SCALE_*) and bump the
+// count up to keep painted area (≈ belt mass) roughly fixed, so a dust
+// cascade reads as a dense fine swarm rather than a sparse one.
 export const BELT_CHUNKS_MIN = 20;
 export const BELT_CHUNKS_MAX = 50;
+// Absolute ceiling on chunk count after small-body inflation. A belt
+// with the smallest chunks (sizeScale at BELT_CHUNK_SCALE_MIN) would
+// otherwise inflate its mass-count by 1/sizeScale²; this caps the
+// vertex budget so a tiny-bodied belt can't blow up the pool.
+export const BELT_CHUNKS_HARD_MAX = 150;
 // Per-chunk polygon half-extent in env-px. A chunk's silhouette is one
 // of the blob.ts shape-library polygons (POTATO_SHAPES / CRYSTAL_SHAPES)
 // inscribed in a unit circle, scaled by this size and rotated by a
 // per-chunk angle, so the visible footprint is roughly (2*size) ×
-// (2*size) with the polygon filling ~60% of the bbox.
+// (2*size) with the polygon filling ~60% of the bbox. This is the
+// *base* palette — each belt scales the whole array by a multiplier
+// derived from its largestBodyKm (see below), so the relative
+// within-belt size spread is preserved while the absolute scale tracks
+// the parent-body inventory.
 export const BELT_CHUNK_SIZES = [2, 3, 4, 5, 6];
+// largestBodyKm → per-belt multiplier on BELT_CHUNK_SIZES. A belt's
+// largest parent body spans ~1 km (trace dust cascades) to ~2400 km
+// (Pluto/Eris-class KBO inventories); that ~3-decade log range maps
+// onto a size multiplier. BELT_CHUNK_SIZES is already tuned for the
+// large end, so SCALE_MAX is 1.0 — a Ceres/Pluto-class shepherded belt
+// renders at the base palette and everything smaller scales *down*
+// toward SCALE_MIN, so a floor dust band reads as fine gravel rather
+// than boulders. The rendered chunk scale tracks the same metadata the
+// info card reports.
+export const BELT_CHUNK_KM_MIN = 1;
+export const BELT_CHUNK_KM_MAX = 2500;
+export const BELT_CHUNK_SCALE_MIN = 0.5;
+export const BELT_CHUNK_SCALE_MAX = 1.0;
 
 // --- Rings ---
 //
