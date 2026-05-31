@@ -1,7 +1,7 @@
 // Row layout — planets + belts share one dome-arc row, sorted by
 // semi-major axis. This module owns the RowSlot datatype, the
-// dome-arc math, and a handful of small utilities (bigMiddleOrder,
-// sumOf, discPxFromRadius/planetDiscPx) that the row build needs.
+// dome-arc math, and a handful of small utilities (sumOf,
+// discPxFromRadius/planetDiscPx) that the row build needs.
 
 import { BODIES, STARS, type StarCluster } from '../../../data/stars';
 import { sizes } from '../../../ui/theme';
@@ -155,28 +155,6 @@ export function layoutRow(items: RowSlot[], bufferW: number, bufferH: number): v
     item.cy = Math.round(baselineY + yOffset);
     cursor += item.widthPx + gap;
   }
-}
-
-// Permutation that walks slots outward from the center. Caller passes a
-// disc-size array already sorted descending; out[finalSlot] = source
-// index. Biggest item lands at floor(N/2); subsequent items alternate
-// right-then-left as we walk outward, falling back to the unfilled side
-// when one runs out (handles asymmetric N gracefully).
-export function bigMiddleOrder(sortedDescCount: number): number[] {
-  const N = sortedDescCount;
-  const out: number[] = new Array(N).fill(-1);
-  if (N === 0) return out;
-  const mid = Math.floor(N / 2);
-  out[mid] = 0;
-  for (let i = 1; i < N; i++) {
-    const step = Math.ceil(i / 2);
-    let slot = (i % 2 === 1) ? mid + step : mid - step;
-    if (slot < 0 || slot >= N || out[slot] !== -1) {
-      slot = slot >= N ? mid - step : mid + step;
-    }
-    out[slot] = i;
-  }
-  return out;
 }
 
 export function sumOf(arr: readonly number[]): number {

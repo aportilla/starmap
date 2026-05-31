@@ -15,7 +15,7 @@ import {
   STAR_HALO_RADIUS_FACTOR, STAR_HORIZ_GAP_FACTOR, STAR_OFFSCREEN_FRAC,
   SYSTEM_VIEW_SATURATION_LIFT_MAX, SYSTEM_VIEW_SATURATION_LIFT_RATE,
 } from '../layout/constants';
-import { bigMiddleOrder, sumOf } from '../layout/row';
+import { sumOf } from '../layout/row';
 import { snapPxParity } from '../geom/snap';
 import { pickDiscPool } from '../geom/hit';
 import { disposePool } from './dispose';
@@ -80,8 +80,9 @@ interface StarDisc {
 }
 
 export class StarsRowLayer {
-  // starMembers[slot] is the source star index after the big-middle
-  // sort. starDiscs[slot] is the corresponding mesh.
+  // starMembers[slot] is the source star index in catalog member order
+  // (members[0] = primary), laid out left-to-right. starDiscs[slot] is
+  // the corresponding mesh.
   private readonly starMembers: readonly number[];
   private readonly starSlotDiscPx: readonly number[];
   private readonly starDiscs: StarDisc[] = [];
@@ -90,13 +91,11 @@ export class StarsRowLayer {
   private readonly slotByStarIdx: ReadonlyMap<number, number>;
 
   constructor(scene: Scene, cluster: StarCluster) {
-    // Sort by disc size descending, then permute into big-middle slot
-    // order so geometry indices map directly to lateral slots.
-    const rawDiscPx = cluster.members.map(m => Math.floor(STARS[m].pxSize * DISC_SCALE + 0.5));
-    const sortedIdx = cluster.members.map((_, i) => i).sort((a, b) => rawDiscPx[b] - rawDiscPx[a]);
-    const slotPerm = bigMiddleOrder(sortedIdx.length);
-    this.starMembers     = slotPerm.map(p => cluster.members[sortedIdx[p]]);
-    this.starSlotDiscPx  = slotPerm.map(p => rawDiscPx[sortedIdx[p]]);
+    // Lay stars out left-to-right in catalog member order: cluster.members[0]
+    // is the primary (most massive), so it takes the leftmost slot and
+    // companions follow rightward.
+    this.starMembers     = cluster.members.slice();
+    this.starSlotDiscPx  = this.starMembers.map(m => Math.floor(STARS[m].pxSize * DISC_SCALE + 0.5));
     this.slotByStarIdx   = new Map(this.starMembers.map((s, i) => [s, i]));
 
     // Pre-normalize per-slot intensities so the largest cluster member
@@ -157,7 +156,7 @@ export class StarsRowLayer {
     const availW = bufferW - 2 * sizes.edgePad;
     const maxDiscPx = Math.max(...this.starSlotDiscPx);
     let gap = N > 1 ? maxDiscPx * STAR_HORIZ_GAP_FACTOR : 0;
-    let totalW = sumOf(this.starSlotDiscPx) + (N - 1) * gap;
+    const totalW = sumOf(this.starSlotDiscPx) + (N - 1) * gap;
 
     // Width-fit: shrink gap first (down to MIN_STAR_GAP), then scale all
     // disc sizes proportionally if even the minimum-gap row would
@@ -168,16 +167,16 @@ export class StarsRowLayer {
       const minTotal = fixed + (N - 1) * MIN_STAR_GAP;
       if (minTotal <= availW) {
         gap = (availW - fixed) / (N - 1);
-        totalW = availW;
       } else {
         const targetFixed = availW - (N - 1) * MIN_STAR_GAP;
         discScale = targetFixed / Math.max(fixed, 1);
         gap = MIN_STAR_GAP;
-        totalW = targetFixed + (N - 1) * MIN_STAR_GAP;
       }
     }
 
-    const startX = (bufferW - totalW) / 2;
+    // Pinned to the top-left: the row starts at the edge margin and grows
+    // rightward (primary first), rather than centering on the buffer.
+    const startX = sizes.edgePad;
     let cursor = startX;
     for (let slot = 0; slot < N; slot++) {
       const d = Math.max(1, Math.round(this.starSlotDiscPx[slot] * discScale));
