@@ -67,20 +67,23 @@ export class SystemDiagram {
     // Row layout writes cx/cy into rowSlots; subsequent passes read it.
     this.stars.layout(this.bufferW, this.bufferH);
     layoutRow(this.rowSlots, this.bufferW, this.bufferH);
+    // Star positions are finalized — publish them to the body lighting
+    // pass. Pulls from stars (post-layout) and pushes to every body
+    // material; no per-tick update needed (the diagram is a static
+    // screen layout, so lighting only changes on resize). Set before the
+    // ring layout below, which reads the lights to resolve each ring's
+    // dominant-star shadow direction.
+    const lights = this.stars.getLightSources();
+    this.planets.setLightSources(lights);
+    this.moons.setLightSources(lights);
+    this.belts.setLightSources(lights);
+    this.rings.setLightSources(lights);
     // PlanetsLayer publishes the center index that moons + rings consume.
     this.planets.layout(this.rowSlots);
     this.belts.layout(this.rowSlots);
     const centers = this.planets.getCenterIndex();
     this.moons.layout(centers);
     this.rings.layout(centers);
-    // Star positions are finalized — publish them to the body lighting
-    // pass. Pulls from stars (post-layout) and pushes to every body
-    // material; no per-tick update needed (the diagram is a static
-    // screen layout, so lighting only changes on resize).
-    const lights = this.stars.getLightSources();
-    this.planets.setLightSources(lights);
-    this.moons.setLightSources(lights);
-    this.belts.setLightSources(lights);
   }
 
   // Hit-test the rendered discs at (x, y) in buffer-pixel coords and

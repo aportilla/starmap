@@ -5,9 +5,16 @@
 //
 // Composition is read from the ring body's six-resource grid via
 // `bodyIcyness`: resVolatiles-dominant rings lerp toward the bright
-// Saturn-class palette, rocky-dominant rings lerp toward the dark
-// Uranus/Neptune-class palette. The same data drives mining yields,
-// so visual character and gameplay attribute can't disagree.
+// Saturn-class palette (and a more opaque floor), rocky-dominant rings
+// toward the dark Uranus/Neptune-class palette (and a fainter floor). The
+// same data drives mining yields, so visual character and gameplay
+// attribute can't disagree. The dithered ringlet structure on top of that
+// floor lives in makeRingMaterial, seeded per ring off the body id.
+//
+// layout() also resolves each ring's planet-shadow inputs: it picks the
+// dominant star from the published lights and writes the screen-space
+// direction + center the material's shadow block needs (see
+// writeShadowUniforms).
 
 import { BufferAttribute, BufferGeometry, Mesh, Scene, ShaderMaterial } from 'three';
 import { BODIES, type Body } from '../../../data/stars';
@@ -28,7 +35,7 @@ import { hash32, mulberry32 } from '../geom/prng';
 import { bandZ } from '../geom/snap';
 import { disableCulling } from '../geom/cull';
 import { disposePool } from './dispose';
-import type { DiagramHit, DiagramPick, PlanetCenterIndex } from '../types';
+import type { DiagramHit, DiagramPick, PlanetCenterIndex, StarLightSource } from '../types';
 
 interface Ring {
   bodyIdx: number;
@@ -53,6 +60,11 @@ export class RingsLayer {
   // bodyIdx → Ring ref, so setHovered can flip the material uniform
   // without scanning rings.
   private readonly ringByBodyIdx: Map<number, Ring> = new Map();
+  // Latest published star lights; consumed in layout() to resolve each
+  // ring's dominant-star shadow direction. Stored (not applied on receipt)
+  // because the shadow dir is per-ring — it needs each host's screen
+  // center, which layout() has.
+  private lights: readonly StarLightSource[] = [];
 
   constructor(scene: Scene, rowSlots: readonly RowSlot[]) {
     const planetItems = rowSlots.filter(r => r.kind === 'planet');
@@ -74,7 +86,43 @@ export class RingsLayer {
       if (!c) continue;
       ring.backMesh.position.set(c.cx, c.cy, bandZ(c.rowIdx, Z_BACK_RING));
       ring.frontMesh.position.set(c.cx, c.cy, bandZ(c.rowIdx, Z_FRONT_RING));
+      this.writeShadowUniforms(ring, c.cx, c.cy);
     }
+  }
+
+  // Publish the cluster's star lights. Stored rather than applied here —
+  // each ring's shadow direction is relative to its own host center, which
+  // only layout() has, so resolution happens there.
+  setLightSources(lights: readonly StarLightSource[]): void {
+    this.lights = lights;
+  }
+
+  // Resolve the dominant star (brightest, tie-break nearest to the host)
+  // and write the ring's per-layout shadow uniforms. uCenter is the same
+  // screen-px center written to mesh.position so (gl_FragCoord - uCenter)
+  // is the planet-local screen offset the shader expects.
+  private writeShadowUniforms(ring: Ring, cx: number, cy: number): void {
+    const u = ring.material.uniforms;
+    let best: StarLightSource | null = null;
+    let bestDist2 = Infinity;
+    for (const L of this.lights) {
+      const dx = L.x - cx, dy = L.y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (best === null || L.intensity > best.intensity ||
+          (L.intensity === best.intensity && d2 < bestDist2)) {
+        best = L;
+        bestDist2 = d2;
+      }
+    }
+    if (best === null) {
+      u.uHasShadow.value = 0;
+      return;
+    }
+    const dx = best.x - cx, dy = best.y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    u.uLightDir2D.value.set(dx / len, dy / len);
+    u.uCenter.value.set(cx, cy);
+    u.uHasShadow.value = 1;
   }
 
   pickFront(x: number, y: number, centers: PlanetCenterIndex): DiagramHit | null {
@@ -136,6 +184,12 @@ function buildRing(ring: Body, hostPlanet: Body, ringBodyIdx: number, hostBodyId
   // across builds yet don't comb-align between planets.
   const seed = mulberry32(hash32(`ring-density:${ring.id}`))();
   const material = makeRingMaterial(color, floorAlpha, seed);
+  // Constant per-ring shadow inputs (the rest — center, light dir — are
+  // written each layout). Both normalized into outerR units, matching the
+  // shader's frame.
+  material.uniforms.uInnerNorm.value  = innerR / outerR;
+  material.uniforms.uPlanetNorm.value = (hostDiscPx / 2) / outerR;
+  material.uniforms.uInvOuterR.value  = 1 / outerR;
   const backGeometry  = buildHalfAnnulusGeometry(innerR, outerR, tiltRad, /*upperHalf=*/ true);
   const frontGeometry = buildHalfAnnulusGeometry(innerR, outerR, tiltRad, /*upperHalf=*/ false);
   const backMesh  = new Mesh(backGeometry,  material);

@@ -1,9 +1,9 @@
-// System-view decor materials: chunk-pool fill (belts + debris rings),
-// ice/dusty ring annulus, per-mesh star disc, outer star halo. All render
-// under an OrthographicCamera at 1 unit = 1 buffer pixel. The big
-// planet/moon disc material lives in ./planet; shared Bayer dither,
-// hue-direction saturation, and star-crescent lighting GLSL come from
-// ./chunks.
+// System-view decor materials: chunk-pool fill (belts), the dithered-
+// density ring annulus (translucent floor + stippled ringlet overlay +
+// planet shadow), per-mesh star disc, outer star halo. All render under an
+// OrthographicCamera at 1 unit = 1 buffer pixel. The big planet/moon disc
+// material lives in ./planet; shared Bayer dither, hue-direction
+// saturation, and star-crescent lighting GLSL come from ./chunks.
 
 import { AdditiveBlending, Color, ShaderMaterial, Vector2 } from 'three';
 import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, HUEDIR_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
@@ -159,6 +159,13 @@ export function makeBlobMaterial(): ShaderMaterial {
 // dusty rings a faint one. `seed` is a per-ring [0,1) hash that jitters
 // band frequencies / phases / gap position so two rings never comb-align.
 //
+// The shadow block (gated by uHasShadow) casts the host planet's shadow
+// onto the ring: it reconstructs a faked-3D fragment position (screen x,y
+// exact, depth from the parametric angle) and hard-cuts the arc inside the
+// planet's down-sun shadow cylinder. RingsLayer writes the per-layout
+// shadow inputs (center, normalized radii, dominant-star direction) — see
+// its writeShadowUniforms.
+//
 // Per-mesh uHovered uniform (0 / 1) fills the entire annulus solid white
 // on hover — matches the blob/disc hover convention.
 export function makeRingMaterial(color: Color, floorAlpha: number, seed: number): ShaderMaterial {
@@ -168,6 +175,19 @@ export function makeRingMaterial(color: Color, floorAlpha: number, seed: number)
       uFloorAlpha: { value: floorAlpha },
       uSeed:       { value: seed },
       uHovered:    { value: 0 },
+      // Planet-shadow inputs, written per layout by RingsLayer (see
+      // setLightSources / layout). uCenter is the host planet's screen-px
+      // center (so gl_FragCoord - uCenter is the planet-local offset);
+      // uInvOuterR / uInnerNorm / uPlanetNorm normalize the fragment into
+      // outerR units; uLightDir2D is the unit screen direction toward the
+      // dominant star. uHasShadow gates the whole block off when no light
+      // resolves.
+      uCenter:     { value: new Vector2() },
+      uInvOuterR:  { value: 0 },
+      uInnerNorm:  { value: 0 },
+      uPlanetNorm: { value: 0 },
+      uLightDir2D: { value: new Vector2() },
+      uHasShadow:  { value: 0 },
     },
     vertexShader: `
       attribute float aRho;
@@ -185,11 +205,36 @@ export function makeRingMaterial(color: Color, floorAlpha: number, seed: number)
       uniform float uFloorAlpha;
       uniform float uSeed;
       uniform float uHovered;
+      uniform vec2  uCenter;
+      uniform float uInvOuterR;
+      uniform float uInnerNorm;
+      uniform float uPlanetNorm;
+      uniform vec2  uLightDir2D;
+      uniform float uHasShadow;
       varying float vRho;
       varying float vAngle;
 
       ${BAYER4_GLSL}
       ${HASH_GLSL}
+
+      // Planet-shadow on the ring. The annulus is a circle viewed at an
+      // inclination whose cosine IS RING_MINOR_OVER_MAJOR (0.20), so the
+      // depth we don't draw is SIN_PHI of the minor-axis displacement —
+      // enough to reconstruct a faked-3D fragment position and cast the
+      // planet's shadow cylinder down-sun. Plausible, not physical: it
+      // tracks WHICH SIDE the star is on (the point), not ephemeris.
+      const float SIN_PHI = 0.9798;   // sqrt(1 - 0.20^2)
+      // Depth of the light along the view axis (the in-plane component is
+      // unit-length, so this is measured relative to 1). Above ~1 the depth
+      // dominates after normalization: the sun reads as sitting far BEHIND
+      // the scene, casting the shadow forward onto the ring — rather than
+      // grazing down from above (small values). Positive keeps the sun on
+      // the far side so the FRONT arc darkens; flipping the sign moves the
+      // shadow to the opposite arc.
+      const float LIGHT_Z = 1.8;
+      // Brightness inside the shadow. Not 0 — a shadowed ring still reads
+      // faintly, so the silhouette doesn't look chunk-missing.
+      const float SHADOW_DARK = 0.30;
 
       // Ringlet frequencies (radians of phase swept across the radial
       // span). F1 is the broad-band set (~3-5 ringlets at the band's
@@ -276,6 +321,31 @@ export function makeRingMaterial(color: Color, floorAlpha: number, seed: number)
         if (a < 0.02) discard;   // genuinely empty in the gap — no depth write
 
         vec3 col = uColor * mix(FLOOR_DIM, BAND_BRIGHT * bandJitter, lit);
+
+        // Planet shadow: reconstruct the fragment's faked-3D position
+        // (screen x,y exact from the pixel; depth from the parametric
+        // angle), then test it against the planet's down-sun shadow
+        // cylinder. Darkens the back arc behind the planet relative to the
+        // dominant star.
+        if (uHasShadow > 0.5) {
+          vec2  s   = (gl_FragCoord.xy - uCenter) * uInvOuterR;   // outerR units
+          float rr  = mix(uInnerNorm, 1.0, vRho);
+          float dz  = rr * sin(vAngle * 6.2831853) * SIN_PHI;
+          vec3  F   = vec3(s, dz);
+          vec3  shadowDir = -normalize(vec3(uLightDir2D, LIGHT_Z));
+          float along = dot(F, shadowDir);
+          float perp  = length(F - along * shadowDir);
+          // Hard cut: inside the planet's shadow cylinder (perp < R_p) on
+          // the down-sun side (along > 0). The perp = R_p boundary is the
+          // cylinder wall — two straight lines parallel to the light
+          // direction, so the darkened arc gets crisp, light-aligned
+          // edges (the classic shadow cut) rather than a radial fade.
+          float shadow = step(0.0, along) * step(perp, uPlanetNorm);
+          float k = mix(1.0, SHADOW_DARK, shadow);
+          col *= k;
+          a   *= k;
+        }
+
         gl_FragColor = vec4(col, a);
       }
     `,
