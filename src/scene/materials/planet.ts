@@ -9,7 +9,7 @@
 import { Color, ShaderMaterial, Vector2 } from 'three';
 import { RING_MINOR_OVER_MAJOR } from '../system-diagram/layout/constants';
 import { glsl, PIXEL_SNAP_GLSL, RASTER_PAD, snapClipToGlPosition, snappedMaterials } from './shared';
-import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
+import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, RIM_GLOW_FOCUS, STAR_CRESCENT_LIGHTING_GLSL } from './chunks';
 
 // Planet + moon disc material. Renders a pixel-crisp disc whose interior
 // is a layered composite, bottom to top:
@@ -805,7 +805,10 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // tapers toward 0 at the anti-solar point. RIM_GLOW_FOCUS (a power
       // > 1) then steepens that taper so the glow reaches a bit past the
       // terminator and fades out, rather than carrying all the way around
-      // to the night-side limb.
+      // to the night-side limb. That focus is DERIVED from the shared
+      // LIGHT_Z_BIAS in ./chunks (not a free knob here): pushing the light
+      // deeper behind the bodies steepens the taper, so the rim arc narrows
+      // in lock-step with the disc crescent's same-source pinch.
       //
       // Color model (multiplicative — the naturalistic core): the
       // atmosphere scatters incident starlight filtered through its own
@@ -836,7 +839,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // ambient band — the atmosphere is still there, just unlit) to 1.0
       // on the lit limb. Dithered against bayer4 so the angular fade
       // stipples instead of feathering (pixel-crisp aesthetic).
-      const float RIM_GLOW_FOCUS   = 2.0;
+      const float RIM_GLOW_FOCUS   = ${glsl(RIM_GLOW_FOCUS)};
       const float RIM_GLOW_GAIN    = 1.25;
       const float RIM_TIP_WHITE    = 0.35;
       const float RIM_TIP_FOCUS    = 5.0;

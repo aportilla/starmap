@@ -4,9 +4,14 @@
 // keeping one canonical copy here stops the four Bayer-dither blocks (and
 // the two star-crescent lighting loops) from drifting apart.
 //
-// Each export is a GLSL source string meant to be interpolated into a
-// shader template at global (pre-main) scope via the `glsl` tagged
-// template the materials already use, e.g. `${BAYER4_GLSL}`.
+// Most exports are GLSL source strings meant to be interpolated into a
+// shader template at global (pre-main) scope, e.g. `${BAYER4_GLSL}`. A few
+// are plain scalars shared with the host shaders' TS — MAX_LIGHTS, plus the
+// LIGHT_Z_BIAS / RIM_GLOW_FOCUS lighting-depth pair below — interpolated as
+// numeric literals (via `glsl()` for the floats) so one source of truth
+// drives both the GLSL and any CPU-side use.
+
+import { glsl } from './shared';
 
 // Body lighting (per-fragment colored crescent, driven by star disc
 // positions). Five-slot ceiling covers the largest realistic multi-star
@@ -58,6 +63,34 @@ export const HUEDIR_GLSL = /* glsl */ `
         return c / max(m, 1e-3);
       }`;
 
+// ── Light depth (the shared coupling knob) ──
+// LIGHT_Z_BIAS is the z-component of the (pre-normalized) light direction:
+// how far the star sits behind the bodies, pushed into the screen and away
+// from the viewer. It is the SINGLE knob that sets how backlit every body
+// reads, and two otherwise-separate effects derive their spread from it so
+// they always move together:
+//   • the disc surface crescent (STAR_CRESCENT_LIGHTING_GLSL below) — more
+//     negative pinches the lit lambert toward the limb (thinner crescent).
+//   • the atmospheric loft glow's rim arc (planet.ts rimHalo) — RIM_GLOW_FOCUS
+//     is derived here so a deeper light steepens the rim's angular taper and
+//     the glow arc tightens in lock-step with the crescent.
+// Turn this one number and both the surface crescent and the rim arc narrow
+// together. Magnitude only — the sign is fixed negative (the disc normal's
+// +z faces the viewer, so a negative L.z peaks the lambert at the limb).
+export const LIGHT_Z_BIAS = -0.85;
+
+// Rim loft-glow angular focus, derived from the light depth. The rim's
+// half-lambert wrap (facing ∈ [0,1], 1 sunward → 0.5 at the terminator) is
+// raised to this power; a higher power steepens the taper so the glow dies
+// sooner past the terminator. Coupling is linear in |LIGHT_Z_BIAS|:
+// RIM_FOCUS_BASE (the grazing-light taper at zero depth) plus a per-depth
+// slope. Raise RIM_FOCUS_PER_DEPTH for a stronger rim response to depth;
+// this is the one structural coefficient that fixes how fast the rim arc
+// tracks the crescent.
+const RIM_FOCUS_BASE = 1.0;
+const RIM_FOCUS_PER_DEPTH = 1.8;
+export const RIM_GLOW_FOCUS = RIM_FOCUS_BASE + RIM_FOCUS_PER_DEPTH * Math.abs(LIGHT_Z_BIAS);
+
 // Star-crescent reflectance lighting. `N` is the fragment's reconstructed
 // surface normal (caller supplies it — the planet uses vRadius/vCenter,
 // the blob uses vChunkSize/vChunkCenter), `center` is the body center in
@@ -76,8 +109,9 @@ export const HUEDIR_GLSL = /* glsl */ `
 // Depends on bayer4 (interpolate BAYER4_GLSL before this) and the
 // uLight* uniforms (uLightCount / uLightPos / uLightColor /
 // uLightIntensity) being declared by the host shader.
+
 export const STAR_CRESCENT_LIGHTING_GLSL = /* glsl */ `
-      const float LIGHT_Z_BIAS         = -0.55;
+      const float LIGHT_Z_BIAS         = ${glsl(LIGHT_Z_BIAS)};
       const float LIGHT_BAND_LOW       = 0.18;
       const float LIGHT_BAND_HIGH      = 0.52;
       const float LIGHT_DITHER_WIDTH   = 0.08;
