@@ -267,26 +267,26 @@ export const OTEGI_MR = {
 //
 // p = min(MOON_PROBABILITY_CAP, hillAu × MOON_PROBABILITY_PER_HILL)
 //
-// Sol-anchored means at PER_HILL=2.3, CAP=0.60 (mean = MAX × p):
-//   Mercury (R_H ≈ 0.0015 AU): p ≈ 0.003 → mean 0.02 (Mercury: 0)
-//   Earth   (R_H ≈ 0.010  AU): p ≈ 0.023 → mean 0.11 (Earth: 1)
-//   Mars    (R_H ≈ 0.007  AU): p ≈ 0.016 → mean 0.08 (Mars: 2 small)
-//   Jupiter (R_H ≈ 0.354  AU): p ≈ 0.60  → mean 3.00 (Jupiter: 4 Galileans, on the high end here)
-//   Saturn  (R_H ≈ 0.434  AU): p ≈ 0.60  → mean 3.00
-//   Uranus  (R_H ≈ 0.469  AU): p ≈ 0.60  → mean 3.00 (now curated to top 3)
-//   Neptune (R_H ≈ 0.771  AU): p ≈ 0.60  → mean 3.00
-//   Hot Jupiter at 0.05 AU (R_H ≈ 0.003): p ≈ 0.007 → mean 0.04 (stripped)
-//   Warm Jupiter at 1 AU   (R_H ≈ 0.032): p ≈ 0.073 → mean 0.37 (rare moons)
+// Sol-anchored means at PER_HILL=3.0, CAP=0.45 (mean = MAX × p):
+//   Mercury (R_H ≈ 0.0015 AU): p ≈ 0.005 → mean 0.02 (Mercury: 0)
+//   Earth   (R_H ≈ 0.010  AU): p ≈ 0.030 → mean 0.15 (Earth: 1)
+//   Mars    (R_H ≈ 0.007  AU): p ≈ 0.021 → mean 0.11 (Mars: 2 small)
+//   Jupiter (R_H ≈ 0.354  AU): p ≈ 0.45  → mean 2.25 (Jupiter: 4 Galileans, on the high end here)
+//   Saturn  (R_H ≈ 0.434  AU): p ≈ 0.45  → mean 2.25
+//   Uranus  (R_H ≈ 0.469  AU): p ≈ 0.45  → mean 2.25 (now curated to top 3)
+//   Neptune (R_H ≈ 0.771  AU): p ≈ 0.45  → mean 2.25
+//   Hot Jupiter at 0.05 AU (R_H ≈ 0.003): p ≈ 0.009 → mean 0.04 (stripped)
+//   Warm Jupiter at 1 AU   (R_H ≈ 0.032): p ≈ 0.096 → mean 0.48 (rare moons)
 //
-// CAP=0.60 → binomial(5, 0.60) shape is P(0)=1%, P(1)=8%, P(2)=23%,
-// P(3)=35%, P(4)=26%, P(5)=8%. Smooth peak at 3 with symmetric falloff
-// and only 8% at the cap, so gas giants vary across 1-5 moons as
-// designer-visible variety rather than always-saturated. The PER_HILL
-// slope keeps the migration-strip behavior emergent from physics — a
-// hot Jupiter's shrunk Hill sphere maps to p≈0.007, and binomial(5, 0.007)
-// rolls 0 moons 96% of the time. No separate migration-strip pass needed.
+// CAP=0.45 → binomial(5, 0.45) shape is P(0)=5%, P(1)=21%, P(2)=34%,
+// P(3)=28%, P(4)=11%, P(5)=2%. Peak at 2, gentle right tail, and only
+// 2% at the cap, so 5-moon gas giants read as a rare landmark rather
+// than routine. The PER_HILL slope keeps the migration-strip behavior
+// emergent from physics — a hot Jupiter's shrunk Hill sphere maps to
+// p≈0.009, and binomial(5, 0.009) rolls 0 moons 96% of the time. No
+// separate migration-strip pass needed.
 export const MOON_PROBABILITY_PER_HILL = 3.0;
-export const MOON_PROBABILITY_CAP      = 0.60;
+export const MOON_PROBABILITY_CAP      = 0.45;
 
 // Per-planet hard upper bound on moon count — the `n` in the
 // Binomial(n, p) sampler above. Setting it to 5 caps Saturn-class arcs
@@ -295,8 +295,8 @@ export const MOON_PROBABILITY_CAP      = 0.60;
 // colonization decision space tractable. A physically realistic bound
 // sits nearer 8 and preserves more of the gas-giant moon variety; the
 // gameplay tune trades that for legibility. Combined with `MOON_PROBABILITY_CAP =
-// 0.60`, the maximum mean moon count for the largest Hill spheres is
-// `5 × 0.60 = 3.0`, with a smooth bell across 0..5 rather than a
+// 0.45`, the maximum mean moon count for the largest Hill spheres is
+// `5 × 0.45 = 2.25`, with a smooth bell across 0..5 rather than a
 // pile-up at the cap.
 const MOON_COUNT_MAX_TUNE = 5;
 
