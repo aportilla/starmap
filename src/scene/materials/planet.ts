@@ -28,16 +28,24 @@ import { MAX_LIGHTS, BAYER4_GLSL, HASH_GLSL, RIM_GLOW_FOCUS, STAR_CRESCENT_LIGHT
 //      windSpeed, altitude, seed, condensate color) lives in the
 //      uCloudLayerData DataTexture, sampled per body by aBodyIndex;
 //      a deck with coverage ≤ 0 is skipped. Each deck is a single
-//      sphere-projected (lon, lat) worley sampler whose appearance is
-//      driven by per-deck windspeed:
-//        - low wind (Earth jet stream) — a `bandness` smoothstep near
-//          0, so cells stay cellular and hash on both axes: broken
-//          patchy decks.
-//        - high wind (Jupiter-class) — `bandness` near 1 stretches the
-//          east-west cell pitch and switches the per-cell color hash to
-//          latitude-only, so cells in the same lat track share a color
-//          and the strips read parallel to the equator. Banded giants
-//          (Jupiter / Saturn / Uranus / Neptune) and Venus.
+//      sphere-projected (lon, lat) worley sampler whose morphology rides
+//      a continuous per-deck windspeed spectrum (the `bandness`
+//      smoothstep):
+//        - low wind (terrestrial / ocean-moon) — bandness near 0: cells
+//          stay cellular but stretched ~4:1 east-west into wind-swept
+//          zonal streaks (CLOUD_LON_PX : CLOUD_LAT_PX), and a sparse
+//          field of vortex eyes (cloudSwirl) rotates those streaks into
+//          scattered cyclones while the calm bands between them stay the
+//          base pattern.
+//        - high wind (Jupiter-class) — bandness near 1 stretches the
+//          east-west cell pitch much further and switches the per-cell
+//          color hash to latitude-only, so cells in the same lat track
+//          share a color and the strips read parallel to the equator.
+//          The vortex swirl fades out by bandness, so banded giants
+//          (Jupiter / Saturn / Uranus / Neptune) and Venus stay straight.
+//      A 1-px-down drop shadow (CLOUD_SHADOW_*) then darkens the layer
+//      beneath each cloud's lower edge — the cloud mask reprojected one
+//      screen-px up and re-tested — a pixel-art over/under depth cue.
 //   3. **Haze** (when aAtmoScalars.x > 0, hazeOpacity) — uniform
 //      per-fragment lerp toward aHazeColor by hazeOpacity. Unified blend across bulk atm
 //      gases × pressure, Rayleigh scattering, formation-gated aerosol
@@ -893,6 +901,10 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // pairs still decorrelate, and 5 draws needed more pairs than 547/569
       // alone gave. The paint pass (crater interior + ray fill) re-derives a
       // crater's center, so it reuses SALT_CRATER_JITTER_X/_Y by design.
+      //
+      // cloudSwirl takes its three per-eye draws (jitter / spin / existence)
+      // off SALT_CLOUD_VORTEX via small fixed local +offsets rather than
+      // separate budget pairs — the same decorrelate-by-distinct-offset trick.
       const vec2 SALT_SURFACE_JITTER_A = vec2(13.0, 19.0);
       const vec2 SALT_SURFACE_JITTER_B = vec2(23.0, 29.0);
       const vec2 SALT_CONTINENT        = vec2(113.0, 127.0);
@@ -1735,7 +1747,29 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         }
         return sphPx + disp;
       }
-      vec3 cloudLayers(vec3 col, float lon, float lat, float vBodyV) {
+
+      // ── Cloud drop shadow ──
+      // A 1-px-down copy of the cloud silhouette, painted darker onto the
+      // layer beneath — a pixel-art over/under cue that reads the decks as
+      // floating above the surface. Cast in main(): a fragment with no cloud
+      // re-evaluates the WHOLE cloud mask at the screen position
+      // CLOUD_SHADOW_PX above it (reprojected through the sphere); if cloud
+      // renders there, this fragment is its shadow and the underlying color
+      // is multiplied down by CLOUD_SHADOW_DARKEN. Because the mask is the
+      // same cloudLayers() pass (dither + vortex swirl included), evaluated
+      // at the shifted fragment, the shadow is an EXACT copy of the rendered
+      // cloud shifted straight down — not an approximation.
+      //   CLOUD_SHADOW_PX     — downward shift in screen px.
+      //   CLOUD_SHADOW_DARKEN — multiplier on the shadowed underlying color.
+      const float CLOUD_SHADOW_PX     = 1.0;
+      const float CLOUD_SHADOW_DARKEN = 0.88;
+      // Composites the cloud decks over col and reports whether any deck
+      // painted at this fragment via cloudMask (1 = cloud, 0 = bare base) —
+      // the mask the drop-shadow pass samples one px up. fragXY drives the
+      // edge dither, passed in (not read from gl_FragCoord) so the shifted
+      // shadow sample dithers in its own screen cell, keeping the copy exact.
+      vec3 cloudLayers(vec3 col, float lon, float lat, float vBodyV, vec2 fragXY, out float cloudMask) {
+        cloudMask = 0.0;
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
           vec4 layer = texture2D(uCloudLayerData, vec2(layerU, vBodyV));
@@ -1780,17 +1814,18 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // own cell we are, and whether the neighbor would have fired.
           // The LAYER_SALT_* pairs fold layerSeed into the base cloud salts
           // so each deck's cells land on different positions.
+          vec2 saltA = vSeed * SALT_CLOUD_JITTER_A + layerSeed * LAYER_SALT_CLOUD_JIT_A;
+          vec2 saltB = vSeed * SALT_CLOUD_JITTER_B + layerSeed * LAYER_SALT_CLOUD_JIT_B;
+          vec2 saltE = vSeed * SALT_CLOUD_EXIST + layerSeed * LAYER_SALT_CLOUD_EXIST;
           float minD2, secondD2;
           vec2 winnerCell, secondCell;
-          worleyF1F2(cellId, cellFrac,
-                     vSeed * SALT_CLOUD_JITTER_A + layerSeed * LAYER_SALT_CLOUD_JIT_A,
-                     vSeed * SALT_CLOUD_JITTER_B + layerSeed * LAYER_SALT_CLOUD_JIT_B,
+          worleyF1F2(cellId, cellFrac, saltA, saltB,
                      winnerCell, secondCell, minD2, secondD2);
 
           // Existence gate — binary per-cell hash. Cells whose hash sits
           // below coverage paint the deck; above this they skip, revealing
           // the next-deeper deck (or surface / atmColumnColor beneath).
-          float existH = hash21(winnerCell + vSeed * SALT_CLOUD_EXIST + layerSeed * LAYER_SALT_CLOUD_EXIST);
+          float existH = hash21(winnerCell + saltE);
           if (existH >= coverage) continue;
 
           // Edge dither — two cases share one boundary-distance metric
@@ -1803,11 +1838,11 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // tighter cell-aspect axis to convert to env-pixels: in banded
           // cells the visible boundaries run along the lat-stretched axis,
           // so the lat dimension is the one we care about.
-          float existH2 = hash21(secondCell + vSeed * SALT_CLOUD_EXIST + layerSeed * LAYER_SALT_CLOUD_EXIST);
+          float existH2 = hash21(secondCell + saltE);
           float boundaryWorley = (sqrt(secondD2) - sqrt(minD2)) * 0.5;
           float boundaryPx = boundaryWorley * min(cellAspect.x, cellAspect.y);
           float t = clamp(boundaryPx / CLOUD_EDGE_DITHER_PX, 0.0, 1.0);
-          float b = bayer4(gl_FragCoord.xy);
+          float b = bayer4(fragXY);
 
           // ljCell decides which cell's BAND_LIGHTNESS_JITTER colors this
           // fragment. Defaults to F1; the firing/firing case below may
@@ -1851,6 +1886,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           vec3 tinted = mix(cloudCol, vHazeColor, hazeAbove);
 
           col = tinted;
+          cloudMask = 1.0;
         }
         return col;
       }
@@ -2063,7 +2099,28 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         // ── Cloud layers ── composite the stratified condensate decks over
         // the surface+haze base (or atm column on no-surface bodies). See
         // cloudLayers() for the wind→banding model + edge-dither cases.
-        col = cloudLayers(col, lon, lat, vBodyV);
+        float cloudMaskHere;
+        col = cloudLayers(col, lon, lat, vBodyV, gl_FragCoord.xy, cloudMaskHere);
+
+        // ── Cloud drop shadow ── a 1-px-down copy of the cloud silhouette
+        // darkening the layer beneath (see the cloud drop-shadow block). A
+        // bare fragment reprojects the sphere CLOUD_SHADOW_PX up-screen and
+        // re-runs the cloud mask there; if cloud renders at that shifted
+        // fragment, this one is its shadow. col already holds the bare base
+        // here (no deck painted), so the multiply lands on the surface/deck
+        // beneath. Skipped where cloud already covers — it overpaints anyway.
+        if (cloudMaskHere < 0.5) {
+          float lxsU = lxs + sT * CLOUD_SHADOW_PX;
+          float lysU = lys + cT * CLOUD_SHADOW_PX;
+          float nxsU = (lxsU / vRadius) * SPHERE_VISIBLE_FRAC;
+          float nysU = (lysU / vRadius) * SPHERE_VISIBLE_FRAC;
+          float nzsU = sqrt(max(0.0, 1.0 - nxsU * nxsU - nysU * nysU));
+          float latU = asin(nysU * POLE_COS + nzsU * POLE_SIN);
+          float lonU = atan(nxsU, nzsU * POLE_COS - nysU * POLE_SIN);
+          float cloudMaskAbove;
+          cloudLayers(col, lonU, latU, vBodyV, gl_FragCoord.xy + vec2(0.0, CLOUD_SHADOW_PX), cloudMaskAbove);
+          if (cloudMaskAbove > 0.5) col *= CLOUD_SHADOW_DARKEN;
+        }
 
         // ── Lighting pass ──
         // See the LIGHT_* constant block for the math + tuning rationale.
