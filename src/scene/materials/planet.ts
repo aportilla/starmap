@@ -431,11 +431,18 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // disc center. Cells live in sphere-projected (lon, lat) space the
       // same way SURFACE_PATCH_PX cells do, so cloud cells and surface
       // cells compress toward the limb together rather than the clouds
-      // floating in a flat plane over a globe. CLOUD_LON_PX > CLOUD_LAT_PX
-      // gives east-west stretch (zonal-flow direction) so silhouettes
-      // read as wind-swept streaks rather than axis-aligned grid squares.
-      const float CLOUD_LON_PX = 12.0;
-      const float CLOUD_LAT_PX = 5.0;
+      // floating in a flat plane over a globe. The ~4:1 east-west:north-
+      // south ratio (zonal-flow direction) elongates each firing cumulus
+      // cell into a wind-swept streak: at full coverage rents they read as
+      // broken horizontal dashes rather than round blobs, the natural look
+      // for a slow-wind terrestrial / ocean-moon deck (the splotch regime).
+      // These two pitches only govern the low-wind/patchy end — a banded
+      // deck (bandness → 1) overrides the lon pitch via bandedLonPx and the
+      // lat pitch via BAND1_LAT_PX in the cloud loop, so the gas giants are
+      // untouched by this ratio. Kept below BAND1_LON_PX so the patchy →
+      // banded lon handoff stays monotonic as wind rises.
+      const float CLOUD_LON_PX = 16.0;
+      const float CLOUD_LAT_PX = 4.0;
 
       // Env-pixel width of the Bayer-dither fringe at cloud cell edges
       // (consumed by the cloud-layer loop). Fragments inside a firing
@@ -914,6 +921,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       const vec2 LAYER_SALT_CLOUD_JIT_A = vec2(13.0, 17.0);
       const vec2 LAYER_SALT_CLOUD_JIT_B = vec2(19.0, 23.0);
       const vec2 LAYER_SALT_CLOUD_EXIST = vec2(29.0, 31.0);
+      const vec2 SALT_CLOUD_CURL       = vec2(1039.0, 1049.0);
+      const vec2 LAYER_SALT_CLOUD_CURL = vec2(37.0, 41.0);
       const float SALT_BAND_LIGHTNESS  = 67.0;
       const float LAYER_SALT_BAND      = 13.0;
 
@@ -1667,6 +1676,49 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       //     linear because real wind speeds span an order of
       //     magnitude across the gas giants and a linear curve
       //     leaves Jupiter under-stretched relative to its bands.
+
+      // ── Cloud curl-warp ──
+      // Domain-warp the cloud sampling coords along a divergence-free
+      // (curl) flow so the worley streaks bend into cyclonic spirals —
+      // the vortices Earth's weather shows from orbit. valueNoise is one
+      // smoothstep-interpolated octave of the sin-hash; cloudCurl returns
+      // the perpendicular gradient of that field (rot90 of grad), which is
+      // divergence-free, so advecting along it swirls the pattern without
+      // pumping cloud mass into or out of a region. The warp is applied to
+      // the sphere-surface position (px) BEFORE the divide into worley
+      // cells, so every fragment still floors into exactly one cell — the
+      // spiral lives in WHERE the crisp cell boundaries land, not in a soft
+      // blur, and the pixel-crisp aesthetic holds. Warping in px (then
+      // dividing by cellAspect) keeps the vortices round rather than
+      // inheriting the cells' zonal anisotropy.
+      //   CLOUD_CURL_SCALE    — flow-field frequency (1/px); smaller = a
+      //                         few big vortices, larger = many small ones.
+      //   CLOUD_CURL_STRENGTH — warp displacement in px; how tightly the
+      //                         streaks wind around each vortex.
+      // Scaled by (1 - bandness) at the call site so it only curls the slow-
+      // wind patchy decks; the gas giants' clean zonal bands (bandness → 1)
+      // stay ruler-straight. The whole warp is also guarded behind that
+      // factor so a fully-banded deck pays none of the noise cost.
+      const float CLOUD_CURL_SCALE    = 0.16;
+      const float CLOUD_CURL_STRENGTH = 2.0;
+      float valueNoise(vec2 x, vec2 salt) {
+        vec2 i = floor(x);
+        vec2 f = fract(x);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = hash21(i + salt);
+        float b = hash21(i + vec2(1.0, 0.0) + salt);
+        float c = hash21(i + vec2(0.0, 1.0) + salt);
+        float d = hash21(i + vec2(1.0, 1.0) + salt);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      vec2 cloudCurl(vec2 q, vec2 salt) {
+        // Perpendicular gradient (central differences) of the noise
+        // potential = its 2D curl. eps is in the same units as q.
+        const float e = 0.15;
+        float dndx = (valueNoise(q + vec2(e, 0.0), salt) - valueNoise(q - vec2(e, 0.0), salt)) / (2.0 * e);
+        float dndy = (valueNoise(q + vec2(0.0, e), salt) - valueNoise(q - vec2(0.0, e), salt)) / (2.0 * e);
+        return vec2(dndy, -dndx);
+      }
       vec3 cloudLayers(vec3 col, float lon, float lat, float vBodyV) {
         for (int li = 0; li < ${MAX_CLOUD_LAYERS}; li++) {
           float layerU = (float(li) + 0.5) / float(${BODY_TEXTURE_WIDTH});
@@ -1692,7 +1744,18 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             lonPx,
             mix(CLOUD_LAT_PX, BAND1_LAT_PX, bandness)
           );
-          vec2 p = vec2(lon, lat) * vRadius / cellAspect;
+
+          // Curl-warp the sphere-surface position (px) into cyclonic
+          // spirals, faded out as the deck bands up so giants stay
+          // straight (see the cloud curl-warp block). Round in px-space,
+          // then divided into anisotropic worley cells below.
+          vec2 sph = vec2(lon, lat) * vRadius;
+          float curlAmt = CLOUD_CURL_STRENGTH * (1.0 - bandness);
+          if (curlAmt > 0.0) {
+            vec2 curlSalt = vSeed * SALT_CLOUD_CURL + layerSeed * LAYER_SALT_CLOUD_CURL;
+            sph += cloudCurl(sph * CLOUD_CURL_SCALE, curlSalt) * curlAmt;
+          }
+          vec2 p = sph / cellAspect;
           vec2 cellId = floor(p);
           vec2 cellFrac = p - cellId;
           // Track both nearest (F1) and second-nearest (F2) jittered cell
