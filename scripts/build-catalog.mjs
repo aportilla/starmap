@@ -519,12 +519,11 @@ function buildClusters(stars) {
 
 const BODIES_FILE = 'bodies.csv';
 const BODY_LAYERS_FILE = 'body_layers.csv';
-const WORLD_CLASSES = new Set([
-  // Terrestrial
-  'rocky', 'solid_giant', 'desert', 'ocean', 'ice', 'carbon',
-  'iron', 'lava', 'magma_ocean', 'chthonian',
-  // Gaseous
-  'gas_dwarf', 'hycean', 'helium', 'ice_giant', 'gas_giant',
+// Liquid species shared by both the surface-pool and subsurface-ocean
+// columns: enum-validated so an authored typo is a build error rather than
+// a silently-wrong string reaching the renderer.
+const SURFACE_LIQUID_SPECIES = new Set([
+  'water', 'hydrocarbon', 'ammonia_water', 'ammonia', 'nitrogen', 'sulfur',
 ]);
 const BODY_KINDS = new Set(['planet', 'moon', 'belt', 'ring']);
 const BODY_SOURCES = new Set(['catalog', 'procgen']);
@@ -583,7 +582,14 @@ const BODY_NUMERIC_FIELDS = [
   ['inner_planet_radii',     'innerPlanetRadii'],
   ['outer_planet_radii',     'outerPlanetRadii'],
   ['largest_body_km',        'largestBodyKm'],
+  ['surface_liquid_fraction', 'surfaceLiquidFraction'],
+  ['salinity',                'salinity'],
 ];
+// Numeric fields constrained to [0,1] — checked after the generic numeric
+// loop. Kept narrow so unrelated numerics (masses, temps, AU) stay unbounded.
+const BODY_UNIT_FRACTION_FIELDS = new Set([
+  'surface_liquid_fraction', 'salinity',
+]);
 const BODY_STRING_FIELDS = [
   ['atm1', 'atm1'],
   ['atm2', 'atm2'],
@@ -613,7 +619,8 @@ function parseCsvBodies(text, label) {
     formal_name: colIdx('formal_name'),
     name: colIdx('name'),
     source: colIdx('source'),
-    world_class: colIdx('world_class'),
+    surface_liquid_species: colIdx('surface_liquid_species'),
+    subsurface_ocean_species: colIdx('subsurface_ocean_species'),
     belt_class: colIdx('belt_class'),
     population_model: colIdx('population_model'),
     shepherd_id: colIdx('shepherd_id'),
@@ -644,9 +651,16 @@ function parseCsvBodies(text, label) {
       return raw;
     };
 
-    const worldClass = trackedCell('world_class', 'worldClass');
-    if (worldClass !== null && !WORLD_CLASSES.has(worldClass)) {
-      throw new Error(`${label}: ${id} invalid world_class=${worldClass}`);
+    // Both liquid-species columns are enum-validated (not folded into
+    // BODY_STRING_FIELDS, which has no enum check) so blank→_unknowns,
+    // 'n/a'→null, and a typo→build error.
+    const surfaceLiquidSpecies = trackedCell('surface_liquid_species', 'surfaceLiquidSpecies');
+    if (surfaceLiquidSpecies !== null && !SURFACE_LIQUID_SPECIES.has(surfaceLiquidSpecies)) {
+      throw new Error(`${label}: ${id} invalid surface_liquid_species=${surfaceLiquidSpecies}`);
+    }
+    const subsurfaceOceanSpecies = trackedCell('subsurface_ocean_species', 'subsurfaceOceanSpecies');
+    if (subsurfaceOceanSpecies !== null && !SURFACE_LIQUID_SPECIES.has(subsurfaceOceanSpecies)) {
+      throw new Error(`${label}: ${id} invalid subsurface_ocean_species=${subsurfaceOceanSpecies}`);
     }
     // Vestigial columns: each must read blank or 'n/a'. trackedCell is
     // called in table order so the blank→unknowns bookkeeping is
@@ -679,7 +693,8 @@ function parseCsvBodies(text, label) {
       source,
       hostStarIdx: null,
       hostBodyIdx: null,
-      worldClass,
+      surfaceLiquidSpecies,
+      subsurfaceOceanSpecies,
       shepherdId,
       shepherdBodyIdx: null,
       biosphereSurfaceImpact: null,
@@ -696,6 +711,11 @@ function parseCsvBodies(text, label) {
         continue;
       }
       body[jsName] = n;
+      // Fractions/salinity are physical ratios; an out-of-range authored
+      // value is a data error, not a value the renderer should clamp.
+      if (BODY_UNIT_FRACTION_FIELDS.has(csvName) && (n < 0 || n > 1)) {
+        throw new Error(`${label}: ${id} ${csvName} out of range [0,1]: ${n}`);
+      }
     }
     for (const [csvName, jsName] of BODY_STRING_FIELDS) {
       body[jsName] = trackedCell(csvName, jsName);
@@ -917,7 +937,7 @@ function attachBodies(stars, rawBodies) {
 // imaging companions whose mass is too poorly constrained to record).
 // Without this pass `radiusFromMass(null)` returns null, the Filler's
 // terrestrial branch needs T which needs S which needs mass for pressure,
-// and the body cascades to a featureless gray disc with `worldClass=null`.
+// and the body cascades to a featureless gray disc with no settled physics.
 // Runs ahead of the moon + ring backfill so generateMoons / generateRing
 // see populated anchors. Curated systems (Sol) bypass this for the same
 // reason they bypass moon backfill — their CSV is authoritative. Mutates the
@@ -966,12 +986,11 @@ function synthesizePartialAnchors(rawBodies, starById) {
 // satellite signals), so without this pass every catalog planet would
 // surface moonless and ringless in-game, contradicting the catalog-is-
 // incomplete bias the rest of the procgen pipeline assumes. For each catalog
-// planet that arrived with no moons / ring in the CSV, derive a transient
-// worldClass + anchors from its mass and orbital context and run the
-// Architect's generators (the Filler writes the planet's own
-// worldClass/temp/pressure authoritatively a step later — the class here is
-// just a moon-count bucket). Curated systems (Sol today) are exempt: their
-// empty moon/ring lists are the catalog's "really none," not "we don't know."
+// planet that arrived with no moons / ring in the CSV, backfill its mass /
+// radius anchors from its orbital context and run the Architect's generators
+// (the Filler settles the planet's own temp/pressure/surface authoritatively
+// a step later). Curated systems (Sol today) are exempt: their empty
+// moon/ring lists are the catalog's "really none," not "we don't know."
 // Reads rawBodies (and may backfill planet.radiusEarth in place); returns the
 // new moon + ring bodies to append.
 function backfillMoonsAndRings(rawBodies, starById) {

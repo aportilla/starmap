@@ -261,8 +261,9 @@ const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'
 // The Filler will derive these from anchors + physics. Listing here so the
 // Architect's output declares its dependencies cleanly to the next layer.
 const FILLER_TARGET_FIELDS = [
-  'worldClass', 'avgSurfaceTempK', 'surfaceTempMinK', 'surfaceTempMaxK',
+  'avgSurfaceTempK', 'surfaceTempMinK', 'surfaceTempMaxK',
   'waterFraction', 'iceFraction', 'surfaceAge',
+  'salinity', 'surfaceLiquidFraction', 'surfaceLiquidSpecies', 'subsurfaceOceanSpecies',
   'magneticFieldGauss', 'tectonicActivity',
   'surfacePressureBar',
   'atm1', 'atm1Frac', 'atm2', 'atm2Frac', 'atm3', 'atm3Frac',
@@ -284,7 +285,6 @@ function makeBody(props) {
   const base = {
     hostStarIdx: null,
     hostBodyIdx: null,
-    worldClass: null,
     formationAu: null,
     bulkWaterFraction: null,
     bulkMetalFraction: null,
@@ -298,6 +298,8 @@ function makeBody(props) {
     shepherdBodyIdx: null,
     avgSurfaceTempK: null, surfaceTempMinK: null, surfaceTempMaxK: null,
     waterFraction: null, iceFraction: null, surfaceAge: null,
+    salinity: null, surfaceLiquidFraction: null,
+    surfaceLiquidSpecies: null, subsurfaceOceanSpecies: null,
     magneticFieldGauss: null, tectonicActivity: null,
     surfacePressureBar: null,
     atm1: null, atm1Frac: null, atm2: null, atm2Frac: null, atm3: null, atm3Frac: null,

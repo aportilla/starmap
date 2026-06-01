@@ -13,6 +13,7 @@ import {
   stratosphericHazeStrengthFor,
 } from '../color-science';
 import { atmGasPairs, dustColorFor, weightedColorBlend } from './shared';
+import { classifyBody } from '../../../../scripts/lib/body-archetype.mjs';
 
 // Outward rim width buckets for surface bodies — integer pixels of
 // atmospheric halo extending INTO SPACE beyond the disc edge. Driven
@@ -52,13 +53,16 @@ export const RIM_PRESENCE_FLOOR_PX = 1;
 // to T and g). No-surface bodies are H₂/He-dominated (µ ≈ 2.3, ratio
 // ≈ 13); helium worlds sit between at µ ≈ 4. Without this correction
 // gas giants would underestimate their halo by ~13× because T/g alone
-// puts Jupiter at 0.23 (well below Earth).
-const MU_FACTOR_BY_CLASS: Readonly<Record<string, number>> = {
-  gas_giant: 13,
-  ice_giant: 13,
-  gas_dwarf: 13,
-  hycean:    13,
-  helium:     7,
+// puts Jupiter at 0.23 (well below Earth). Keyed by archetype so it
+// stays a clean per-type lookup; terrestrials are absent and fall
+// through to 1.
+const MU_FACTOR_BY_ARCHETYPE: Readonly<Record<string, number>> = {
+  gas_giant:   13,
+  hot_jupiter: 13,
+  ice_giant:   13,
+  sub_neptune: 13,
+  hycean:      13,
+  helium:       7,
 };
 
 // Unified haze contributor list — one entry per visible atmospheric
@@ -270,7 +274,7 @@ function scaleHeightFactor(body: Body): number {
   if (t === null || m === null || r === null || r <= 0) return 1;
   const gRel = m / (r * r);
   if (gRel <= 0) return 1;
-  const muMul = body.worldClass !== null ? (MU_FACTOR_BY_CLASS[body.worldClass] ?? 1) : 1;
+  const muMul = MU_FACTOR_BY_ARCHETYPE[classifyBody(body)] ?? 1;
   return (t / 288) / gRel * muMul;
 }
 

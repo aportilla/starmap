@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { insolation } from './lib/astrophysics.mjs';
+import { classifyBody } from './lib/body-archetype.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CATALOG_PATH = resolve(REPO_ROOT, 'src/data/catalog.generated.json');
@@ -55,6 +56,23 @@ function insolationFor(body) {
   }
   if (!star || star.mass == null) return null;
   return insolation(star.mass, body.semiMajorAu);
+}
+
+// classifyBody's archetype enum is richer than the old worldClass set, so a
+// gate that meant "any gaseous envelope world" maps onto several archetypes.
+// Old {gas_giant, ice_giant, gas_dwarf, hycean, helium} → these (gas_giant
+// splits into gas_giant/hot_jupiter; gas_dwarf became sub_neptune).
+const GASEOUS_ARCHETYPES = new Set([
+  'gas_giant', 'hot_jupiter', 'ice_giant', 'sub_neptune', 'hycean', 'helium',
+]);
+// Hosts a moon system can hang off: the old {gas_giant, ice_giant, gas_dwarf,
+// solid_giant} → gaseous giants plus super_earth (the old solid_giant).
+const GIANT_HOST_ARCHETYPES = new Set([
+  'gas_giant', 'hot_jupiter', 'ice_giant', 'sub_neptune', 'super_earth',
+]);
+
+function arch(b) {
+  return classifyBody(b);
 }
 
 function hostStarOf(body) {
@@ -119,7 +137,7 @@ const rings   = bodies.filter(b => b.kind === 'ring');
 const procgenPlanets = planets.filter(b => !isCurated(b));
 const procgenMoons   = moons.filter(b => !isCurated(b));
 const allTerrestrialish = [...procgenPlanets, ...procgenMoons]
-  .filter(b => b.worldClass && !['gas_giant','ice_giant','gas_dwarf','hycean','helium'].includes(b.worldClass));
+  .filter(b => !GASEOUS_ARCHETYPES.has(arch(b)));
 
 console.log('VARIETY AUDIT — what cool things is procgen surfacing?');
 console.log('catalog: ' + CATALOG_PATH);
@@ -140,12 +158,12 @@ console.log('  -----------------------------------------+-------+-------  ------
 
 // --- Habitability layer ---
 
-// Carbon-aqueous habitable (Earth-class). Loose definition: ocean class
-// OR (rocky-bracket + 250K < T < 320K + P >= 0.1 bar). The current
-// procgen pipeline produces "ocean" bodies even when T=363K with steam
-// atmospheres, so we don't trust worldClass='ocean' alone; gate on T+P.
+// Carbon-aqueous habitable (Earth-class). Loose definition: terrestrial
+// bracket + 250K < T < 320K + P >= 0.1 bar. The classifier produces
+// 'ocean'/'gaian' archetypes even when T runs hot with a steam atmosphere,
+// so we don't trust the archetype alone; gate on T+P.
 const habitableEarthish = procgenPlanets.filter(b => {
-  if (!b.worldClass || ['gas_giant','ice_giant','gas_dwarf','hycean','helium'].includes(b.worldClass)) return false;
+  if (GASEOUS_ARCHETYPES.has(arch(b))) return false;
   if (b.radiusEarth == null || b.radiusEarth > 2) return false;
   const T = b.avgSurfaceTempK;
   const P = b.surfacePressureBar;
@@ -155,19 +173,38 @@ const habitableEarthish = procgenPlanets.filter(b => {
 row('Earth-like habitables (T 250-320K, P 0.1-50bar)', habitableEarthish,
     procgenPlanets.length, topExamples(habitableEarthish, b => b.massEarth));
 
-// Hycean — already a worldClass.
-const hyceans = procgenPlanets.filter(b => b.worldClass === 'hycean');
+// Hycean — its own archetype.
+const hyceans = procgenPlanets.filter(b => arch(b) === 'hycean');
 row('Hycean worlds (H2 atm, water-rich)', hyceans,
     procgenPlanets.length, topExamples(hyceans, b => b.massEarth));
 
-// Surface ocean (procgen "ocean" class — note: temperature is loose;
-// many lean hot).
-const oceanClass = procgenPlanets.filter(b => b.worldClass === 'ocean');
+// Gaian — living temperate water ocean (Earth). A first-class archetype
+// promoted out of the old 'ocean' worldClass by complex biosphere + temp band.
+const gaians = procgenPlanets.filter(b => arch(b) === 'gaian');
+row('Gaian worlds (living temperate ocean)', gaians,
+    procgenPlanets.length, topExamples(gaians, b => b.massEarth));
+
+// Surface ocean (the 'ocean' archetype — a full water ocean that isn't living
+// or temperate enough to read Gaian. Temperature is loose; many lean hot).
+const oceanClass = procgenPlanets.filter(b => arch(b) === 'ocean');
 const oceanTemperate = oceanClass.filter(b => (b.avgSurfaceTempK ?? 0) < 330);
-row('"Ocean" worldClass (any T)', oceanClass,
+row('Ocean worlds (any T)', oceanClass,
     procgenPlanets.length, topExamples(oceanClass, b => b.massEarth));
 row('  └── temperate (T < 330K)', oceanTemperate,
     procgenPlanets.length, topExamples(oceanTemperate, b => b.massEarth));
+
+// Exotic-solvent seas — iconic archetypes promoted out of the base classes
+// by their surface-liquid species. Each is a recognizable SF/solar-system
+// trope the player can hunt for.
+const ammoniaSeas = procgenPlanets.filter(b => arch(b) === 'ammonia_sea');
+row('Ammonia-sea worlds', ammoniaSeas,
+    procgenPlanets.length, topExamples(ammoniaSeas, b => b.massEarth));
+const glacialSeas = procgenPlanets.filter(b => arch(b) === 'glacial_sea');
+row('Glacial-sea worlds (liquid N2, Triton-warm)', glacialSeas,
+    procgenPlanets.length, topExamples(glacialSeas, b => b.massEarth));
+const subglacial = [...procgenPlanets, ...procgenMoons].filter(b => arch(b) === 'subglacial_ocean');
+row('Subglacial-ocean worlds (Europa, frozen surface)', subglacial,
+    procgenPlanets.length + procgenMoons.length, topExamples(subglacial, b => b.bulkWaterFraction));
 
 // Ocean moons of gas giants (Europa-class — subsurface + ice shell).
 // Use bulkWater (≥0.3) + cold T (<200K) + ice cover OR moon-of-giant
@@ -175,7 +212,7 @@ row('  └── temperate (T < 330K)', oceanTemperate,
 const oceanMoonsEuropa = procgenMoons.filter(m => {
   const host = hostPlanetOf(m);
   if (!host) return false;
-  const isHostGiant = ['gas_giant','ice_giant','gas_dwarf','solid_giant'].includes(host.worldClass);
+  const isHostGiant = GIANT_HOST_ARCHETYPES.has(arch(host));
   return isHostGiant
       && (m.bulkWaterFraction ?? 0) >= 0.2
       && (m.avgSurfaceTempK ?? 999) < 200
@@ -203,7 +240,7 @@ row('Europa-class ice-shell ocean moons', oceanMoonsEuropa,
 const habitableMoonsOfGiants = procgenMoons.filter(m => {
   const host = hostPlanetOf(m);
   if (!host) return false;
-  if (!['gas_giant','ice_giant','gas_dwarf','solid_giant'].includes(host.worldClass)) return false;
+  if (!GIANT_HOST_ARCHETYPES.has(arch(host))) return false;
   if (m.radiusEarth == null || m.radiusEarth < 0.3) return false;
   const P = m.surfacePressureBar;
   if (P == null || P < 0.05) return false;
@@ -227,90 +264,94 @@ row('Habitable moons of giants (Endor-class)', habitableMoonsOfGiants,
 // Super-Earth — m≥3 M⊕, terrestrial bracket.
 const superEarths = procgenPlanets.filter(b =>
   (b.massEarth ?? 0) >= 3 && (b.radiusEarth ?? 0) < 3 &&
-  b.worldClass && !['gas_giant','ice_giant','gas_dwarf','hycean'].includes(b.worldClass));
+  !GASEOUS_ARCHETYPES.has(arch(b)));
 row('Super-Earths (m≥3 M⊕, R<3 R⊕)', superEarths,
     procgenPlanets.length, topExamples(superEarths, b => b.massEarth));
 
-// Mega-Earth — m≥5 and rocky/ocean class (Kepler-10c-class).
+// Mega-Earth — m≥5 and a rocky/ocean-ish solid archetype (Kepler-10c-class).
+// Old worldClass {rocky, ocean, desert, iron, solid_giant} expands across the
+// iconic ocean promotions (gaian/ammonia_sea/glacial_sea) + super_earth.
+const MEGA_EARTH_ARCHETYPES = new Set([
+  'rocky', 'ocean', 'gaian', 'ammonia_sea', 'glacial_sea', 'desert', 'iron', 'super_earth',
+]);
 const megaEarths = procgenPlanets.filter(b =>
-  (b.massEarth ?? 0) >= 5 &&
-  ['rocky','ocean','desert','iron','solid_giant'].includes(b.worldClass));
+  (b.massEarth ?? 0) >= 5 && MEGA_EARTH_ARCHETYPES.has(arch(b)));
 row('Mega-Earths (m≥5, rocky/ocean class)', megaEarths,
     procgenPlanets.length, topExamples(megaEarths, b => b.massEarth));
 
 // Iron / Mercury-class.
-const ironWorlds = procgenPlanets.filter(b => b.worldClass === 'iron');
+const ironWorlds = procgenPlanets.filter(b => arch(b) === 'iron');
 row('Iron worlds (Mercury-class)', ironWorlds,
     procgenPlanets.length, topExamples(ironWorlds, b => b.massEarth));
 
 // Lava / molten surface.
-const lavaWorlds = procgenPlanets.filter(b => b.worldClass === 'lava');
+const lavaWorlds = procgenPlanets.filter(b => arch(b) === 'lava');
 row('Lava worlds (surface > 1000K)', lavaWorlds,
     procgenPlanets.length, topExamples(lavaWorlds, b => b.avgSurfaceTempK));
 
-// Magma ocean — partial melt.
-const magmaWorlds = procgenPlanets.filter(b => b.worldClass === 'magma_ocean');
-row('Magma-ocean worlds (partial melt)', magmaWorlds,
+// Magma ocean — partial melt. Old magma_ocean worldClass split into the
+// exposed-melt 'magma_ocean' + crusted 'volcanic' archetypes.
+const magmaWorlds = procgenPlanets.filter(b => arch(b) === 'magma_ocean');
+row('Magma-ocean worlds (exposed melt)', magmaWorlds,
     procgenPlanets.length, topExamples(magmaWorlds, b => b.avgSurfaceTempK));
+const volcanicWorlds = procgenPlanets.filter(b => arch(b) === 'volcanic');
+row('Volcanic worlds (crusted, active)', volcanicWorlds,
+    procgenPlanets.length, topExamples(volcanicWorlds, b => b.avgSurfaceTempK));
 
-// Chthonian — stripped giant core (currently no derived worldClass for this).
-// Proxy: bulkMetalFraction ≥ 0.4 + insolation ≥ 100 + mass ≥ 2.
-const chthonian = procgenPlanets.filter(b => {
-  if ((b.bulkMetalFraction ?? 0) < 0.4) return false;
-  if ((b.massEarth ?? 0) < 2) return false;
-  const S = insolationFor(b);
-  return S != null && S >= 100;
-});
-row('Chthonian (stripped giant core proxy)', chthonian,
+// Brimstone — molten-sulfur seas (Io-class). A first-class archetype now,
+// promoted out of the old desert/magma_ocean buckets by sulfur surface liquid.
+const brimstone = procgenPlanets.filter(b => arch(b) === 'brimstone');
+row('Brimstone worlds (molten-sulfur seas, Io-class)', brimstone,
+    procgenPlanets.length, topExamples(brimstone, b => b.avgSurfaceTempK));
+
+// Chthonian — stripped giant core, now its own archetype.
+const chthonian = procgenPlanets.filter(b => arch(b) === 'chthonian');
+row('Chthonian worlds (stripped giant core)', chthonian,
     procgenPlanets.length, topExamples(chthonian, b => b.massEarth));
 
-// Carbon worlds — currently not generated explicitly. Look for cryogenic
-// sulfur / sulfur-coated bodies?
-const sulfurWorlds = procgenPlanets.filter(b =>
-  (b.atm1 === 'SO2' || b.atm2 === 'SO2' || b.atm3 === 'SO2') &&
-  ['rocky','desert','iron'].includes(b.worldClass) &&
-  (b.avgSurfaceTempK ?? 0) > 350);
-row('Io-class (hot rocky + SO2 atm)', sulfurWorlds,
-    procgenPlanets.length, topExamples(sulfurWorlds, b => b.avgSurfaceTempK));
+// Tholin — hydrocarbon lakes / thick organic smog (Titan). A first-class
+// archetype promoted by hydrocarbon surface liquid or thick THOLIN haze.
+const tholin = [...procgenPlanets, ...procgenMoons].filter(b => arch(b) === 'tholin');
+row('Tholin worlds (hydrocarbon lakes, Titan-class)', tholin,
+    procgenPlanets.length + procgenMoons.length, topExamples(tholin, b => b.surfacePressureBar));
 
-// Methane worlds — Titan-class (cold rocky + CH4 atm).
-const titanClass = [...procgenPlanets, ...procgenMoons].filter(b => {
-  if (!b.worldClass || ['gas_giant','ice_giant','gas_dwarf','hycean'].includes(b.worldClass)) return false;
-  const hasCH4 = b.atm1 === 'CH4' || b.atm2 === 'CH4' || b.atm3 === 'CH4';
-  return hasCH4 && (b.avgSurfaceTempK ?? 999) < 150 && (b.surfacePressureBar ?? 0) > 0.1;
-});
-row('Titan-class (cold + CH4 atm + thick air)', titanClass,
-    procgenPlanets.length + procgenMoons.length, topExamples(titanClass, b => b.surfacePressureBar));
+// Frostbound — volatile-ice-dominated (Pluto/Triton/Eris). The old 'carbon'
+// worldClass survives under this flavour name.
+const frostbound = procgenPlanets.filter(b => arch(b) === 'frostbound');
+row('Frostbound worlds (Pluto/Triton-class)', frostbound,
+    procgenPlanets.length, topExamples(frostbound, b => b.massEarth));
 
-// Ice / globally frozen (water-ice dominant).
-const iceWorlds = procgenPlanets.filter(b => b.worldClass === 'ice');
-row('Ice worlds (Callisto-class water ice)', iceWorlds,
-    procgenPlanets.length, topExamples(iceWorlds, b => b.massEarth));
-
-// Carbon — methane/N2-frost-dominated (Pluto/Triton/Eris).
-const carbonWorlds = procgenPlanets.filter(b => b.worldClass === 'carbon');
-row('Carbon worlds (Pluto/Triton-class)', carbonWorlds,
-    procgenPlanets.length, topExamples(carbonWorlds, b => b.massEarth));
+// Glacial — globally frozen water-ice (Callisto-class). Old 'ice' worldClass
+// maps to {glacial, subglacial_ocean}; subglacial is reported above.
+const glacialWorlds = procgenPlanets.filter(b => arch(b) === 'glacial');
+row('Glacial worlds (Callisto-class water ice)', glacialWorlds,
+    procgenPlanets.length, topExamples(glacialWorlds, b => b.massEarth));
 
 // Helium-dominant (post-stripped sub-Neptune).
-const heliumWorlds = procgenPlanets.filter(b => b.worldClass === 'helium' || (b.atm1 === 'He' && (b.atm1Frac ?? 0) > 0.5));
+const heliumWorlds = procgenPlanets.filter(b => arch(b) === 'helium' || (b.atm1 === 'He' && (b.atm1Frac ?? 0) > 0.5));
 row('Helium-dominant atmospheres', heliumWorlds,
     procgenPlanets.length, topExamples(heliumWorlds, b => b.massEarth));
 
 // --- Gas-giant subtypes ---
+//
+// "gas giant" here means the Jupiter-radius bracket regardless of temperature,
+// so it spans both the gas_giant and hot_jupiter archetypes (the classifier
+// promotes T≥700K gas giants to hot_jupiter). The S-band split below is the
+// independent insolation cut the report cares about.
+const GAS_GIANT_ARCHETYPES = new Set(['gas_giant', 'hot_jupiter']);
 
-// Hot Jupiter — gas_giant + S > 100.
+// Hot Jupiter — gas giant + S > 100.
 const hotJupiters = procgenPlanets.filter(b => {
-  if (b.worldClass !== 'gas_giant') return false;
+  if (!GAS_GIANT_ARCHETYPES.has(arch(b))) return false;
   const S = insolationFor(b);
   return S != null && S >= 100;
 });
 row('Hot Jupiters (gas giant, S ≥ 100)', hotJupiters,
     procgenPlanets.length, topExamples(hotJupiters, b => b.massEarth));
 
-// Warm Jupiter — gas_giant + 10 < S < 100.
+// Warm Jupiter — gas giant + 10 < S < 100.
 const warmJupiters = procgenPlanets.filter(b => {
-  if (b.worldClass !== 'gas_giant') return false;
+  if (!GAS_GIANT_ARCHETYPES.has(arch(b))) return false;
   const S = insolationFor(b);
   return S != null && S >= 1 && S < 100;
 });
@@ -319,7 +360,7 @@ row('Warm Jupiters (S 1-100)', warmJupiters,
 
 // Cold Jupiter — Sol-Jupiter analog.
 const coldJupiters = procgenPlanets.filter(b => {
-  if (b.worldClass !== 'gas_giant') return false;
+  if (!GAS_GIANT_ARCHETYPES.has(arch(b))) return false;
   const S = insolationFor(b);
   return S != null && S < 0.1;
 });
@@ -327,7 +368,7 @@ row('Cold Jupiters (gas giant, S < 0.1)', coldJupiters,
     procgenPlanets.length, topExamples(coldJupiters, b => b.massEarth));
 
 // Ice giants — Uranus/Neptune analogs.
-const iceGiants = procgenPlanets.filter(b => b.worldClass === 'ice_giant');
+const iceGiants = procgenPlanets.filter(b => arch(b) === 'ice_giant');
 row('Ice giants (Uranus/Neptune-class)', iceGiants,
     procgenPlanets.length, topExamples(iceGiants, b => b.massEarth));
 
@@ -343,26 +384,26 @@ console.log('  -----------------------------------------+-------+-------  ------
 const ringedHostPlanets = rings.filter(r => !isCurated(r))
   .map(r => bodies[r.hostBodyIdx])
   .filter(Boolean);
-const ringedGasGiants = ringedHostPlanets.filter(p => p.worldClass === 'gas_giant');
+const ringedGasGiants = ringedHostPlanets.filter(p => GAS_GIANT_ARCHETYPES.has(arch(p)));
 row('Ringed gas giants', ringedGasGiants,
-    procgenPlanets.filter(b => b.worldClass === 'gas_giant').length,
+    procgenPlanets.filter(b => GAS_GIANT_ARCHETYPES.has(arch(b))).length,
     topExamples(ringedGasGiants, p => p.radiusEarth));
 
 // Ringed ice giants.
-const ringedIceGiants = ringedHostPlanets.filter(p => p.worldClass === 'ice_giant');
+const ringedIceGiants = ringedHostPlanets.filter(p => arch(p) === 'ice_giant');
 row('Ringed ice giants', ringedIceGiants,
-    procgenPlanets.filter(b => b.worldClass === 'ice_giant').length,
+    procgenPlanets.filter(b => arch(b) === 'ice_giant').length,
     topExamples(ringedIceGiants, p => p.radiusEarth));
 
 // Ringed terrestrials.
 const ringedTerrestrials = ringedHostPlanets.filter(p =>
-  !['gas_giant','ice_giant','gas_dwarf','hycean','helium'].includes(p.worldClass));
+  !GASEOUS_ARCHETYPES.has(arch(p)));
 row('Ringed terrestrials (any class)', ringedTerrestrials,
     procgenPlanets.length, topExamples(ringedTerrestrials, p => p.radiusEarth));
 
 // Ringed HABITABLE worlds — the iconic SF beat.
 const ringedHabitables = ringedHostPlanets.filter(p => {
-  if (!p.worldClass || ['gas_giant','ice_giant','gas_dwarf','hycean'].includes(p.worldClass)) return false;
+  if (GASEOUS_ARCHETYPES.has(arch(p))) return false;
   if ((p.radiusEarth ?? 0) > 2) return false;
   const T = p.avgSurfaceTempK, P = p.surfacePressureBar;
   return T != null && T > 250 && T < 320 && P != null && P >= 0.1 && P < 50
@@ -401,7 +442,8 @@ row('Moons with thick atms (P ≥ 0.5 bar)', thickAtmMoons,
 const tidalHotMoons = procgenMoons.filter(m => {
   const host = hostPlanetOf(m);
   if (!host) return false;
-  if (!['gas_giant','ice_giant'].includes(host.worldClass)) return false;
+  const ha = arch(host);
+  if (!GAS_GIANT_ARCHETYPES.has(ha) && ha !== 'ice_giant') return false;
   return (m.eccentricity ?? 0) > 0.01 && (m.avgSurfaceTempK ?? 0) > 200
       && (m.tectonicActivity ?? 0) > 0.5;
 });
@@ -431,7 +473,8 @@ row('  └── retrograde (>90°)', retrograde,
 
 // Very-cold-orbit gas giant (extreme cold).
 const deepColdGiants = procgenPlanets.filter(b => {
-  if (b.worldClass !== 'gas_giant' && b.worldClass !== 'ice_giant') return false;
+  const a = arch(b);
+  if (!GAS_GIANT_ARCHETYPES.has(a) && a !== 'ice_giant') return false;
   const S = insolationFor(b);
   return S != null && S < 0.001;
 });
@@ -501,14 +544,14 @@ const clusterStats = clusters.map(cl => {
     planetCount: planets.length,
     moonCount: planetMoons.length,
     beltCount: belts.length,
-    hasGasGiant: planets.some(p => p.worldClass === 'gas_giant'),
-    hasIceGiant: planets.some(p => p.worldClass === 'ice_giant'),
+    hasGasGiant: planets.some(p => GAS_GIANT_ARCHETYPES.has(arch(p))),
+    hasIceGiant: planets.some(p => arch(p) === 'ice_giant'),
     hasHotJupiter: planets.some(p => {
-      if (p.worldClass !== 'gas_giant') return false;
+      if (!GAS_GIANT_ARCHETYPES.has(arch(p))) return false;
       const S = insolationFor(p); return S != null && S >= 100;
     }),
     hasHabitable: planets.some(p => {
-      if (!p.worldClass || ['gas_giant','ice_giant','gas_dwarf','hycean'].includes(p.worldClass)) return false;
+      if (GASEOUS_ARCHETYPES.has(arch(p))) return false;
       if ((p.radiusEarth ?? 0) > 2) return false;
       const T = p.avgSurfaceTempK, P = p.surfacePressureBar;
       return T != null && T > 250 && T < 320 && P != null && P >= 0.1 && P < 50
@@ -516,7 +559,7 @@ const clusterStats = clusters.map(cl => {
     }),
     hasHabitableMoon: planetMoons.some(m => {
       const host = bodies[m.hostBodyIdx];
-      if (!host || !['gas_giant','ice_giant','gas_dwarf','solid_giant'].includes(host.worldClass)) return false;
+      if (!host || !GIANT_HOST_ARCHETYPES.has(arch(host))) return false;
       if ((m.radiusEarth ?? 0) < 0.3) return false;
       const P = m.surfacePressureBar;
       if (P == null || P < 0.05) return false;
@@ -610,17 +653,20 @@ if (zeroArchs === 6) {
   flags.push(`${zeroArchs}/6 biotic archetypes never fire — at least one productivity gate is broken.`);
 }
 
-// World-class concentration — flag if any single class dominates >40%.
+// Archetype concentration — flag if any single archetype dominates >40%.
+// The richer enum spreads bodies across more buckets, so a single archetype
+// clearing 40% is a sharper "the classifier is collapsing" signal than the
+// old worldClass concentration was.
 const classCount = {};
 for (const b of [...procgenPlanets, ...procgenMoons]) {
-  if (!b.worldClass) continue;
-  classCount[b.worldClass] = (classCount[b.worldClass] || 0) + 1;
+  const a = arch(b);
+  classCount[a] = (classCount[a] || 0) + 1;
 }
 const totalClassed = Object.values(classCount).reduce((a, b) => a + b, 0);
 const dominant = Object.entries(classCount).sort((a, b) => b[1] - a[1])[0];
 if (dominant && dominant[1] / totalClassed > 0.40) {
-  flags.push(`worldClass distribution skewed — "${dominant[0]}" is ${(dominant[1]/totalClassed*100).toFixed(1)}% of all classed bodies.\n      ` +
-             `Cold-trap gate is firing too eagerly; check ICE_TEMP_GLOBAL_K / iceFraction gates and WORLD_CLASS_THRESHOLDS.iceIceMin.`);
+  flags.push(`archetype distribution skewed — "${dominant[0]}" is ${(dominant[1]/totalClassed*100).toFixed(1)}% of all classed bodies.\n      ` +
+             `Cold-trap gate is firing too eagerly; check ICE_TEMP_GLOBAL_K / iceFraction gates and ARCHETYPE_THRESHOLDS.iceIceMin.`);
 }
 
 // Super-Earth + ring overlap.

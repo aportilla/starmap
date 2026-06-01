@@ -16,7 +16,7 @@
 import { Color } from 'three';
 import {
   STARS, BODIES,
-  type Body, type SpectralClass, type WorldClass,
+  type Body, type SpectralClass,
   type BiosphereArchetype, type AtmGas, type ResourceKey,
 } from '../../data/stars';
 
@@ -28,46 +28,11 @@ import {
 export const WHITE_COLOR = new Color(1, 1, 1);
 export const BLACK_COLOR = new Color(0, 0, 0);
 
-// Diagrammatic disc color per WorldClass. Used by SystemDiagram (and any
-// future planet-rendering consumer). Bodies whose worldClass is still null
-// (catalog rows the scraper couldn't classify, awaiting build-time procgen)
-// render in WORLD_CLASS_UNKNOWN_COLOR so they read as "TBD" rather than
-// ambiguously slotting into one of the real classes.
-export const WORLD_CLASS_COLOR: Record<WorldClass, Color> = {
-  // Terrestrial
-  rocky:       new Color(0xc4956a),  // brown-tan
-  solid_giant: new Color(0xb88560),  // large rocky terrestrial, slightly darker than rocky
-  desert:      new Color(0xe4a854),  // dust-tan (Mars-like)
-  ocean:       new Color(0x4a9fd9),  // blue (Earth/Europa)
-  ice:         new Color(0xb8d8e8),  // pale cyan-white (Callisto, water-ice shell)
-  carbon:      new Color(0xb07a58),  // tholin orange-brown (Pluto/Triton/Eris methane-frost)
-  iron:        new Color(0x9a6660),  // dark grey-red (Mercury-like)
-  lava:        new Color(0xd64a3a),  // molten red-orange
-  magma_ocean: new Color(0xb04030),  // dark red, denser than lava
-  chthonian:   new Color(0x705048),  // dark stripped-core grey-red
-  // Gaseous
-  gas_dwarf:   new Color(0xa090c8),  // lavender
-  hycean:      new Color(0x3a8090),  // deep blue-green (water through H2)
-  helium:      new Color(0xd4c08c),  // pale yellow
-  ice_giant:   new Color(0x5a9ad6),  // CH4-blue (Uranus/Neptune)
-  gas_giant:   new Color(0xc4a878),  // Jovian cream
-};
-export const WORLD_CLASS_UNKNOWN_COLOR = new Color(0x808080);
-
-// Optional per-class warm/cool tint applied to every palette entry by
-// the planet/moon shader's palette derivation. Compensates for the
-// gas-mix model's inability to represent condensed-phase chemistry on
-// gas-giant cloud decks (NH4SH on Jupiter, etc.) — gas giants tint warm so they
-// read as ruddy Jovian rather than pale Saturnian-cream, even when H2
-// dominates the atm fractions and shares with Saturn. Bodies whose
-// class isn't in the table get no tint.
-//
-// `amount` lerps each palette entry by that fraction toward `color` —
-// 0 = no shift, 1 = palette entry replaced by tint. Keep amounts small
-// (≤0.3) so the gas-mix signal still reads through the tint.
-export const WORLD_CLASS_TINT: Partial<Record<WorldClass, { color: Color; amount: number }>> = {
-  gas_giant: { color: new Color(0xc88848), amount: 0.25 },  // warm amber → Jovian ruddy
-};
+// (Disc base color is composed from physics + resources — rock-archetype
+// mineralogy, ocean optics, biome paint, atm-column tint, belt icyness — not
+// from a per-category LUT. The former WORLD_CLASS_COLOR / _TINT tables were
+// near-vestigial fallbacks; the one live use, a gas-giant warm shift, now
+// lives in disc-palette/index.ts keyed off the body archetype.)
 
 // =============================================================================
 // Biome paint — archetype × stellar class drives a pixel-stipple color

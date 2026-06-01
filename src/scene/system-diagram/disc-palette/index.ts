@@ -129,10 +129,10 @@ import { Body } from '../../../data/stars';
 import { MAX_CLOUD_LAYERS } from '../../materials';
 import {
   BARREN_ROCK_COLOR, barrenTintFor,
-  WORLD_CLASS_COLOR, WORLD_CLASS_TINT, WORLD_CLASS_UNKNOWN_COLOR,
   biomePaintFor, cloudDeckPalette, dominantResources, lerpColor,
   rockArchetypeFor,
 } from '../color-science';
+import { classifyBody } from '../../../../scripts/lib/body-archetype.mjs';
 import { hash32 } from '../geom/prng';
 import { bodyVisualTiltRad } from '../geom/ring';
 import { PROCEDURAL_TEXTURE_MIN_PX } from '../layout/constants';
@@ -275,23 +275,29 @@ export interface DiscPalette {
   // to the ring plane via the shared bodyVisualTiltRad helper). Used
   // by both the cloud-banded and surface sphere-projection paths.
   readonly tilt: number;
-  // Surface water cover [0..1]. Surface block splits the disc into
-  // coarse continent cells; a per-cell hash < waterFrac flips that
-  // cell from resource patch to flat ocean color. Earth at 0.71 reads
-  // as ~71% ocean; Mars at 0 stays all-land. Forced to 0 on no-surface
-  // bodies and on tiny discs (PROCEDURAL_TEXTURE_MIN_PX gate).
+  // Surface-liquid cover (dominant species, any solvent) [0..1]. Surface
+  // block splits the disc into coarse continent cells; a per-cell hash <
+  // waterFrac flips that cell from resource patch to flat ocean color.
+  // Earth at 0.71 reads as ~71% ocean; a Titan-class hydrocarbon world
+  // paints its liquid cells from its own cover; Mars at 0 stays all-land.
+  // Forced to 0 on no-surface bodies and on tiny discs
+  // (PROCEDURAL_TEXTURE_MIN_PX gate).
   readonly waterFrac: number;
   // Per-body ocean color [0..1]^3 — replaces the shader's hard-coded
   // OCEAN_COLOR constant for surface-liquid cells. Derived through five
   // physical pathways (stellar SED × sky reflection + solvent base ×
   // CDOM × pigment × sediment) so close-analog bodies get distinguishable
-  // hues. See `oceanColorFor` above for the full stack. Painted only
+  // hues — `oceanColorFor` receives the full body, so species/salinity
+  // reach it for the actual color; the waterFrac scalar is only the
+  // surface-liquid cover (dominant species, any solvent) that gates
+  // which cells are liquid. See `oceanColorFor` above for the full stack. Painted only
   // where the shader's existing `liquidOceanHere` predicate fires; cold
   // bodies (globalness > 0.5) still fall back to ice/resource paths.
   readonly oceanColor: readonly [number, number, number];
   // Surface ice cover [0..1]. Drives cap-latitude paint on warm bodies
   // (Earth's poles) and bulk cryosphere on cold ones (Europa). Same
-  // suppression gates as waterFrac.
+  // suppression gates as the surface-liquid cover (dominant species,
+  // any solvent) above.
   readonly iceFrac: number;
   // Biome stipple — pigment color (archetype × stellar shift; see
   // biomePaintFor in color-science.ts) packed as [r,g,b], and coverage density
@@ -380,13 +386,18 @@ export interface DiscPalette {
   readonly lavaSulfurFrac: number;
 }
 
-// World-class color or unknown-grey fallback. Same precedence as the
-// legacy flat-color renderer so a worldClass=null body stays
-// recognizable as "TBD" rather than slotting into an arbitrary class.
-function worldClassColor(body: Body): Color {
-  if (body.worldClass === null) return WORLD_CLASS_UNKNOWN_COLOR;
-  return WORLD_CLASS_COLOR[body.worldClass] ?? WORLD_CLASS_UNKNOWN_COLOR;
-}
+// Neutral fill for the degenerate no-surface body that also has no atm
+// gases to color its column — `atmColumnColor` returns null only then,
+// which no real gas/ice giant hits. Grey reads as "TBD" rather than
+// slotting into an arbitrary palette.
+const NO_ATM_FALLBACK_COLOR = new Color(0x808080);
+
+// Warm amber shift folded into a gas giant's cloud-column palette so it
+// reads ruddy-Jovian rather than pale-Saturnian — compensates for the
+// gas-mix model not representing condensed-phase chemistry (NH4SH, etc.).
+// Keyed off the archetype (gas_giant / hot_jupiter), the physics successor
+// to the old worldClass === 'gas_giant' tint.
+const GAS_GIANT_TINT = { color: new Color(0xc88848), amount: 0.25 };
 
 // Lerp `c` toward `tint.color` by `tint.amount`. Returns `c` unchanged
 // when `tint` is undefined. Applied to surface palette entries to fold
@@ -438,18 +449,17 @@ export function buildDiscPalette(
   let sC0: Color, sC1: Color, sC2: Color;
   let sW0: number, sW1: number, sW2: number;
   if (!hasSurface) {
-    const colColor = atmColumnColor(body) ?? worldClassColor(body);
+    const colColor = atmColumnColor(body) ?? NO_ATM_FALLBACK_COLOR;
     sC0 = colColor; sC1 = colColor; sC2 = colColor;
     sW0 = 1; sW1 = 0; sW2 = 0;
   } else {
     const res = dominantResources(body, 2);
     if (res.length === 0) {
-      // No resource signal at all — fall back to the world-class color
-      // rather than barren grey so an "atm-only" classification still
-      // reads as something distinct. (Procgen virtually always populates
-      // at least one res scalar for terrestrials, so this branch is
-      // defensive against curated rows with the entire grid empty.)
-      const base = worldClassColor(body);
+      // No resource signal at all — fall back to neutral barren regolith.
+      // (Procgen virtually always populates at least one res scalar for
+      // terrestrials, so this branch is defensive against curated rows
+      // with the entire grid empty.)
+      const base = BARREN_ROCK_COLOR;
       sC0 = base; sC1 = base; sC2 = base;
       sW0 = 1; sW1 = 0; sW2 = 0;
     } else {
@@ -505,7 +515,7 @@ export function buildDiscPalette(
   // Surface scalars — suppressed on no-surface bodies (the surface
   // block is unreachable there) and on tiny discs.
   const surfaceSuppressed = !hasSurface || tinyDisc;
-  const waterFrac  = surfaceSuppressed ? 0   : (body.waterFraction ?? 0);
+  const liquidFrac = surfaceSuppressed ? 0   : (body.surfaceLiquidFraction ?? 0);
   const iceFrac    = surfaceSuppressed ? 0   : (body.iceFraction   ?? 0);
   const surfaceAge = surfaceSuppressed ? 0.5 : (body.surfaceAge ?? 0.5);
   const globalness = surfaceSuppressed ? 0   : globalnessForTemp(body.avgSurfaceTempK);
@@ -653,7 +663,8 @@ export function buildDiscPalette(
   // Per-class hue tint applies to surface palette entries only. Cloud
   // palettes already derive from physically-anchored gas species and
   // skip the tint so cloud colors stay aligned with their condensates.
-  const tint = body.worldClass !== null ? WORLD_CLASS_TINT[body.worldClass] : undefined;
+  const arch = classifyBody(body);
+  const tint = (arch === 'gas_giant' || arch === 'hot_jupiter') ? GAS_GIANT_TINT : undefined;
   const t0 = applyTint(sC0, tint);
   const t1 = applyTint(sC1, tint);
   const t2 = applyTint(sC2, tint);
@@ -669,7 +680,7 @@ export function buildDiscPalette(
     surfaceOpacity,
     seed,
     tilt: bodyVisualTiltRad(body),
-    waterFrac,
+    waterFrac: liquidFrac,
     oceanColor,
     iceFrac,
     biomeColor,

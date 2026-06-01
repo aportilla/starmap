@@ -30,6 +30,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { insolation, frostLineAU, hillRadiusAu } from './lib/astrophysics.mjs';
+import { classifyBody } from './lib/body-archetype.mjs';
 import {
   STELLAR_CLASSES,
   ACCRETION_EFFICIENCY,
@@ -80,12 +81,28 @@ function meanStd(arr) {
   return { mean, sd: Math.sqrt(variance) };
 }
 
-function insolationFor(planet) {
-  if (planet.semiMajorAu == null || planet.hostStarIdx == null) return null;
-  const star = stars[planet.hostStarIdx];
+function insolationFor(body) {
+  // A moon inherits its host planet's insolation: same orbit around the star.
+  if (body.hostStarIdx == null && body.hostBodyIdx != null) {
+    const host = bodies[body.hostBodyIdx];
+    if (host?.hostStarIdx == null || host.semiMajorAu == null) return null;
+    const star = stars[host.hostStarIdx];
+    if (!star || star.mass == null) return null;
+    return insolation(star.mass, host.semiMajorAu);
+  }
+  if (body.semiMajorAu == null || body.hostStarIdx == null) return null;
+  const star = stars[body.hostStarIdx];
   if (!star || star.mass == null) return null;
-  return insolation(star.mass, planet.semiMajorAu);
+  return insolation(star.mass, body.semiMajorAu);
 }
+
+// The gaseous archetypes — everything the old worldClass set
+// {gas_giant, ice_giant, gas_dwarf, hycean, helium} maps onto under the
+// richer enum (gas_giant splits into gas_giant/hot_jupiter; gas_dwarf is
+// now sub_neptune). Used wherever a check meant "skip the envelope worlds."
+const GASEOUS_ARCHETYPES = new Set([
+  'gas_giant', 'hot_jupiter', 'ice_giant', 'sub_neptune', 'hycean', 'helium',
+]);
 
 function pct(n, d, decimals = 2) {
   if (!d) return '   —   ';
@@ -520,18 +537,19 @@ for (const cls of STELLAR_CLASSES) {
 }
 console.log();
 
-// --- 7. Surface scalars by worldClass ---------------------------------------
+// --- 7. Surface scalars by archetype ----------------------------------------
 
-console.log('=== Surface scalars, by worldClass (procgen planets) ===');
+console.log('=== Surface scalars, by archetype (procgen planets) ===');
 function auditScalar(field, priorTable, label) {
   console.log('  --- ' + label + ' ---');
   console.log('  class       |  n      obs.mean  obs.sd     prior.mean  prior.sd   z');
   const byClass = {};
   for (const b of bodies) {
     if (b.kind !== 'planet' || b.source !== 'procgen') continue;
-    if (b.worldClass == null || b[field] == null) continue;
-    if (!byClass[b.worldClass]) byClass[b.worldClass] = [];
-    byClass[b.worldClass].push(b[field]);
+    if (b[field] == null) continue;
+    const arch = classifyBody(b);
+    if (!byClass[arch]) byClass[arch] = [];
+    byClass[arch].push(b[field]);
   }
   for (const cls of Object.keys(priorTable).sort()) {
     const arr = byClass[cls] || [];
@@ -590,7 +608,7 @@ function auditSurfaceCover() {
   for (const b of bodies) {
     if (b.kind !== 'planet' && b.kind !== 'moon') continue;
     if (b.source !== 'procgen') continue;
-    if (b.worldClass == null || ['gas_giant', 'ice_giant', 'gas_dwarf'].includes(b.worldClass)) continue;
+    if (GASEOUS_ARCHETYPES.has(classifyBody(b))) continue;
     const w = b.waterFraction ?? 0;
     const i = b.iceFraction ?? 0;
     if (w > 0.05 && i < 0.5)     liquidGated += 1;
@@ -668,62 +686,63 @@ auditBulkComposition('bulkVolatileFraction', 'bulkVolatileFraction', BULK_VOLATI
 // is incompatible. Drop these reports for now; replace with derivation-
 // distribution reports if needed.
 
-// Phase 4: derived worldClass distribution. After all physics settles,
-// worldClass is the label dispatched to designer content. Report counts
-// so it's easy to spot if a class is over- or under-represented.
-console.log('  --- worldClass distribution (procgen, derived) ---');
+// Archetype distribution (runtime classifier). After all physics settles,
+// classifyBody is the label dispatched to designer content. Report counts
+// so it's easy to spot if an archetype is over- or under-represented.
+console.log('  --- archetype distribution (procgen, classifier) ---');
 const classCount = {};
 for (const b of bodies) {
   if ((b.kind !== 'planet' && b.kind !== 'moon') || b.source !== 'procgen') continue;
-  if (!b.worldClass) continue;
-  classCount[b.worldClass] = (classCount[b.worldClass] ?? 0) + 1;
+  const arch = classifyBody(b);
+  classCount[arch] = (classCount[arch] ?? 0) + 1;
 }
 const totalDerived = Object.values(classCount).reduce((a, b) => a + b, 0);
 for (const cls of Object.keys(classCount).sort()) {
-  console.log('  ' + pad(cls, 11) + ' | ' + pad(classCount[cls], 6, true) + '  ' + pct(classCount[cls], totalDerived));
+  console.log('  ' + pad(cls, 16) + ' | ' + pad(classCount[cls], 6, true) + '  ' + pct(classCount[cls], totalDerived));
 }
 console.log();
 
 // --- 8. Atmosphere top-gas distribution -------------------------------------
 
-console.log('=== Atmosphere top gas (atm1) by worldClass ===');
+console.log('=== Atmosphere top gas (atm1) by archetype ===');
 const atmByClass = {};
 for (const b of bodies) {
   if (b.kind !== 'planet' || b.source !== 'procgen') continue;
-  if (!b.worldClass || !b.atm1) continue;
-  if (!atmByClass[b.worldClass]) atmByClass[b.worldClass] = { total: 0, gases: {} };
-  atmByClass[b.worldClass].total += 1;
-  atmByClass[b.worldClass].gases[b.atm1] = (atmByClass[b.worldClass].gases[b.atm1] || 0) + 1;
+  if (!b.atm1) continue;
+  const arch = classifyBody(b);
+  if (!atmByClass[arch]) atmByClass[arch] = { total: 0, gases: {} };
+  atmByClass[arch].total += 1;
+  atmByClass[arch].gases[b.atm1] = (atmByClass[arch].gases[b.atm1] || 0) + 1;
 }
 for (const cls of Object.keys(atmByClass).sort()) {
   const r = atmByClass[cls];
   const sorted = Object.entries(r.gases).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const breakdown = sorted.map(([g, n]) => `${g} ${(n / r.total * 100).toFixed(0)}%`).join('  ');
-  console.log('  ' + pad(cls, 11) + ' | n=' + pad(r.total, 4, true) + '  ' + breakdown);
+  console.log('  ' + pad(cls, 16) + ' | n=' + pad(r.total, 4, true) + '  ' + breakdown);
 }
 console.log();
 
-// --- 9. Resource means by worldClass (label-only — physics-derived) -------
+// --- 9. Resource means by archetype (label-only — physics-derived) -------
 
-console.log('=== Resource means, by worldClass (procgen planets, 0-10 scale) ===');
-console.log('  class       |  n      met  sil  vol  rare radio exo');
+console.log('=== Resource means, by archetype (procgen planets, 0-10 scale) ===');
+console.log('  archetype        |  n      met  sil  vol  rare radio exo');
 const RES = ['resMetals','resSilicates','resVolatiles','resRareEarths','resRadioactives','resExotics'];
 const resByClass = {};
 for (const b of bodies) {
   if (b.kind !== 'planet' || b.source !== 'procgen') continue;
-  if (!b.worldClass) continue;
-  if (!resByClass[b.worldClass]) {
-    resByClass[b.worldClass] = { n: 0, sums: Object.fromEntries(RES.map(f => [f, 0])) };
+  const arch = classifyBody(b);
+  if (!resByClass[arch]) {
+    resByClass[arch] = { n: 0, sums: Object.fromEntries(RES.map(f => [f, 0])) };
   }
-  resByClass[b.worldClass].n += 1;
-  for (const f of RES) if (b[f] != null) resByClass[b.worldClass].sums[f] += b[f];
+  resByClass[arch].n += 1;
+  for (const f of RES) if (b[f] != null) resByClass[arch].sums[f] += b[f];
 }
 for (const cls of Object.keys(resByClass).sort()) {
   const r = resByClass[cls];
   if (!r || !r.n) continue;
   const obs = RES.map(f => (r.sums[f] / r.n).toFixed(1).padStart(3));
   console.log(
-    '  ' + pad(cls, 11) +
+    '  ' + pad(cls, 16) +
     ' | ' + pad(r.n, 4, true) +
     '   ' + obs.join('  '),
   );
@@ -1276,6 +1295,112 @@ invariant('R5', 'motherlodes concentrate on hostile worlds (hostile rate > benig
   invariant('R8', 'differentiation yields M-type belts + scarce strategic rings',
     mRate >= 0.05 && mRate <= 0.40 && stratRings.length > 0 && stratRingRate <= 0.25,
     `M-type belts ${(mRate * 100).toFixed(1)}%, strategic rings ${stratRings.length} (${(stratRingRate * 100).toFixed(1)}%)`);
+}
+
+// S-series — surface-liquid solvent distribution. Procgen paints liquids by
+// composition (temp/pressure/ice), and worldClass became display-only. These
+// gates pin the SHAPE of that distribution so a tuning pass can't silently
+// collapse it (water everywhere, or an exotic ballooning) and can't quietly
+// re-introduce a worldClass read in the generator.
+
+// S1 — water is the default solvent of the liquid-bearing population: the
+// single most common species (plurality) AND a meaningful share of it. The
+// share floor is 25%, not a majority: the exotic-frequency tune deliberately
+// made non-water seas common enough to encounter, so water leads the field
+// (~32%, next ~24%) without holding a majority. The plurality clause is the
+// real guarantee; the floor just catches water collapsing toward the pack.
+{
+  const liq = bodies.filter(b => b.surfaceLiquidSpecies != null);
+  const counts = {};
+  for (const b of liq) counts[b.surfaceLiquidSpecies] = (counts[b.surfaceLiquidSpecies] ?? 0) + 1;
+  const water = counts.water ?? 0;
+  const maxOther = Math.max(0, ...Object.entries(counts).filter(([k]) => k !== 'water').map(([, v]) => v));
+  const frac = liq.length ? water / liq.length : 0;
+  invariant('S1', 'water leads the liquid-bearing population (plurality, ≥25%)',
+    water > maxOther && frac >= 0.25,
+    `water ${water}/${liq.length} (${pct(water, liq.length)}), next ${maxOther}`);
+}
+
+// S2 — exotic solvents stay an encounterable minority, never a bloom. The
+// design target is "a player sees one sometimes," not "everywhere": each of
+// hydrocarbon / nitrogen / sulfur < 4% of surface-bearing bodies. Water
+// staying the most common is guarded by S1, so this only has to catch a
+// runaway — the pre-tune over-saturation put sulfur/nitrogen at ~5.4%, which
+// this trips, while leaving headroom for the deliberately-visible frequency.
+{
+  const surf = bodies.filter(b => b.surfaceLiquidFraction != null);
+  const speciesCount = (s) => bodies.filter(b => b.surfaceLiquidSpecies === s).length;
+  const hc = speciesCount('hydrocarbon');
+  const ni = speciesCount('nitrogen');
+  const su = speciesCount('sulfur');
+  const cap = 0.04 * surf.length;
+  invariant('S2', 'exotic solvents an encounterable minority (<4% of surface-bearers each)',
+    hc < cap && ni < cap && su < cap,
+    `hc ${hc} (${pct(hc, surf.length)}), n2 ${ni} (${pct(ni, surf.length)}), s ${su} (${pct(su, surf.length)}); cap≈${Math.floor(cap)}`);
+}
+
+// S3 — reachability: probabilistic shaping must never zero a species. Mirrors
+// R1's "all pairs co-occur" philosophy — every exotic + ammonia_water keeps ≥1
+// body so a knob retune can't make one extinct.
+{
+  const c = (s) => bodies.filter(b => b.surfaceLiquidSpecies === s).length;
+  const hc = c('hydrocarbon'), ni = c('nitrogen'), su = c('sulfur'), aw = c('ammonia_water');
+  invariant('S3', 'every exotic solvent + ammonia_water still reachable (≥1 each)',
+    hc >= 1 && ni >= 1 && su >= 1 && aw >= 1,
+    `hydrocarbon ${hc}, nitrogen ${ni}, sulfur ${su}, ammonia_water ${aw}`);
+}
+
+// S6 — the non-water gradient stays physically plausible. The exoplanet
+// reasoning: liquid N2 is a 14 K knife-edge (most cold worlds freeze it solid)
+// and surface sulfur seas need rare sulfur-enrichment + heat, so nitrogen and
+// sulfur are the EXOTIC TAIL — they must stay rarer than the "uncommon middle"
+// solvents (ammonia-water's wide cold-brine window, Titan-class hydrocarbon).
+// Guards against the cover model re-inflating N2/SO2 worlds off their common
+// atmospheres (which once made nitrogen/sulfur the most common non-water seas
+// — backwards). Robust to ammonia⇄hydrocarbon swapping; only the tail ordering
+// is asserted.
+{
+  const c = (s) => bodies.filter(b => b.surfaceLiquidSpecies === s).length;
+  const aw = c('ammonia_water'), hc = c('hydrocarbon'), ni = c('nitrogen'), su = c('sulfur');
+  const tailFloor = Math.min(aw, hc);
+  invariant('S6', 'exotic tail (nitrogen, sulfur) rarer than the uncommon middle (ammonia, hydrocarbon)',
+    ni < tailFloor && su < tailFloor && su <= ni,
+    `ammonia_water ${aw}, hydrocarbon ${hc} | nitrogen ${ni}, sulfur ${su}`);
+}
+
+// S4 — subsurface oceans are a cold-icy-body phenomenon (Europa/Enceladus).
+// A strong majority of ocean-bearers must be cold (< 260 K) with substantial
+// ice (≥ 0.3). Catches a regression that strews oceans onto warm/dry bodies.
+{
+  const ocean = bodies.filter(b => b.subsurfaceOceanSpecies != null);
+  const cold = ocean.filter(b => (b.avgSurfaceTempK ?? Infinity) < 260 && (b.iceFraction ?? 0) >= 0.3);
+  const frac = ocean.length ? cold.length / ocean.length : 0;
+  invariant('S4', 'subsurface oceans cluster on cold icy bodies (≥70% < 260K & ice ≥0.3)',
+    frac >= 0.70,
+    `${cold.length}/${ocean.length} qualify (${pct(cold.length, ocean.length)})`);
+}
+
+// S5 — `worldClass` is fully eliminated: no body carries a stored category.
+// The body archetype is derived on demand from physics (classifyBody); a
+// stored `worldClass` key reappearing means someone re-introduced the field
+// in the data model or a procgen write. Asserts the catalog itself is clean.
+{
+  const stored = bodies.filter(b => 'worldClass' in b).length;
+  invariant('S5', 'no body carries a stored worldClass key (eliminated; archetype is runtime-derived)',
+    stored === 0,
+    `${stored} bodies with a worldClass key (of ${bodies.length})`);
+}
+
+// S7 — chthonian (stripped hot-Jupiter cores) exist. They were silently 0
+// (the lava check, T≥1000, preempted the chthonian signature); now classified
+// ahead of lava. Rare by nature, but the catalog's hot dense super-Earths
+// (55 Cnc e class) anchor a stable floor — a regression to 0 means the
+// ordering or the gate broke again.
+{
+  const chth = bodies.filter(b => classifyBody(b) === 'chthonian').length;
+  invariant('S7', 'chthonian worlds exist (stripped hot-Jupiter cores; rare but non-zero)',
+    chth >= 1,
+    `${chth} chthonian`);
 }
 
 console.log();

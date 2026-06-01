@@ -688,71 +688,6 @@ export const BULK_VOLATILE_FRACTION_BY_ZONE = {
 };
 
 // ---------------------------------------------------------------------------
-// World class derivation thresholds (Phase 4)
-// ---------------------------------------------------------------------------
-//
-// `worldClass` is a pure label derived from settled physical state — it
-// flows downstream of mass, radius, temperature, water/ice cover, NOT
-// upstream of them. These thresholds bucket the (radius × temperature ×
-// cover) state space into the priority-ordered taxonomy emitted by
-// `worldClassFor` (gaseous: hycean, helium, gas_giant, ice_giant,
-// gas_dwarf; terrestrial: lava, chthonian, magma_ocean, iron, carbon,
-// ice, ocean, solid_giant, desert, rocky) — see that function for the
-// authoritative label set and gate order. Designer-dispatched tables
-// (atmosphere species, biosphere, cloud / haze, resources) consume the
-// label; no physical scalar does.
-export const WORLD_CLASS_THRESHOLDS = {
-  // ─── Radius gates (gaseous vs terrestrial) ───
-  jupiterRadius:        8,     // R⊕; gas giant lower bound
-  neptuneRadius:        3.5,   // Neptune-class lower bound
-  gasDwarfRadius:       2,     // rocky/sub-Neptune boundary
-  // Warm-vs-cold gate within the Neptune bracket. Cold → ice_giant.
-  iceGiantTempCeilingK: 200,
-
-  // ─── Sub-Neptune variant gates (hycean / helium) ───
-  // Hycean: cold sub-Neptune with H2 atm and high bulkWater (K2-18b-class).
-  hyceanTempCeilingK:   300,
-  hyceanBulkWaterMin:   0.05,
-  // Helium: gas dwarf with He-dominant atm (post-H-stripping survivor).
-  // Detected by atm1 === 'He'.
-
-  // ─── Terrestrial gates ───
-  // Lava: sustained molten surface.
-  lavaTempFloorK:       1000,
-  // Magma ocean: hot + active tectonics (early-Earth class, partial melt).
-  magmaOceanTempFloorK: 700,
-  magmaOceanTectMin:    0.5,
-  // Chthonian: stripped giant core — close-in + massive + metal-dominant.
-  chthonianMassMin:     2.0,
-  chthonianMetalMin:    0.4,
-  chthonianInsolationMin: 100,
-  // Iron: bulkMetal dominant (Mercury-class super-iron).
-  ironMetalMin:         0.5,
-  // Ice: surface ice without liquid (Callisto-class water-ice).
-  // 0.7 floor so bodies with partial ice cover (seasonal caps, mixed
-  // regolith-ice) stay `rocky` rather than collapsing into the ice
-  // bucket. At 0.5 the bucket eats half the procgen population because
-  // every body past the H2O frost line saturates iceFraction.
-  iceIceMin:            0.7,
-  iceWaterCeiling:      0.1,
-  // Carbon: methane/volatile-frost-dominant frozen body (Pluto/Triton/
-  // Eris class). Splits off from `ice` when the body's bulk inventory
-  // is volatile-dominated rather than water-dominated — visually and
-  // gameplay-distinct from a water-ice ocean shell.
-  carbonBulkVolatileMin: 0.10,
-  // Ocean: surface liquid water dominant.
-  oceanWaterFloor:      0.5,
-  // Solid giant: large rocky terrestrial (analogous to gas_giant /
-  // ice_giant in the gaseous bracket — the biggest body in its
-  // compositional family).
-  solidGiantMassMin:    1.5,
-  solidGiantRadiusMin:  1.3,
-  // Desert: both water + ice low.
-  desertWaterCeiling:   0.05,
-  desertIceCeiling:     0.05,
-};
-
-// ---------------------------------------------------------------------------
 // Universal orbital flavor
 // ---------------------------------------------------------------------------
 
@@ -805,7 +740,7 @@ export const AXIAL_TILT_DEG = { mean: 20, sd: 20, min: 0, max: 180 };
 // the version reseeds the whole galaxy without changing CSV ids. Per-
 // generator suffixes can be layered on top by individual generators that
 // want to be re-rollable independently.
-export const PROCGEN_VERSION = 'v17';
+export const PROCGEN_VERSION = 'v18';
 
 // ---------------------------------------------------------------------------
 // Belts — system-level structural bands
@@ -1262,6 +1197,146 @@ export const WATER_COVER_NOISE = { mean: 1.0, sd: 0.25, min: 0.5, max: 1.5 };
 export const ICE_COVER_NOISE   = { mean: 1.0, sd: 0.25, min: 0.5, max: 1.5 };
 
 // ---------------------------------------------------------------------------
+// Multi-solvent phase windows — SurfaceLiquidSpecies tuning surface
+// ---------------------------------------------------------------------------
+//
+// Generalizes the water-only surface-liquid gate to the full
+// SurfaceLiquidSpecies set. Each row defines the phase window (freeze
+// point + boiling-curve anchors) a candidate solvent occupies, which bulk
+// budget it draws from (`feeds`), and a floor budget below which the
+// species can't pool at the surface. Same shape as the water priors above:
+// `boilAnchors` is a list of {p, t} (P_bar → T_boil_K) the cover formula
+// log-interpolates between, exactly like BOILING_POINT_ANCHORS.
+//
+// The `water` row reproduces today's behavior by referencing the existing
+// constants — it is the same physics, just expressed in the shared shape.
+// `feeds` routes to a bulk reservoir: 'bulkWater' is the dedicated water
+// budget; 'bulkVolatile' is the shared volatile budget; an atm-gas symbol
+// (GAS_MOLECULAR_WEIGHT_AMU keys) names the gas whose condensation supplies
+// the pool. Decisions: supercritical CO2 is NOT a species (D4); lava/magma
+// stays separate (D5); salinity is handled by the SALINITY prior below.
+export const SOLVENT_PHASE = {
+  // Water — references the existing constants so this row is identical to
+  // the legacy water-only gate. Anchors: triple point, STP, high-P.
+  water: {
+    freezeK:    273,
+    boilAnchors: BOILING_POINT_ANCHORS,
+    feeds:      'bulkWater',
+    minBudget:  SURFACE_WATER_SAT,
+    triplePointBar: TRIPLE_POINT_BAR,
+  },
+  // Hydrocarbon (methane/ethane) — Titan lakes, stable liquid 91-112 K at
+  // ~1.5 bar N2. Boil anchors bracket the cryogenic methane window.
+  hydrocarbon: {
+    freezeK:    91,
+    boilAnchors: [
+      { p: 0.1, t: 91 },
+      { p: 1.5, t: 112 },
+      { p: 10,  t: 150 },
+    ],
+    feeds:      'CH4',
+    minBudget:  0.14,
+    triplePointBar: 0.117,
+  },
+  // Ammonia-water eutectic — peritectic melt near 176 K; a deep antifreeze
+  // brine, the canonical icy-body cryovolcanic fluid.
+  ammonia_water: {
+    freezeK:    176,
+    boilAnchors: [
+      { p: 0.06, t: 176 },
+      { p: 1.0,  t: 250 },
+      { p: 30,   t: 360 },
+    ],
+    feeds:      'bulkVolatile',
+    minBudget:  0.08,
+    triplePointBar: 0.06,
+  },
+  // Pure ammonia — melt 195 K, boil 240 K at 1 bar; a narrow but real
+  // surface-liquid window on cold high-NH3 atmospheres.
+  ammonia: {
+    freezeK:    195,
+    boilAnchors: [
+      { p: 0.06, t: 195 },
+      { p: 1.0,  t: 240 },
+      { p: 30,   t: 350 },
+    ],
+    feeds:      'NH3',
+    minBudget:  0.10,
+    triplePointBar: 0.061,
+  },
+  // Nitrogen — Triton-class. Liquid 63-77 K, a very low-pressure, very
+  // cold solvent; triple point 0.125 bar at 63 K.
+  nitrogen: {
+    freezeK:    63,
+    boilAnchors: [
+      { p: 0.125, t: 63 },
+      { p: 1.0,   t: 77 },
+      { p: 10,    t: 110 },
+    ],
+    feeds:      'N2',
+    minBudget:  6.0,
+    triplePointBar: 0.125,
+  },
+  // Sulfur — hot-world melt. Liquid ~388 K (melt) to ~718 K (boil) at
+  // 1 bar; an Io/volcanic-class high-temperature solvent.
+  sulfur: {
+    freezeK:    388,
+    boilAnchors: [
+      { p: 0.01, t: 388 },
+      { p: 1.0,  t: 718 },
+      { p: 30,   t: 900 },
+    ],
+    feeds:      'SO2',
+    minBudget:  3.5,
+    triplePointBar: 0.0,
+  },
+};
+
+// Minimum non-water surface-liquid cover that counts as a defining feature.
+// Every volatile-bearing world condenses a trace film of *some* exotic
+// solvent once it sits in that solvent's phase window; recording each one as
+// the body's dominant liquid would make liquid-nitrogen and molten-sulfur
+// surfaces read as common when they should be exotic. A non-water candidate
+// below this cover is discarded (the world reads as dry or water-dominated),
+// so the rare-solvent worlds that survive are the ones with a genuinely
+// substantial sea. Water is exempt — its cover is calibrated separately
+// (SURFACE_WATER_SAT) and a thin water film is still meaningfully wet.
+export const MIN_SURFACE_LIQUID_COVER = 0.05;
+
+// ---------------------------------------------------------------------------
+// Salinity — dissolved-solute scalar (D2: single scalar in [0,1])
+// ---------------------------------------------------------------------------
+//
+// A surface or subsurface liquid leaches solutes from contact rock; the
+// scalar concentrates as the body dries (less solvent, same solute load)
+// and depresses the freeze point of the pooled liquid. Single [0,1]
+// scalar — 0 fresh, 1 saturated brine (Dead-Sea / Don-Juan-Pond class).
+export const SALINITY = {
+  leachScale:        0.4,   // base solute pickup from rock contact
+  aridityConcentration: 1.5, // exponent on (1 - surfaceCover): drier → saltier
+  freezeDepressionK: 21,    // max freeze-point drop (K) at salinity = 1
+  cap:               1.0,   // hard ceiling — saturation
+};
+
+// ---------------------------------------------------------------------------
+// Subsurface ocean — ice-shell liquid layer gate
+// ---------------------------------------------------------------------------
+//
+// A buried liquid layer under an ice shell, independent of the surface
+// phase gate. Param names mirror BIOSPHERE_PRODUCTIVITY.subsurfaceAqueous
+// so the two priors stay in lockstep: a body that clears this gate is the
+// substrate the subsurface_aqueous biosphere archetype reads from.
+export const SUBSURFACE_OCEAN = {
+  bulkWater:       [0.05, 0.40], // bulk-water budget window for a buried ocean
+  iceShell:        { center: 0.85, halfwidth: 0.30 }, // ice-fraction shell band
+  coldSurfaceRefK: 220,          // surface-temp reference for shell stability
+  sizeFloor:       [0.15, 0.35], // radius-fraction floor for retained heat
+  tidalScore:      [0, 0.1],     // tidal-heating contribution to the melt gate
+  radioScore:      [2, 6],       // radiogenic-heating contribution to the gate
+  minBudget:       0.02,         // bulkWater floor below which no ocean forms
+};
+
+// ---------------------------------------------------------------------------
 // Bond albedo — composition-derived (Phase 4)
 // ---------------------------------------------------------------------------
 //
@@ -1291,6 +1366,22 @@ export const ALBEDO_COMPONENTS = {
   // Cap on total Pass-B cloud bump — even a fully overcast Venus-class
   // atm can't push surface-blend albedo past clean-snow territory.
   cloudBumpMax: 0.6,
+};
+
+// Per-species standing-liquid albedo — the cover-blend coefficient for the
+// dominant surface solvent (D6: liquid optics are species-dependent, not a
+// single water value). The bond-albedo blend weights surfaceLiquidFraction
+// by the row for its surfaceLiquidSpecies. The `water` row references
+// ALBEDO_COMPONENTS.water so a water world's albedo is bit-identical to the
+// single-coefficient model. Hydrocarbon seas read near-black (Titan lakes),
+// liquid-N2 sheets read bright; the rest sit between.
+export const LIQUID_ALBEDO_BY_SPECIES = {
+  water:         ALBEDO_COMPONENTS.water, // open ocean — bit-identical anchor
+  hydrocarbon:   0.05,  // Titan lakes — near-black, slightly above open water
+  ammonia_water: 0.10,  // turbid cryo-brine
+  ammonia:       0.12,  // pure ammonia melt
+  nitrogen:      0.20,  // bright liquid-N2 sheet over ice
+  sulfur:        0.10,  // dark molten-sulfur pool
 };
 
 // ---------------------------------------------------------------------------
@@ -2105,9 +2196,9 @@ export const RESOURCE_PAIR_AFFINITY = buildSymmetricAffinity(RESOURCE_PAIR_AFFIN
 // worlds, so the richest deposits concentrate where they cost the most tech to
 // reach. Anti-correlating prize with accessibility is what makes tech
 // progression open the map ("you can see it but can't take it yet"). Keyed off
-// the physical context axes already computed in resourcesFor — worldClass isn't
-// settled until after the resource pass, so the hostile *classes* (lava, gas
-// giant) are reached through their physics (hot, gaseous) instead. `axes`
+// the physical context axes already computed in resourcesFor — there's no
+// stored body type to consult, so the hostile *classes* (lava, gas giant) are
+// reached through their physics (hot, gaseous) directly. `axes`
 // multipliers compound for a body; `probMax` clamps the per-deposit result so
 // stacked axes can't pin a world to guaranteed motherlodes.
 export const MOTHERLODE_HOSTILITY = {

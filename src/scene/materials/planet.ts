@@ -179,8 +179,9 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       // rim's depth-graded hue shift; see scatteringRimFor in
       // disc-palette/atmosphere.ts). Reaches the fragment shader via vWeights.w.
       attribute vec4  aWeights;
-      // Surface scalars: x = waterFrac, y = iceFrac, z = surfaceAge,
-      // w = globalness.
+      // Surface scalars: x = surfaceLiquidFrac (dominant solvent cover,
+      // any species — water, hydrocarbon, ammonia, nitrogen, sulfur),
+      // y = iceFrac, z = surfaceAge, w = globalness.
       attribute vec4  aSurfaceScalars;
       // Atmosphere scalars: x = hazeOpacity [0..1] uniform overlay
       // alpha, y = rimWidthPx (integer 0..N halo width), z = moltenCoverage
@@ -209,7 +210,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       varying float vBodyIndex;
       varying float vSeed;
       varying float vTilt;
-      varying float vWaterFrac;
+      varying float vLiquidFrac;
       varying float vIceFrac;
       varying float vSurfaceAge;
       varying float vGlobalness;
@@ -235,7 +236,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
         vBodyIndex      = aBodyIndex;
         vSeed       = aRenderMeta.z;
         vTilt       = aRenderMeta.w;
-        vWaterFrac  = aSurfaceScalars.x;
+        vLiquidFrac = aSurfaceScalars.x;
         vIceFrac    = aSurfaceScalars.y;
         vSurfaceAge = aSurfaceScalars.z;
         vGlobalness = aSurfaceScalars.w;
@@ -281,7 +282,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
       varying float vBodyIndex;
       varying float vSeed;
       varying float vTilt;
-      varying float vWaterFrac;
+      varying float vLiquidFrac;
       varying float vIceFrac;
       varying float vSurfaceAge;
       varying float vGlobalness;
@@ -1442,7 +1443,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           //     priority via vGlobalness (warm → cap pattern; cold →
           //     global random pattern; in between → hybrid).
           //   resourceSurface   — the body's bulk character at this
-          //     fragment: ocean (waterFrac cell) or 1.5b region-masked
+          //     fragment: ocean (surface-liquid cell) or 1.5b region-masked
           //     resource pick (+ biome stipple).
           //   resourceSubsurface — the 1.5c complement-masked resource
           //     pick, used by the crater branch as "what's underneath."
@@ -1459,21 +1460,21 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // hash so the two scales decorrelate. The ocean override
           // only fires on bodies warm enough for liquid surface
           // liquid — on a cold body (vGlobalness > 0.5, T < ~225 K),
-          // water exists but as ice, so "water cells" fall back to
-          // the resource palette (which on a volatile-rich body like
-          // Europa reads as pale-ice colored anyway). This keeps the
-          // ocean tint from punching through the ice shell on
-          // cryogenic moons whose surface is globally frozen; the
+          // the solvent exists but as a frozen solid, so "liquid cells"
+          // fall back to the resource palette (which on a volatile-rich
+          // body like Europa reads as pale-ice colored anyway). This
+          // keeps the ocean tint from punching through the frozen shell
+          // on cryogenic moons whose surface is globally frozen; the
           // linea pass below carries the non-ice signal on those
           // bodies.
           vec2 contCell = floor(winnerCell / CONTINENT_GROUP);
           vec2 contSalt = vSeed * SALT_CONTINENT;
           float contH = hash21(contCell + contSalt);
-          bool  waterHere = contH < vWaterFrac;
-          bool  liquidOceanHere = waterHere && vGlobalness < 0.5;
+          bool  liquidHere = contH < vLiquidFrac;
+          bool  liquidOceanHere = liquidHere && vGlobalness < 0.5;
 
           // Coastal fringe. Only the worley cells AT THE EDGE of a
-          // water continent block (the row/column touching a land
+          // liquid continent block (the row/column touching a land
           // block) get a sparse highlight/lowlight dither within the
           // body's own ocean hue — never bleeding toward land color.
           // Keeps a large ocean area from reading as a flat fill while
@@ -1481,7 +1482,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           //
           // Detection: step ONE worley cell in each axis and re-floor
           // to a continent block. Interior worley cells stay in the
-          // same block (water → no flag). Only the 1-cell-wide ring
+          // same block (liquid → no flag). Only the 1-cell-wide ring
           // along a block's boundary actually crosses into a neighbor
           // block, which may evaluate to land.
           //
@@ -1498,7 +1499,7 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           //
           // Both rings are detected by stepping winnerCell ±1 / ±2
           // and re-flooring to a continent block; interior cells stay
-          // in this (water) block on every step so they don't flag.
+          // in this (liquid) block on every step so they don't flag.
           // 8 hash21 evaluations per ocean fragment, cheap GPU-side.
           vec3 oceanCol = vOceanColor;
           if (liquidOceanHere) {
@@ -1506,8 +1507,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
             float n1W = hash21(floor((winnerCell + vec2(-1.0,  0.0)) / CONTINENT_GROUP) + contSalt);
             float n1N = hash21(floor((winnerCell + vec2( 0.0,  1.0)) / CONTINENT_GROUP) + contSalt);
             float n1S = hash21(floor((winnerCell + vec2( 0.0, -1.0)) / CONTINENT_GROUP) + contSalt);
-            bool ring1 = (n1E >= vWaterFrac) || (n1W >= vWaterFrac)
-                      || (n1N >= vWaterFrac) || (n1S >= vWaterFrac);
+            bool ring1 = (n1E >= vLiquidFrac) || (n1W >= vLiquidFrac)
+                      || (n1N >= vLiquidFrac) || (n1S >= vLiquidFrac);
 
             if (ring1) {
               oceanCol = clamp(vOceanColor * (1.0 + COAST_LIGHT_DELTA), 0.0, 1.0);
@@ -1516,8 +1517,8 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
               float n2W = hash21(floor((winnerCell + vec2(-2.0,  0.0)) / CONTINENT_GROUP) + contSalt);
               float n2N = hash21(floor((winnerCell + vec2( 0.0,  2.0)) / CONTINENT_GROUP) + contSalt);
               float n2S = hash21(floor((winnerCell + vec2( 0.0, -2.0)) / CONTINENT_GROUP) + contSalt);
-              bool ring2 = (n2E >= vWaterFrac) || (n2W >= vWaterFrac)
-                        || (n2N >= vWaterFrac) || (n2S >= vWaterFrac);
+              bool ring2 = (n2E >= vLiquidFrac) || (n2W >= vLiquidFrac)
+                        || (n2N >= vLiquidFrac) || (n2S >= vLiquidFrac);
               if (ring2) {
                 float dH = hash21(floor(d) + vSeed * SALT_COAST_DITHER);
                 if (dH < COAST_R2_COVERAGE) {

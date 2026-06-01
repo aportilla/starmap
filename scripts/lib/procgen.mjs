@@ -13,8 +13,6 @@
 // ─── fillBody pipeline (run in this order) ───────────────────────────
 //
 // Each pass reads settled state from earlier passes, so order matters.
-// `worldClass` is derived LAST — it's a pure label off final physical
-// state, never an input to physics.
 //
 //   1.  Kepler round-trip       periodDays ↔ semiMajorAu via P² = a³/M
 //   2.  radiusEarth             Otegi piecewise (catalog rows only)
@@ -32,14 +30,18 @@
 //                               refines with per-gas potency once atm
 //                               composition is known.
 //                               Sub-steps inside each pass:
-//                                 surfaceLiquidWaterCover (T ∈ [273, Tboil(P)])
+//                                 dominantSurfaceLiquid (per-species phase
+//                                   gate over SurfaceLiquidSpecies; waterFraction
+//                                   = water cover, surfaceLiquidFraction =
+//                                   dominant solvent of any species)
 //                                 surfaceIceCover         (cold-trap OR polar-cap)
 //   8.  surfaceAge              tect^exp × noise + tidal lift for
 //                               eccentric moons of giants
 //   9.  Pre-atm biotic          bioticCarbonAqueous (drives biotic O₂
-//                               lift in step 10), bioticSubsurfaceAqueous.
-//                               Both run pre-atm because they don't read
-//                               atm composition.
+//                               lift in step 10). Runs pre-atm because the
+//                               atm step reads it; the other archetypes
+//                               (including subsurface_aqueous) settle post-
+//                               atm once resources + final T are ready.
 //   10. atm1..atm3 + fractions  Regime dispatch on (radius, T, P, bulkWater)
 //                               into primary / cold_outgassed /
 //                               thick_outgassed / wet_outgassed /
@@ -48,12 +50,7 @@
 //   11. cloud + haze            cloudDecksFor walks CONDENSABLES (per-
 //                               species condensation gates); hazeFor
 //                               walks aerosol species + dust gate.
-//   12. worldClass              worldClassFor — pure label off settled
-//                               state. Terrestrial cascade splits
-//                               frozen bodies into `ice` (water-ice
-//                               dominant) vs `carbon` (methane-frost
-//                               dominant) per bulkVolatile vs bulkWater.
-//   13. Resources               Notable mineral deposits drawn per body
+//   12. Resources               Notable mineral deposits drawn per body
 //                               from a context-weighted occurrence table
 //                               (RESOURCE_OCCURRENCE) — usually two, rarely
 //                               three or four (DEPOSIT_COUNT_DIST keystone
@@ -61,7 +58,7 @@
 //                               scarcity tiers, pair affinity, and
 //                               hostility-scaled motherlodes shape the draw.
 //                               See resourcesFor for the full chain.
-//   14. Post-atm biotic         bioticAerial (Sagan floaters on gas
+//   13. Post-atm biotic         bioticAerial (Sagan floaters on gas
 //                               giants), bioticCryogenic (Titan-class),
 //                               bioticSilicate (hot rocky), bioticSulfur
 //                               (Io / Venus cloud). Then the three
@@ -98,6 +95,7 @@ import {
   BULK_METAL_FRACTION_BY_ZONE,
   BULK_VOLATILE_FRACTION_BY_ZONE,
   ALBEDO_COMPONENTS,
+  LIQUID_ALBEDO_BY_SPECIES,
   CLOUD_BY_GAS,
   GREENHOUSE,
   GREENHOUSE_POTENCY_BY_GAS,
@@ -116,14 +114,16 @@ import {
   OUTGASSING,
   PRESSURE_HISTORY_MULTIPLIER,
   TRIPLE_POINT_BAR,
-  BOILING_POINT_ANCHORS,
+  SOLVENT_PHASE,
+  MIN_SURFACE_LIQUID_COVER,
+  SALINITY,
+  SUBSURFACE_OCEAN,
   SURFACE_WATER_SAT,
   SURFACE_ICE_SAT,
   POLAR_CAP,
   COLD_TRAP,
   WATER_COVER_NOISE,
   ICE_COVER_NOISE,
-  WORLD_CLASS_THRESHOLDS,
   CONDENSABLES,
   COMPLEXITY_THRESHOLDS,
   ARCHETYPE_COUPLING_PRIOR,
@@ -139,6 +139,10 @@ import {
   RESOURCE_KEYS,
   OTEGI_MR,
 } from './procgen-priors.mjs';
+// The radius/temperature gaseous-bracket thresholds are owned by the shared
+// runtime classifier, so the physics passes here and the renderer-side reader
+// share one table and can't drift.
+import { ARCHETYPE_THRESHOLDS } from './body-archetype.mjs';
 
 const VALID_ARCHETYPES = new Set(BIOSPHERE_ARCHETYPES);
 const VALID_COMPLEXITY = new Set(BIOSPHERE_COMPLEXITY);
@@ -183,8 +187,8 @@ function equilibriumTempK(S, bondAlbedo = 0.3) {
 
 // Piecewise mass-radius relation. Real distributions have scatter from
 // composition (water vs. silicate vs. iron-rich); these power laws hit
-// the mean of the observed cloud well enough that downstream worldClass
-// classification lands in the right bucket for catalog rows missing
+// the mean of the observed cloud well enough that the runtime archetype
+// classifier lands in the right bucket for catalog rows missing
 // radiusEarth.
 //
 //   M < 2 M⊕      → R = M^0.279         Otegi 2020 rocky line
@@ -215,99 +219,6 @@ export function sampleOrbitalFlavor({ eccPrng, incPrng, tiltPrng, phasePrng }) {
     axialTiltDeg: Number(sampleTruncated(tiltPrng, AXIAL_TILT_DEG).toFixed(2)),
     orbitalPhaseDeg: Number((phasePrng() * 360).toFixed(2)),
   };
-}
-
-// =============================================================================
-// World-class derivation — pure label off settled physical state (Phase 4)
-// =============================================================================
-
-// `worldClass` is a label derived from settled physical state — radius,
-// temperature, surface cover, bulk composition, atmosphere. NOTHING in
-// the physics pipeline reads it as an input. It's consumed only by
-// renderer-side palettes and UI labels. A class change shifts which
-// label shows; never what the planet IS.
-//
-// The 14-label taxonomy carves the (mass × radius × T × P × water × ice
-// × bulkWater × bulkMetal × atm) hypercube into visually + gameplay
-// distinct cells. Each branch is a priority-ordered physical gate;
-// the first match wins.
-//
-// Returns null when inputs are missing; callers leave the field null.
-export function worldClassFor(body, S) {
-  const r = body.radiusEarth;
-  if (r == null) return null;
-  const T = body.avgSurfaceTempK;
-  const water = body.waterFraction ?? 0;
-  const ice = body.iceFraction ?? 0;
-  const bulkMetal = body.bulkMetalFraction ?? 0;
-  const bulkWater = body.bulkWaterFraction ?? 0;
-  const mass = body.massEarth ?? 0;
-  const tect = body.tectonicActivity ?? 0;
-  const W = WORLD_CLASS_THRESHOLDS;
-
-  // ─── Gaseous bracket (radius ≥ gasDwarfRadius) ───
-  if (r >= W.gasDwarfRadius) {
-    // Hycean takes priority across the entire gaseous bracket: cold +
-    // water-rich + H2 atm. K2-18b-class. Above r=Neptune the bulk
-    // composition is enough to override the ice_giant label.
-    if (T != null && T < W.hyceanTempCeilingK &&
-        bulkWater >= W.hyceanBulkWaterMin &&
-        body.atm1 === 'H2') {
-      return 'hycean';
-    }
-    // Helium: He-dominant AND H2 absent from top-3 (post-H-stripping
-    // survivor — real helium planets need H2 fully gone, not just
-    // outweighed in the random draw).
-    if (body.atm1 === 'He' && body.atm2 !== 'H2' && body.atm3 !== 'H2') {
-      return 'helium';
-    }
-    // Default size-based gaseous taxonomy.
-    if (r >= W.jupiterRadius) return 'gas_giant';
-    if (r >= W.neptuneRadius) {
-      if (T != null && T <= W.iceGiantTempCeilingK) return 'ice_giant';
-      return 'gas_dwarf';
-    }
-    return 'gas_dwarf';
-  }
-
-  // ─── Terrestrial bracket (radius < gasDwarfRadius) ───
-  if (T == null) return null;
-  // Lava: sustained molten surface
-  if (T >= W.lavaTempFloorK) return 'lava';
-  // Chthonian: stripped giant core — checked BEFORE magma_ocean because
-  // chthonian IS a hot iron-rich body; the specific stripped-giant
-  // signature (close-in + massive + metal-dominant) wins over the
-  // generic "hot+active" magma_ocean label.
-  if (S != null && S >= W.chthonianInsolationMin &&
-      mass >= W.chthonianMassMin &&
-      bulkMetal >= W.chthonianMetalMin) {
-    return 'chthonian';
-  }
-  // Magma ocean: hot + active interior, not yet fully molten
-  if (T >= W.magmaOceanTempFloorK && tect >= W.magmaOceanTectMin) return 'magma_ocean';
-  // Iron: metal-dominant interior (Mercury-class super-iron)
-  if (bulkMetal >= W.ironMetalMin) return 'iron';
-  // Carbon: methane/volatile-dominated frozen body — checked BEFORE
-  // ice because a body with high iceFraction and bulkVolatile >
-  // bulkWater is a methane/N2-frost world (Pluto/Triton/Eris), not a
-  // water-ice shell. Same surface-cover gate, different bulk inventory.
-  const bulkVolatile = body.bulkVolatileFraction ?? 0;
-  if (ice >= W.iceIceMin && water < W.iceWaterCeiling &&
-      bulkVolatile > bulkWater &&
-      bulkVolatile >= W.carbonBulkVolatileMin) {
-    return 'carbon';
-  }
-  // Ice: surface ice dominant, water-ice-dominated bulk (Callisto/
-  // Ganymede/Europa-shell).
-  if (ice >= W.iceIceMin && water < W.iceWaterCeiling) return 'ice';
-  // Ocean: surface liquid water dominant (Europa/Ganymede/Earth)
-  if (water >= W.oceanWaterFloor) return 'ocean';
-  // Solid giant: large rocky terrestrial
-  if (mass >= W.solidGiantMassMin && r >= W.solidGiantRadiusMin) return 'solid_giant';
-  // Desert: both water + ice low
-  if (water < W.desertWaterCeiling && ice < W.desertIceCeiling) return 'desert';
-  // Default: ordinary rocky terrestrial
-  return 'rocky';
 }
 
 // =============================================================================
@@ -371,11 +282,21 @@ function cloudBumpFromComposition(body) {
   return Math.min(bump, ALBEDO_COMPONENTS.cloudBumpMax);
 }
 
+// Per-species liquid-surface albedo. The dark-liquid term is
+// species-dependent: a hydrocarbon sea (Titan's near-black lakes) and a
+// liquid-N2 sheet reflect very differently. The `water` coefficient MUST
+// equal ALBEDO_COMPONENTS.water so a water world's albedo is bit-identical
+// to the legacy single-coefficient blend. The per-species albedo table
+// (LIQUID_ALBEDO_BY_SPECIES) lives in procgen-priors.mjs as tuning data.
+
 // Bond albedo — surface cover blend + cloud bump. Cover blend is always
-// composition-derived (waterFraction × ocean + iceFraction × ice + land
-// × rocky). The cloud bump dispatches on atm-presence: composition
-// path when atm1/2/3 are known (Pass B), bulkWater proxy otherwise
-// (Pass A initial estimate).
+// composition-derived (liquid × per-species albedo + iceFraction × ice +
+// land × rocky). The liquid term reads surfaceLiquidFraction (the
+// dominant solvent of any species) so a hydrocarbon or ammonia sea
+// darkens the disc the way an ocean does; on a water world
+// surfaceLiquidFraction equals waterFraction and the blend is unchanged.
+// The cloud bump dispatches on atm-presence: composition path when
+// atm1/2/3 are known (Pass B), bulkWater proxy otherwise (Pass A).
 //
 // Curated Sol bodies bypass this entirely (their albedo input to the
 // temp pass comes from CSV via their curated avgSurfaceTempK chain).
@@ -383,12 +304,14 @@ function cloudBumpFromComposition(body) {
 // Venus-analog ~0.6-0.7. Titan-class is a known overshoot — clean-ice
 // albedo (0.85) doesn't represent the tholin-coated reality.
 function bondAlbedoFor(body) {
-  const water = body.waterFraction ?? 0;
-  const ice   = body.iceFraction ?? 0;
-  const land  = Math.max(0, 1 - water - ice);
-  const A_surface = water * ALBEDO_COMPONENTS.water +
-                    ice   * ALBEDO_COMPONENTS.ice +
-                    land  * ALBEDO_COMPONENTS.land;
+  const liquid  = body.surfaceLiquidFraction ?? 0;
+  const species = body.surfaceLiquidSpecies ?? 'water';
+  const ice     = body.iceFraction ?? 0;
+  const land    = Math.max(0, 1 - liquid - ice);
+  const liquidAlbedo = LIQUID_ALBEDO_BY_SPECIES[species] ?? ALBEDO_COMPONENTS.water;
+  const A_surface = liquid * liquidAlbedo +
+                    ice    * ALBEDO_COMPONENTS.ice +
+                    land   * ALBEDO_COMPONENTS.land;
   const bump = body.atm1
     ? cloudBumpFromComposition(body)
     : cloudBumpFromBulkWater(body);
@@ -447,7 +370,7 @@ function greenhouseKFromComposition(body) {
 function avgSurfaceTempFromAlbedo(radiusEarth, S, bondAlbedo, greenhouseK) {
   if (S == null) return null;
   const tEq = equilibriumTempK(S, bondAlbedo);
-  if (radiusEarth != null && radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius) {
+  if (radiusEarth != null && radiusEarth >= ARCHETYPE_THRESHOLDS.gasDwarfRadius) {
     return Math.round(tEq);  // gaseous body — cloud-top equilibrium
   }
   return Math.round(tEq + (greenhouseK ?? 0));
@@ -510,18 +433,56 @@ function surfacePressureFor(body, S) {
   return Number(pressure.toFixed(4));
 }
 
+// Salinity — dissolved-solute load of a body's pooled liquid, a single
+// scalar in [0,1] (0 fresh, 1 saturated brine). Keyed off PRE-TEMP inputs
+// only so it settles before the temp/cover passes and the surface-liquid
+// gate can read it for freeze-point depression: it must NOT read the
+// surface cover it helps shape (that would be cyclic).
+//
+// Two factors compose, mirroring the renderer's evaporitic-concentration
+// model (ocean.ts sediment): a leach term — how much solute the contact
+// rock can supply — times an aridity term — how concentrated that solute
+// becomes as the body runs dry. Leach rises with the refractory budget
+// (metal + silicate, the soluble-salt source) the liquid can dissolve.
+// Aridity is a `1/x`-style concentration: a hot, water-poor body
+// evaporates its thin liquid film toward saturation, so the dryness proxy
+// (high insolation, low bulk water) drives salt up the SALINITY.
+// aridityConcentration exponent. Null on bodies with no surface.
+function salinityFor(body, S) {
+  if (body.radiusEarth == null) return null;
+  if (isGaseousBody(body)) return null;
+  const k = SALINITY;
+  const metal    = body.bulkMetalFraction ?? 0;
+  const silicate = bulkSilicate10(body) / 10;  // back to a 0..1 fraction
+  // Soluble-salt supply from rock contact — refractory budget the liquid
+  // can leach. Scaled so an Earth-class silicate body sits mid-range.
+  const leach = k.leachScale * Math.min(1, metal + silicate);
+  // Dryness proxy from pre-temp inputs only: insolation (drives
+  // evaporation) and a water-poverty term (less solvent → same solute
+  // concentrates). Both in [0,1]; their product is the aridity driver.
+  const wetness = Math.min(1, (body.bulkWaterFraction ?? 0) / SURFACE_WATER_SAT);
+  const insol = S ?? 0;
+  const aridity = (1 - wetness) * (insol / (insol + 1));
+  const concentration = Math.pow(aridity, k.aridityConcentration);
+  const noise = fieldPrng(body, 'salinity')();
+  const raw = leach + (k.cap - leach) * concentration * noise;
+  return Number(Math.max(0, Math.min(k.cap, raw)).toFixed(3));
+}
+
 // =============================================================================
 // Surface composition — water / ice cover derivation (Phase 3)
 // =============================================================================
 
-// Boiling-point of water at pressure P (bar). Log-linear interpolation
-// between the three BOILING_POINT_ANCHORS — exact at the triple point,
-// STP, and the 100-bar deep-atmosphere anchor; ±5K accuracy in between
-// (well under the noise the cover formula introduces). Returns null
-// below the triple point — no liquid is thermodynamically possible.
-function boilingPointK(P_bar) {
-  if (P_bar == null || P_bar < TRIPLE_POINT_BAR) return null;
-  const a = BOILING_POINT_ANCHORS;
+// Boil-curve temperature at pressure P (bar) for an arbitrary solvent.
+// Log-linear interpolation between a solvent's {p,t} anchors — exact at
+// each anchor, accurate to a few K in between (well under the noise the
+// cover formula introduces). Returns null below `triplePointBar`, where
+// no liquid is thermodynamically possible at any temperature. Shared by
+// every SurfaceLiquidSpecies so each row reuses the same interpolation
+// the water gate has always used.
+function boilCurveK(anchors, triplePointBar, P_bar) {
+  if (P_bar == null || P_bar < triplePointBar) return null;
+  const a = anchors;
   for (let i = 0; i < a.length - 1; i++) {
     if (P_bar < a[i + 1].p) {
       const t = (Math.log(P_bar) - Math.log(a[i].p)) /
@@ -552,25 +513,6 @@ export function sampleBulkMetalFraction(prng, formationAu, frostLinesAu) {
 
 export function sampleBulkVolatileFraction(prng, formationAu, frostLinesAu) {
   return sampleBulkFraction(prng, formationAu, frostLinesAu, BULK_VOLATILE_FRACTION_BY_ZONE);
-}
-
-// Fraction of surface covered by liquid water. Three gates compose:
-//   1. bulkWater > 0           — must have water to cover anything
-//   2. P ≥ TRIPLE_POINT_BAR    — liquid impossible at sub-triple-point
-//   3. T ∈ [273, boilingPoint(P)]  — temperate enough to stay liquid
-// All gates pass → cover saturates at SURFACE_WATER_SAT bulkWater. Earth
-// (bulkWater 0.00023) reaches ~70% cover because the absolute water
-// inventory spreads thin; Hycean (bulkWater 0.1) saturates to 1.0.
-// `noiseMult` is a per-body multiplier drawn once and shared across both
-// passes of the two-pass T/ice iteration.
-function surfaceLiquidWaterCover(bulkWater, T_mean, surfacePressureBar, noiseMult) {
-  if (!bulkWater || bulkWater <= 0) return 0;
-  if (surfacePressureBar == null || surfacePressureBar < TRIPLE_POINT_BAR) return 0;
-  if (T_mean == null || T_mean < 273) return 0;
-  const tBoil = boilingPointK(surfacePressureBar);
-  if (tBoil != null && T_mean > tBoil) return 0;
-  const raw = Math.min(1, bulkWater / SURFACE_WATER_SAT);
-  return Number(Math.max(0, Math.min(1, raw * noiseMult)).toFixed(3));
 }
 
 // Fraction of surface covered by water ice. Two regimes:
@@ -606,6 +548,93 @@ function surfaceIceCover(bulkWater, T_mean, T_pole, surfacePressureBar, noiseMul
   return Number(Math.max(0, Math.min(POLAR_CAP.maxCoverFraction, cover)).toFixed(3));
 }
 
+// Solvent species whose freeze point a dissolved-solute load meaningfully
+// depresses. Salinity is a water-chemistry scalar (dissolved salts); it
+// lowers the melting point of the water-bearing solvents but says nothing
+// about a cryogenic hydrocarbon or nitrogen pool, so depression applies
+// only to the aqueous rows.
+const SALINITY_DEPRESSED_SPECIES = new Set(['water', 'ammonia_water']);
+
+// Fraction of surface covered by liquid of an arbitrary solvent species.
+// Drives every SurfaceLiquidSpecies off its SOLVENT_PHASE row, with the
+// water row reproducing the legacy water-only gate bit-for-bit when
+// salinity is 0: same three gates (budget present, P above the
+// species' triple point, T inside [freeze, boil(P)]), same saturation at
+// the row's minBudget, same per-body noise multiplier and `.toFixed(3)`
+// rounding. For an aqueous species the freeze floor is depressed by the
+// dissolved-solute load (salinity × SALINITY.freezeDepressionK), so a
+// briny ocean stays liquid below 273 K. The `water` row reproduces the
+// legacy water-only gate bit-for-bit.
+function surfaceLiquidCover(species, budget, T_mean, surfacePressureBar, salinity, noiseMult) {
+  const phase = SOLVENT_PHASE[species];
+  if (!phase) return 0;
+  if (!budget || budget <= 0) return 0;
+  if (surfacePressureBar == null || surfacePressureBar < phase.triplePointBar) return 0;
+  if (T_mean == null) return 0;
+  const depression = SALINITY_DEPRESSED_SPECIES.has(species)
+    ? (salinity ?? 0) * SALINITY.freezeDepressionK
+    : 0;
+  if (T_mean < phase.freezeK - depression) return 0;
+  const tBoil = boilCurveK(phase.boilAnchors, phase.triplePointBar, surfacePressureBar);
+  if (tBoil != null && T_mean > tBoil) return 0;
+  const raw = Math.min(1, budget / phase.minBudget);
+  return Number(Math.max(0, Math.min(1, raw * noiseMult)).toFixed(3));
+}
+
+// The budget (bulk reservoir fraction) a candidate solvent draws from,
+// routed by its SOLVENT_PHASE `feeds`. 'bulkWater' is the dedicated water
+// budget; 'bulkVolatile' the shared non-water volatile budget; any other
+// value names an atm gas whose surface presence (partial-pressure
+// evidence) gates whether that volatile can pool — mirroring the
+// renderer's pickPrimarySolvent, which treats an atm species as the
+// strongest signal a corresponding liquid exists at the surface. The
+// atm-gated species are budgeted off the shared volatile reservoir,
+// scaled by the gas's atm fraction so a trace mention can't flood the
+// surface.
+function solventBudgetFor(body, species) {
+  const phase = SOLVENT_PHASE[species];
+  if (!phase) return 0;
+  if (phase.feeds === 'bulkWater') return body.bulkWaterFraction ?? 0;
+  const volatile = body.bulkVolatileFraction ?? 0;
+  if (phase.feeds === 'bulkVolatile') return volatile;
+  // atm-gas-fed species: require the gas to be present in the top-3 atm,
+  // then draw from the shared volatile budget weighted by its abundance.
+  const atmFrac = atmFracOf(body, phase.feeds);
+  if (atmFrac <= 0.005) return 0;
+  return volatile * atmFrac;
+}
+
+// Dominant surface-liquid species + its cover. Evaluates every
+// SurfaceLiquidSpecies against the body's settled T/P + per-species budget
+// and picks the highest-cover candidate. Returns the water cover
+// separately so waterFraction keeps its locked meaning (surface H2O
+// cover specifically, D1) regardless of which species dominates — for a
+// water-dominant world the two are equal. surfaceLiquidSpecies is null
+// iff the dominant cover is 0.
+function dominantSurfaceLiquid(body, T_mean, surfacePressureBar, salinity, noiseMult) {
+  let bestSpecies = null;
+  let bestCover = 0;
+  let waterCover = 0;
+  for (const species of Object.keys(SOLVENT_PHASE)) {
+    const budget = solventBudgetFor(body, species);
+    const cover = surfaceLiquidCover(species, budget, T_mean, surfacePressureBar, salinity, noiseMult);
+    if (species === 'water') waterCover = cover;
+    // Exotic solvents only count as the dominant liquid once their cover
+    // clears the meaningful-feature floor — a trace film doesn't make a
+    // world a nitrogen- or sulfur-sea. Water is exempt (calibrated cover).
+    const effective = species === 'water' || cover >= MIN_SURFACE_LIQUID_COVER ? cover : 0;
+    if (effective > bestCover) {
+      bestCover = effective;
+      bestSpecies = species;
+    }
+  }
+  return {
+    waterCover,
+    liquidFraction: bestCover,
+    liquidSpecies: bestCover > 0 ? bestSpecies : null,
+  };
+}
+
 // =============================================================================
 // Surface age
 // =============================================================================
@@ -622,8 +651,8 @@ function surfaceAgeFor(body, hostBody) {
   const noise = sampleTruncated(fieldPrng(body, 'surfaceAge'), SURFACE_AGE_FROM_TECTONIC.noise);
   let age = Math.pow(body.tectonicActivity, SURFACE_AGE_FROM_TECTONIC.exponent) * noise;
   // Tidal-heating lift for eccentric moons of gaseous hosts. Host
-  // gaseousness is read from the radius-derived test, independent of
-  // worldClass.
+  // gaseousness is read from the radius-derived test (isGaseousBody) — a
+  // physical property, not a stored body type.
   const hostIsGaseous = hostBody != null && isGaseousBody(hostBody);
   if (body.kind === 'moon' && hostIsGaseous && body.eccentricity != null) {
     const e = body.eccentricity;
@@ -709,15 +738,18 @@ function magneticFieldGaussFor(body) {
 // =============================================================================
 
 // swing = SWING_BASE / inertia × tiltFactor × eccFactor × noise, where
-// inertia accumulates from atm pressure (log) and ocean cover (linear).
-// Thick atm + oceans → small swing (Earth ±50K seasonal); airless dry
-// body → wild swing (Mercury ±300K). Class isn't an input.
+// inertia accumulates from atm pressure (log) and surface-liquid cover
+// (linear). Thick atm + a liquid sea → small swing (Earth ±50K seasonal);
+// airless dry body → wild swing (Mercury ±300K). Any solvent buffers the
+// swing, not just water, so a hydrocarbon sea damps a Titan-analog's
+// seasons; on a water world surfaceLiquidFraction equals waterFraction and
+// the term is unchanged. Class isn't an input.
 function surfaceTempRangeFor(body) {
   if (body.avgSurfaceTempK == null) return { min: null, max: null };
   const P = body.surfacePressureBar ?? 0;
-  const water = body.waterFraction ?? 0;
+  const liquid = body.surfaceLiquidFraction ?? 0;
   const atmContrib = P > 0 ? Math.log10(P + 0.001) * TEMP_SWING.atmTerm : Math.log10(0.001) * TEMP_SWING.atmTerm;
-  const inertia = Math.max(TEMP_SWING.inertiaMin, 1 + atmContrib + water * TEMP_SWING.oceanTerm);
+  const inertia = Math.max(TEMP_SWING.inertiaMin, 1 + atmContrib + liquid * TEMP_SWING.oceanTerm);
   const noise = sampleTruncated(fieldPrng(body, 'tempSwing'), TEMP_SWING.noise);
   const baseSwing = TEMP_SWING.swingBase / inertia;
   const tiltDeg = body.axialTiltDeg ?? 20;
@@ -867,14 +899,12 @@ function surfaceOpacityFor(body) {
 // tuning lives in CLOUD_DECK (procgen-priors).
 
 // The single "is this body gaseous" predicate. Radius-keyed so the physics
-// passes (pressure, age, atmosphere regime, magnetic, opacity) can ask it
-// before worldClass exists. The biosphere passes — which run after
-// classification — share it too: worldClassFor routes every r ≥ gasDwarfRadius
-// body into a gaseous class and nothing below it, so the radius test and the
-// gaseous-class label are equivalent for any classified body. One predicate,
-// no margin where the two could drift.
+// passes (pressure, age, atmosphere regime, magnetic, opacity) and the
+// biosphere passes all share one gate. The runtime archetype classifier
+// brackets every r ≥ gasDwarfRadius body as gaseous and nothing below it off
+// the same threshold, so the physics here and the displayed class can't drift.
 function isGaseousBody(body) {
-  return body.radiusEarth != null && body.radiusEarth >= WORLD_CLASS_THRESHOLDS.gasDwarfRadius;
+  return body.radiusEarth != null && body.radiusEarth >= ARCHETYPE_THRESHOLDS.gasDwarfRadius;
 }
 
 // Coverage derivation. Two modes blend smoothly:
@@ -1303,18 +1333,6 @@ function bodyGravityEarth(body) {
   return body.massEarth / (body.radiusEarth * body.radiusEarth);
 }
 
-// The set of worldClasses with a solid/liquid surface a surface biosphere
-// can inhabit. Genuinely label-specific: it separates a *classified*
-// terrestrial body from one still awaiting classification (worldClass null),
-// a distinction no physical predicate captures — so unlike "is gaseous"
-// (single-sourced through isGaseousBody) this stays keyed on the label.
-// Every gaseous worldClass sits in the r ≥ gasDwarfRadius bracket, so its
-// complement here is exactly the non-null terrestrial classes.
-const TERRESTRIAL_SOLID_CLASSES = new Set([
-  'rocky', 'desert', 'ocean', 'ice', 'carbon', 'iron', 'lava',
-  'magma_ocean', 'chthonian', 'solid_giant',
-]);
-
 // Pre-atm productivity — carbon_aqueous only. Its biotic O2 drives
 // atmospheric lift in the atm step, so it must settle before the
 // atmosphere is sampled (clean acyclic dependency: bio productivity →
@@ -1366,6 +1384,60 @@ function productivityPreAtm(body, hostStar) {
   return { bioticCarbonAqueous };
 }
 
+// Continuous subsurface-aqueous habitability gate, in [0..1], BEFORE the
+// stellar-age multiplier: bulk-water budget × ice-shell band × cold
+// surface × size floor × (tidal OR radiogenic heating). The single
+// source of truth for both the explicit subsurfaceOcean field (T1.3) and
+// the subsurface_aqueous biosphere productivity, so the two can't drift.
+// Reads only settled physics (post-atm T, resRadioactives, ice cover);
+// returns 0 for gaseous bodies or before T resolves.
+function subsurfaceAqueousGate(body, hostBody) {
+  if (isGaseousBody(body)) return 0;
+  if (body.avgSurfaceTempK == null) return 0;
+  const k = BIOSPHERE_PRODUCTIVITY.subsurfaceAqueous;
+  const T = body.avgSurfaceTempK;
+  const bulk_water = smoothstep(k.bulkWater[0], k.bulkWater[1], body.bulkWaterFraction ?? 0);
+  const ice_shell = bellGate(body.iceFraction ?? 0, k.iceShell.center, k.iceShell.halfwidth);
+  const cold_surface = smoothstep(k.coldSurface[0], k.coldSurface[1], k.coldSurfaceRefK - T);
+  const size_floor = smoothstep(k.sizeFloor[0], k.sizeFloor[1], body.radiusEarth ?? 0);
+  const hostMassEarth = hostBody?.massEarth ?? 0;
+  const a = body.semiMajorAu ?? 0;
+  const e = body.eccentricity ?? 0;
+  const tidalProxy = (e > 0 && hostMassEarth > 0 && a > 0)
+    ? e * (hostMassEarth / EARTH_PER_SOLAR_MASS) / Math.pow(a, 3)
+    : 0;
+  const tidal_score = smoothstep(k.tidalScore[0], k.tidalScore[1], tidalProxy);
+  const radio_score = smoothstep(k.radioScore[0], k.radioScore[1], body.resRadioactives ?? 0);
+  const tidal_or_radiogenic = Math.max(tidal_score, radio_score);
+  return bulk_water * ice_shell * cold_surface * size_floor * tidal_or_radiogenic;
+}
+
+// Subsurface-ocean species — 'water' | 'ammonia_water' | null. A buried
+// liquid layer under an ice shell, gated by the SAME continuous gate the
+// subsurface_aqueous biosphere reads (subsurfaceAqueousGate), so the
+// explicit field and the productivity stay consistent. The field fires
+// when the gate clears a threshold AND the body carries the minimum
+// bulk-water budget; the species is the antifreeze brine 'ammonia_water'
+// when the body's NH3/volatile inventory is high enough to keep a deep
+// eutectic melt, else plain 'water'. Deterministic — no PRNG.
+function subsurfaceOceanFor(body, hostBody) {
+  if (isGaseousBody(body)) return null;
+  if (body.radiusEarth == null) return null;
+  if ((body.bulkWaterFraction ?? 0) < SUBSURFACE_OCEAN.minBudget) return null;
+  const gate = subsurfaceAqueousGate(body, hostBody);
+  // Threshold the continuous habitability gate at its midpoint — a body
+  // that meaningfully clears the melt gate hosts a buried ocean; one that
+  // only grazes it does not. Single source of truth with the biosphere
+  // productivity above keeps the two from disagreeing.
+  if (gate < 0.5) return null;
+  // Antifreeze brine when the non-water volatile inventory (NH3 + other
+  // condensables) rivals the water budget — a deep eutectic melt rather
+  // than a pure-water ocean.
+  const volatile = body.bulkVolatileFraction ?? 0;
+  const water = body.bulkWaterFraction ?? 0;
+  return volatile >= water ? 'ammonia_water' : 'water';
+}
+
 // Post-atm productivity — subsurface_aqueous / aerial / cryogenic /
 // silicate / sulfur. The latter four read atmospheric composition (CH4,
 // N2, NH3, SO2, H2S, H2SO4, …) and in cryogenic's case the haze aerosol
@@ -1387,7 +1459,11 @@ function productivityPostAtm(body, hostStar, hostBody) {
   // downstream smoothstep windows well-defined.
   const insol = insolation(hostStar?.mass, body.semiMajorAu) ?? 0;
   const isGaseous = isGaseousBody(body);
-  const isTerrestrialSolid = body.worldClass != null && TERRESTRIAL_SOLID_CLASSES.has(body.worldClass);
+  // A solid-surface terrestrial — the complement of the gaseous bracket
+  // among bodies that have a radius. Derived from physics (radius-keyed
+  // gaseousness) rather than the display label, so worldClass stays
+  // strictly downstream of the physics pipeline.
+  const isTerrestrialSolid = !isGaseousBody(body) && body.radiusEarth != null;
 
   const aw = BIOSPHERE_PRODUCTIVITY.ageWindow;
   const ageWindowSubsurface = smoothstep(aw.subsurfaceAqueous.rise[0], aw.subsurfaceAqueous.rise[1], age);
@@ -1397,34 +1473,19 @@ function productivityPostAtm(body, hostStar, hostBody) {
   const ageWindowSulfur    = smoothstep(aw.sulfur.rise[0], aw.sulfur.rise[1], age);
 
   // ── subsurface_aqueous (Europa/Enceladus, chemosynthesis at vents) ──
-  // Energy source is tidal heating OR radiogenic decay — radio_score
-  // reads resRadioactives, which is settled by the time this post-atm
-  // pass runs. bulk_water reads bulkWaterFraction (the H2O budget the
-  // ice-shell ocean draws from), not the volatile fraction. No atm
-  // dependency; ordered here only so resRadioactives + final T are ready.
+  // Reads the SAME continuous melt gate (subsurfaceAqueousGate) the
+  // explicit subsurfaceOcean field derives from — single source of truth,
+  // so the buried-ocean field and this productivity can't disagree. The
+  // gate's energy term is tidal heating OR radiogenic decay (resRadioactives,
+  // settled by the time this post-atm pass runs) and its substrate is
+  // bulkWaterFraction. Stellar age is the only multiplier applied here.
   let bioticSubsurfaceAqueous;
   if (isGaseous) {
     bioticSubsurfaceAqueous = null;
   } else if (T == null) {
     bioticSubsurfaceAqueous = 0;
   } else {
-    const k = BIOSPHERE_PRODUCTIVITY.subsurfaceAqueous;
-    const bulk_water = smoothstep(k.bulkWater[0], k.bulkWater[1], body.bulkWaterFraction ?? 0);
-    const ice_shell = bellGate(body.iceFraction ?? 0, k.iceShell.center, k.iceShell.halfwidth);
-    const cold_surface = smoothstep(k.coldSurface[0], k.coldSurface[1], k.coldSurfaceRefK - T);
-    const size_floor = smoothstep(k.sizeFloor[0], k.sizeFloor[1], body.radiusEarth ?? 0);
-    const hostMassEarth = hostBody?.massEarth ?? 0;
-    const a = body.semiMajorAu ?? 0;
-    const e = body.eccentricity ?? 0;
-    const tidalProxy = (e > 0 && hostMassEarth > 0 && a > 0)
-      ? e * (hostMassEarth / EARTH_PER_SOLAR_MASS) / Math.pow(a, 3)
-      : 0;
-    const tidal_score = smoothstep(k.tidalScore[0], k.tidalScore[1], tidalProxy);
-    const radio_score = smoothstep(k.radioScore[0], k.radioScore[1], body.resRadioactives ?? 0);
-    const tidal_or_radiogenic = Math.max(tidal_score, radio_score);
-    bioticSubsurfaceAqueous = bulk_water * ice_shell * cold_surface
-                              * size_floor * tidal_or_radiogenic
-                              * ageWindowSubsurface;
+    bioticSubsurfaceAqueous = subsurfaceAqueousGate(body, hostBody) * ageWindowSubsurface;
   }
 
   // ── aerial (Sagan-Salpeter floaters in gas-giant clouds) ──
@@ -1660,12 +1721,13 @@ export function fillBodies(bodies, stars) {
 // caller can run it twice (cold start, then refined by pass 1's cover).
 // Reads the body's settled physics off `ctx.working`; returns all-null
 // when T can't be resolved (missing radius or insolation).
-function runTempIcePass(ctx, prevWater, prevIce, greenhouseK) {
-  const { working, S, surfacePressureBar, bulkWaterFraction, waterNoise, iceNoise } = ctx;
+function runTempIcePass(ctx, prevWater, prevIce, prevLiquid, greenhouseK) {
+  const { working, S, surfacePressureBar, bulkWaterFraction, salinity, waterNoise, iceNoise } = ctx;
   const stateForAlbedo = {
     ...working,
     waterFraction: prevWater,
     iceFraction:   prevIce,
+    surfaceLiquidFraction: prevLiquid,
     // T not yet known; bondAlbedoFor's cloud gate uses T — pass null
     // first pass, refined T on second.
     avgSurfaceTempK: null,
@@ -1673,20 +1735,32 @@ function runTempIcePass(ctx, prevWater, prevIce, greenhouseK) {
   // First T-pass without cloud temperature gate
   let A = bondAlbedoFor(stateForAlbedo);
   let T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
-  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
+  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null, liquidFraction: null, liquidSpecies: null };
   // Recompute albedo with T available so the cloud-temperate gate fires
   A = bondAlbedoFor({ ...stateForAlbedo, avgSurfaceTempK: T });
   T = avgSurfaceTempFromAlbedo(working.radiusEarth, S, A, greenhouseK);
-  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null };
+  if (T == null) return { T: null, Tmin: null, Tmax: null, ice: null, water: null, liquidFraction: null, liquidSpecies: null };
   const { min: Tmin, max: Tmax } = surfaceTempRangeFor({
     ...working,
     avgSurfaceTempK: T,
-    waterFraction: prevWater,
+    surfaceLiquidFraction: prevLiquid,
     surfacePressureBar,
   });
-  const water = surfaceLiquidWaterCover(bulkWaterFraction, T, surfacePressureBar, waterNoise);
+  // Dominant surface liquid across every solvent species. waterFraction
+  // keeps its locked meaning (the water-species cover specifically, D1);
+  // surfaceLiquidFraction is the dominant liquid of any species, equal to
+  // waterFraction on a water-dominant world.
+  const dom = dominantSurfaceLiquid(
+    { ...working, avgSurfaceTempK: T, surfacePressureBar },
+    T, surfacePressureBar, salinity, waterNoise,
+  );
+  const water = dom.waterCover;
   const ice   = surfaceIceCover(bulkWaterFraction, T, Tmin, surfacePressureBar, iceNoise);
-  return { T, Tmin, Tmax, ice, water };
+  return {
+    T, Tmin, Tmax, ice, water,
+    liquidFraction: dom.liquidFraction,
+    liquidSpecies: dom.liquidSpecies,
+  };
 }
 
 function fillBody(b, allBodies, stars) {
@@ -1729,8 +1803,9 @@ function fillBody(b, allBodies, stars) {
   //   • BODY_NUMERIC_FIELDS /
   //     BODY_STRING_FIELDS       (build-catalog.mjs) — JSON (de)serialization typing
   let {
-    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
+    radiusEarth, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
     waterFraction, iceFraction, surfaceAge,
+    surfaceLiquidFraction, surfaceLiquidSpecies, subsurfaceOceanSpecies, salinity,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,
@@ -1748,7 +1823,7 @@ function fillBody(b, allBodies, stars) {
   // Kepler relation — periodDays ↔ semiMajorAu round-trip. Must run
   // before insolation S is captured below: catalog rows that carry
   // periodDays but no semi_major_au need the derived semiMajorAu to
-  // feed S, otherwise S=null cascades through temp/pressure/worldClass
+  // feed S, otherwise S=null cascades through temp/pressure/composition
   // and the body renders as a featureless gray disc.
   if (unknowns.has('periodDays') && semiMajorAu != null) {
     const p = keplerPeriodDays(semiMajorAu, hostMassSolar);
@@ -1855,6 +1930,15 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, surfacePressureBar };
 
+  // Salinity — solute load of the body's pooled liquid. Settles BEFORE
+  // the temp/cover passes (acyclic: keyed off pre-temp inputs only) so the
+  // surface-liquid gate can read it for freeze-point depression of the
+  // aqueous solvents.
+  if (unknowns.has('salinity')) {
+    salinity = salinityFor(working, S);
+  }
+  working = { ...working, salinity };
+
   // Two-pass iteration on temperature ↔ albedo ↔ ice/water cover.
   // Pass 1: no prior cover → albedo from land alone → high T_eq → coarse cover.
   // Pass 2: pass-1 cover lifts albedo → refined T → final cover.
@@ -1868,18 +1952,24 @@ function fillBody(b, allBodies, stars) {
   // and `working`. Pass A (pressure proxy) and Pass B (composition-aware)
   // share this body so the five-field commit lives in one place.
   const applyTempPass = (greenhouseK) => {
-    const ctx = { working, S, surfacePressureBar, bulkWaterFraction, waterNoise, iceNoise };
-    const p1 = runTempIcePass(ctx, 0, 0, greenhouseK);
-    const p2 = runTempIcePass(ctx, p1.water ?? 0, p1.ice ?? 0, greenhouseK);
+    const ctx = { working, S, surfacePressureBar, bulkWaterFraction, salinity, waterNoise, iceNoise };
+    const p1 = runTempIcePass(ctx, 0, 0, 0, greenhouseK);
+    const p2 = runTempIcePass(ctx, p1.water ?? 0, p1.ice ?? 0, p1.liquidFraction ?? 0, greenhouseK);
     if (unknowns.has('avgSurfaceTempK') && p2.T != null) avgSurfaceTempK = p2.T;
     if (unknowns.has('surfaceTempMinK') && p2.Tmin != null) surfaceTempMinK = p2.Tmin;
     if (unknowns.has('surfaceTempMaxK') && p2.Tmax != null) surfaceTempMaxK = p2.Tmax;
     if (unknowns.has('iceFraction')   && p2.ice   != null) iceFraction   = p2.ice;
     if (unknowns.has('waterFraction') && p2.water != null) waterFraction = p2.water;
+    if (unknowns.has('surfaceLiquidFraction') && p2.liquidFraction != null) {
+      surfaceLiquidFraction = p2.liquidFraction;
+      // Species is locked to the cover it describes: null iff cover is 0.
+      surfaceLiquidSpecies = p2.liquidFraction > 0 ? p2.liquidSpecies : null;
+    }
     working = {
       ...working,
       avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
       iceFraction, waterFraction,
+      surfaceLiquidFraction, surfaceLiquidSpecies,
     };
   };
 
@@ -1958,16 +2048,6 @@ function fillBody(b, allBodies, stars) {
   }
   working = { ...working, hazeAerosols, dustStrength };
 
-  // ─── DERIVE worldClass ─── pure label off settled physical state.
-  // Runs LAST so it reads the final refined T (post Pass B) plus the
-  // settled atm composition (hycean/helium branches inspect atm1).
-  // Nothing in the physics pipeline reads it — it's display-only.
-  if (unknowns.has('worldClass')) {
-    const w = worldClassFor(working, S);
-    if (w != null) worldClass = w;
-  }
-  working = { ...working, worldClass };
-
   // Resources — two context-weighted deposits drawn per body (the other
   // four fields stay 0). See resourcesFor.
   if (
@@ -1990,13 +2070,22 @@ function fillBody(b, allBodies, stars) {
     resRareEarths, resRadioactives, resExotics,
   };
 
+  // Subsurface ocean — a buried liquid layer under an ice shell. Runs
+  // after resources (its melt gate reads resRadioactives) and before the
+  // post-atm productivity, which reads the same gate. The explicit field
+  // is the single source of truth the subsurface_aqueous biosphere keys
+  // off, so the two can't drift.
+  if (unknowns.has('subsurfaceOceanSpecies')) {
+    subsurfaceOceanSpecies = subsurfaceOceanFor(working, hostBody);
+  }
+  working = { ...working, subsurfaceOceanSpecies };
+
   // Post-atm biotic productivity — subsurface_aqueous / aerial /
-  // cryogenic / silicate / sulfur. Reads worldClass (for the gaseous /
-  // terrestrial-solid gates) and atm composition + haze aerosols +
-  // resource grid (radiogenic energy, silicate / sulfur substrate). Must
-  // run AFTER worldClass and resources are settled — both feed gating
-  // factors here (subsurface_aqueous's radiogenic term needs the drawn
-  // resRadioactives, unavailable in the pre-atm pass).
+  // cryogenic / silicate / sulfur. Reads atm composition + haze aerosols +
+  // resource grid (radiogenic energy, silicate / sulfur substrate) and the
+  // physics-derived gaseous / terrestrial-solid predicate. Must run AFTER
+  // resources are settled — subsurface_aqueous's radiogenic term needs the
+  // drawn resRadioactives, unavailable in the pre-atm pass.
   if (
     unknowns.has('bioticSubsurfaceAqueous') ||
     unknowns.has('bioticAerial')   || unknowns.has('bioticCryogenic') ||
@@ -2038,8 +2127,9 @@ function fillBody(b, allBodies, stars) {
   const { _unknowns, ...rest } = b;
   return {
     ...rest,
-    radiusEarth, worldClass, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
+    radiusEarth, bulkWaterFraction, bulkMetalFraction, bulkVolatileFraction,
     waterFraction, iceFraction, surfaceAge,
+    surfaceLiquidFraction, surfaceLiquidSpecies, subsurfaceOceanSpecies, salinity,
     avgSurfaceTempK, surfaceTempMinK, surfaceTempMaxK,
     tectonicActivity, rotationPeriodHours, magneticFieldGauss,
     surfacePressureBar,

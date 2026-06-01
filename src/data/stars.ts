@@ -90,12 +90,9 @@ export interface Star {
   readonly ageGyr: number;
 }
 
-export type WorldClass =
-  // Terrestrial taxonomy
-  | 'rocky' | 'solid_giant' | 'desert' | 'ocean' | 'ice' | 'carbon'
-  | 'iron' | 'lava' | 'magma_ocean' | 'chthonian'
-  // Gaseous taxonomy
-  | 'gas_dwarf' | 'hycean' | 'helium' | 'ice_giant' | 'gas_giant';
+// A body's type is no longer a stored category — it's derived on demand from
+// physics by `classifyBody` (scripts/lib/body-archetype.mjs), the single
+// source both the label and the variety audit read. Nothing persists it.
 // Biosphere is three orthogonal fields:
 //   - archetype: what kind of life (carbon/water, methane/cryogenic, etc.)
 //   - complexity: how structured the life is (prebiotic → microbial → complex)
@@ -128,6 +125,19 @@ export type BiosphereImpactLevel =
   | 'dominant';   // ≥ 0.50 — biosphere runs the planetary system (Earth post-GOE)
 export type BodyKind = 'planet' | 'moon' | 'belt' | 'ring';
 export type BodySource = 'catalog' | 'procgen';
+// The solvent a body's standing liquid is made of. Which species condenses
+// is set by surface temperature against each fluid's stability window, so a
+// frozen-out world can still host a deep solvent the surface H2O proxy can't
+// describe (Titan's methane lakes, a cryo ammonia sea). Lets the disc shade
+// non-water seas with their own optics instead of forcing every liquid to
+// read as water.
+export type SurfaceLiquidSpecies =
+  | 'water'
+  | 'hydrocarbon'
+  | 'ammonia_water'
+  | 'ammonia'
+  | 'nitrogen'
+  | 'sulfur';
 
 // One cloud deck on a body. Up to 3 per body, stratified by
 // altitudeNorm — the deepest deck composites first, the top deck last.
@@ -253,12 +263,27 @@ export interface Body {
   // and on planet/moon/ring kinds.
   readonly shepherdBodyIdx: number | null;
   // Surface character. All null for belt / ring kinds (no surface).
-  readonly worldClass: WorldClass | null;
   readonly avgSurfaceTempK: number | null;
   readonly surfaceTempMinK: number | null;
   readonly surfaceTempMaxK: number | null;
   readonly waterFraction: number | null;
   readonly iceFraction: number | null;
+  // Generalized standing-liquid cover, decoupled from the H2O-specific
+  // waterFraction: the fraction of surface under the dominant liquid of
+  // whatever species condenses here, so methane- or ammonia-sea worlds get
+  // a real liquid extent the water proxy would read as dry.
+  readonly surfaceLiquidFraction: number | null;
+  // Which solvent that dominant surface liquid is; null only when nothing
+  // stands on the surface, since a zero-cover world has no liquid to name.
+  readonly surfaceLiquidSpecies: SurfaceLiquidSpecies | null;
+  // Solvent of a hidden ice-shell ocean (Europa, Enceladus), independent of
+  // anything on the surface; null means no buried ocean, which is why it
+  // can be set on a body whose surface is frozen solid.
+  readonly subsurfaceOceanSpecies: SurfaceLiquidSpecies | null;
+  // Solute load of the surface liquid as a single scalar — drives how the
+  // disc tints and how reflective a sea reads — left untagged by solute
+  // type; null on bodies with no surface liquid to carry solutes.
+  readonly salinity: number | null;
   // 0..1 fraction of the surface that is geologically young. 1.0 = perpetually
   // refreshed (Io lava, Enceladus plumes); 0.0 = ancient unmodified (Mercury,
   // Luna, Callisto). null for bodies with no solid surface (gas/ice giants,

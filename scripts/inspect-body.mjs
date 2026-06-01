@@ -13,7 +13,7 @@
 //          node scripts/inspect-body.mjs earth
 //
 // For each body kind the output surfaces the fields that actually
-// matter — orbital geometry + worldClass + atmosphere + biosphere for
+// matter — orbital geometry + archetype + atmosphere + biosphere for
 // planets and moons; extent + populationless resources + shepherd for
 // belts; extent + resources + derived icyness for rings. Resources are
 // rendered as a single line (M/Si/V/RE/Ra/Ex) with icyness appended
@@ -22,6 +22,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyBody } from './lib/body-archetype.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CATALOG_PATH = resolve(REPO_ROOT, 'src/data/catalog.generated.json');
@@ -107,7 +108,7 @@ out.push(`  host: ${hostLine(body)}`);
 if (body.source) out.push(`  source: ${body.source}`);
 
 if (body.kind === 'planet' || body.kind === 'moon') {
-  if (body.worldClass) out.push(`  worldClass: ${body.worldClass}`);
+  if (body.kind === 'planet' || body.kind === 'moon') out.push(`  archetype: ${classifyBody(body)}`);
   if (body.massEarth != null || body.radiusEarth != null) {
     out.push(`  mass: ${n(body.massEarth, 3)} M⊕    radius: ${n(body.radiusEarth, 3)} R⊕`);
   }
@@ -144,7 +145,7 @@ if (body.kind === 'belt') {
   if (body.largestBodyKm != null) out.push(`  largestBody: ${n(body.largestBodyKm, 0)} km`);
   if (body.shepherdBodyIdx != null) {
     const sh = bodies[body.shepherdBodyIdx];
-    out.push(`  shepherd: ${sh.id} (${sh.worldClass || sh.kind})`);
+    out.push(`  shepherd: ${sh.id} (${sh.kind})`);
   } else {
     out.push(`  shepherd: — (free-float)`);
   }

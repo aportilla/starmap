@@ -14,6 +14,7 @@ import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
 import { colors, fonts, sizes } from '../theme';
 import { composeWorldLabel } from './body-label';
+import { classifyBody, GASEOUS_ARCHETYPES } from '../../../scripts/lib/body-archetype.mjs';
 
 // Pretty labels for enum-valued fields. Defined here (rather than on the
 // data layer) because they're a presentation concern. The world-class
@@ -196,9 +197,7 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
 
 function hasInaccessibleSurface(b: Body): boolean {
   // Gaseous-bracket bodies have no accessible surface.
-  const wc = b.worldClass;
-  return wc === 'gas_giant' || wc === 'ice_giant' || wc === 'gas_dwarf'
-      || wc === 'hycean'    || wc === 'helium';
+  return GASEOUS_ARCHETYPES.has(classifyBody(b));
 }
 
 // Belt rows surface the band's extent, anchoring metadata, and the top
