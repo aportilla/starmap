@@ -518,7 +518,14 @@ export function buildDiscPalette(
   const liquidFrac = surfaceSuppressed ? 0   : (body.surfaceLiquidFraction ?? 0);
   const iceFrac    = surfaceSuppressed ? 0   : (body.iceFraction   ?? 0);
   const surfaceAge = surfaceSuppressed ? 0.5 : (body.surfaceAge ?? 0.5);
-  const globalness = surfaceSuppressed ? 0   : globalnessForTemp(body.avgSurfaceTempK);
+  // `globalnessForTemp` is calibrated to water ice (frozen below ~180 K), but
+  // an open liquid sea means the surface ISN'T globally frozen however cold it
+  // is by water standards — procgen already decided liquidity per the actual
+  // solvent's freeze point (ammonia stays liquid to ~176 K, methane to ~90 K,
+  // pushed lower by salinity). So a body wearing a non-water sea is pulled
+  // toward the cap regime by its liquid extent; a dry/frozen body (liquidFrac
+  // 0) is unaffected, and a warm water world already sits at globalness ≈ 0.
+  const globalness = surfaceSuppressed ? 0   : globalnessForTemp(body.avgSurfaceTempK) * (1 - liquidFrac);
 
   // Unified haze blend — one color + one opacity per body, derived
   // from the atmospheric contributor list (bulk gases × pressure ×

@@ -1457,21 +1457,18 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
 
           // CONTINENT_GROUP-sized blocks of worley cells share one
           // ocean/land coin flip. Salt offset from the resource-pick
-          // hash so the two scales decorrelate. The ocean override
-          // only fires on bodies warm enough for liquid surface
-          // liquid — on a cold body (vGlobalness > 0.5, T < ~225 K),
-          // the solvent exists but as a frozen solid, so "liquid cells"
-          // fall back to the resource palette (which on a volatile-rich
-          // body like Europa reads as pale-ice colored anyway). This
-          // keeps the ocean tint from punching through the frozen shell
-          // on cryogenic moons whose surface is globally frozen; the
-          // linea pass below carries the non-ice signal on those
-          // bodies.
+          // hash so the two scales decorrelate. vLiquidFrac IS the liquid
+          // cover procgen settled per the dominant solvent's actual phase
+          // window (water, ammonia, methane, nitrogen, sulfur — each with
+          // its own freeze point, salinity-depressed), so a liquid cell is
+          // liquid however cold the body reads by water standards; no
+          // water-centric re-freeze here. A genuinely frozen-out body just
+          // carries vLiquidFrac = 0 (procgen froze it), so no ocean paints.
           vec2 contCell = floor(winnerCell / CONTINENT_GROUP);
           vec2 contSalt = vSeed * SALT_CONTINENT;
           float contH = hash21(contCell + contSalt);
           bool  liquidHere = contH < vLiquidFrac;
-          bool  liquidOceanHere = liquidHere && vGlobalness < 0.5;
+          bool  liquidOceanHere = liquidHere;
 
           // Coastal fringe. Only the worley cells AT THE EDGE of a
           // liquid continent block (the row/column touching a land
@@ -1586,7 +1583,14 @@ export function makePlanetMaterial(initialDiscScale: number, mode: 'all' | 'disc
           // excavated subsurface palette into the bowl, and any crater
           // whose rays reach this fragment throws the same material
           // along its ejecta — layer-ordered against ice by vSurfaceAge.
-          col = craterRayPass(col, cellPos, icyHere);
+          // Craters pit solid, ancient surfaces — bare rock/regolith and old
+          // ice crust (Callisto). They do NOT pock an open liquid sea, nor a
+          // fresh surface cap deposit (a polar cap reads smooth, like Mars's),
+          // so skip both. Old global ice crust still craters.
+          bool openLiquid = liquidOceanHere && !icyHere;
+          if (!openLiquid && !capIcyHere) {
+            col = craterRayPass(col, cellPos, icyHere);
+          }
 
           // Phase 1.5d — linea. Voronoi cell-boundary cracks painted
           // with the body's subsurface palette. Fires where the body
