@@ -1136,13 +1136,20 @@ export const RING_ABUNDANCE = {
 export const TRIPLE_POINT_BAR = 0.006;
 
 // Boiling-point curve anchors (P_bar → T_boil_K). The cover formula
-// log-interpolates linearly between these three points; above 100 bar
-// the asymptote holds (supercritical territory above ~218 bar in
-// reality, but for gameplay the formula stops at 583 K).
-// Real anchors: triple point (0.006, 273), STP (1.0, 373), high-P (100, 583).
+// log-interpolates linearly between adjacent points; above 100 bar the
+// asymptote holds (supercritical territory above ~218 bar in reality, but
+// for gameplay the formula stops at 583 K). Anchors track the real steam
+// saturation curve: triple point (0.006, 273), STP (1.0, 373), 10 bar
+// (179.9 °C → 453), high-P (100, 583). The 10-bar point is the load-bearing
+// one — Clausius–Clapeyron makes ln P near-linear in −1/T, not in T, so a
+// single segment spanning 1→100 bar sags ~20 K high through the 1–10 bar
+// band where most wet worlds live (it would keep a 446 K / 6.8 bar sea
+// "liquid" when real T_sat there is ~437 K). The intermediate anchor pins
+// that band to the real curve.
 export const BOILING_POINT_ANCHORS = [
   { p: 0.006, t: 273 },
   { p: 1.0,   t: 373 },
+  { p: 10,    t: 453 },
   { p: 100,   t: 583 },
 ];
 

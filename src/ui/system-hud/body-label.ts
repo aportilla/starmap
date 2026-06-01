@@ -171,6 +171,10 @@ function stateModifier(b: Body, core: Core): string | null {
 
   // 6. Milder temperature bands — skipped on the axis the core implies.
   if (T !== null) {
+    // Hot world with standing seas — near-boiling water reads "Steaming",
+    // where "Torrid" (dry heat) would misname an ocean. Above 330 K the only
+    // solvent that can still pool is water, so this fires on water worlds only.
+    if (!core.hot && T >= 330 && liquid >= 0.1) return 'Steaming';
     if (!core.hot && T >= 330) return 'Torrid';
     // Temperate reads as notable only where there's surface liquid of any
     // species (or the core is a water world) — an airless 290 K rock isn't.

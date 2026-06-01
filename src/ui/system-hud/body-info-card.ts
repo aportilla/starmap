@@ -8,7 +8,7 @@
 // ephemeral; dismissal is the cursor leaving the disc.
 
 import { drawPixelText, getFont, measurePixelText } from '../../data/pixel-font';
-import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey } from '../../data/stars';
+import { BODIES, STARS, type BiosphereArchetype, type BiosphereComplexity, type BiosphereImpactLevel, type Body, type ResourceKey, type SurfaceLiquidSpecies } from '../../data/stars';
 import { picksEqual, type DiagramPick } from '../../scene/system-diagram/types';
 import { BasePanel } from '../base-panel';
 import { paintSurface } from '../painter';
@@ -128,6 +128,30 @@ function dominantGasLabels(b: Body, count = 2): string[] {
     .map(([name, frac]) => frac !== null ? `${name} ${formatGasFrac(frac)}` : name);
 }
 
+// Friendly display name per surface-liquid solvent. The subtitle names the
+// world evocatively ("Ammonia Sea World"); this map drives the plainer card
+// row that states what the standing liquid actually is. 'ammonia_water' is
+// the aqueous-ammonia eutectic mix, distinct from a near-pure ammonia sea.
+const SURFACE_LIQUID_LABEL: Record<SurfaceLiquidSpecies, string> = {
+  water:         'water',
+  hydrocarbon:   'hydrocarbon',
+  ammonia_water: 'ammonia-water',
+  ammonia:       'ammonia',
+  nitrogen:      'liquid nitrogen',
+  sulfur:        'molten sulfur',
+};
+
+// Coverage word for a surface-liquid extent — reads how the disc renders the
+// sea: scattered pools/lakes at low cover, a sea mid-range, a global ocean
+// once it dominates. Mirrors LAKE_COVER_FLOOR (0.05) in body-label.ts as the
+// lakes/sea break so the card and the composed label agree on the boundary.
+function liquidExtentWord(frac: number): string {
+  if (frac >= 0.55) return 'ocean';
+  if (frac >= 0.20) return 'sea';
+  if (frac >= 0.05) return 'lakes';
+  return 'pools';
+}
+
 interface BodyRow { key: string; val: string }
 
 // Trailing-space padding pads short keys to align the value column.
@@ -160,6 +184,26 @@ function rowsForBody(bodyIdx: number): BodyRow[] {
   const rows: BodyRow[] = [];
   if (b.avgSurfaceTempK !== null) rows.push({ key: k('temp'), val: `${Math.round(b.avgSurfaceTempK)} K` });
   if (b.surfacePressureBar !== null) rows.push({ key: k('pressure'), val: `${b.surfacePressureBar.toFixed(2)} bar` });
+  // Surface liquid — say there's standing liquid and name the solvent. The
+  // subtitle names the world ("Ammonia Sea World"); this row spells out the
+  // solvent + extent + coverage as data, matching the sea the disc renders.
+  // surfaceLiquidSpecies is null on dry worlds and (ice/gas) giants, so this
+  // fires only where a real liquid stands.
+  if (b.surfaceLiquidSpecies !== null && b.surfaceLiquidFraction !== null && b.surfaceLiquidFraction > 0) {
+    const species = SURFACE_LIQUID_LABEL[b.surfaceLiquidSpecies];
+    const extent = liquidExtentWord(b.surfaceLiquidFraction);
+    const pct = b.surfaceLiquidFraction * 100;
+    const cover = pct < 1 ? '<1%' : `${Math.round(pct)}%`;
+    rows.push({ key: k('liquid'), val: `${species} ${extent} · ${cover}` });
+  }
+  // Subsurface ocean — a buried ice-shell sea (Europa, Enceladus, Titan).
+  // Independent of the surface: a world frozen solid up top can still hide a
+  // liquid mantle, so this row can stand alone or pair with the surface-liquid
+  // row above (Titan: hydrocarbon lakes over a water-ammonia ocean). No
+  // coverage — a buried ocean has no surface extent to report.
+  if (b.subsurfaceOceanSpecies !== null) {
+    rows.push({ key: k('subsurface'), val: `${SURFACE_LIQUID_LABEL[b.subsurfaceOceanSpecies]} ocean` });
+  }
   // Complexity 'none' is the null-equivalent — skip; a planet with
   // bacteria is what we want to surface, not a barren rock. When life
   // exists, the row carries archetype + complexity + impact bucket so
